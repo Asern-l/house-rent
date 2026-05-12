@@ -1,0 +1,21 @@
+node_modules
+artifacts/
+cache/
+typechain-types/
+.env
+coverage/
+coverage.json
+deployments-*.json
+backend/database.sqlite
+*.bat
+
+# Hardhat
+ignition/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
