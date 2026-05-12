@@ -1,13 +1,11 @@
 {
-  "name": "campus-trade-hardhat",
+  "name": "rental-chain-hardhat",
   "version": "1.0.0",
-  "description": "校园二手交易平台 - Hardhat 项目",
+  "description": "信源链 - 区块链租房平台 Hardhat 项目 (Sepolia 测试网)",
   "scripts": {
     "compile": "hardhat compile",
     "test": "hardhat test",
-    "deploy": "hardhat run scripts/deploy.js",
-    "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
-    "node": "hardhat node"
+    "deploy": "hardhat run scripts/deploy_rental.js --network sepolia"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^4.0.0",

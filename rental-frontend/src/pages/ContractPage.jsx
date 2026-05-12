@@ -7,7 +7,9 @@ import RentalChainABI from '../utils/RentalChainABI.json';
 import toast from 'react-hot-toast';
 import { FileTextIcon, CheckCircleIcon, XCircleIcon, ClockIcon, LoaderIcon, ArrowLeftIcon, AlertTriangleIcon, DownloadIcon } from 'lucide-react';
 
-const CONTRACT_ADDR = '0x2282DDE81F8F591D036DF5f710f595038209281b';
+// 从环境变量读取合约地址（在 rental-frontend/.env 中配置）
+// 部署后若未配置，可在此处直接修改
+const CONTRACT_ADDR = import.meta.env.VITE_CONTRACT_ADDRESS || '0x5FbDB2315678afecb367f032d93F642f64180aa3';
 
 export default function ContractPage() {
   const { id } = useParams();

@@ -2,6 +2,8 @@
 
 基于以太坊智能合约的去中心化租房平台，实现**房源信息存证、电子合同链上签署、押金托管结算**全流程上链。
 
+> ⚠️ **当前部署网络：Sepolia 测试网** — 所有链上交易均为测试网交易，可在 [Sepolia Etherscan](https://sepolia.etherscan.io) 查询
+
 ---
 
 ## 项目概述
@@ -44,23 +46,35 @@ cd rental-frontend && npm install && cd ..
 npx hardhat compile
 ```
 
-### 5. 启动区块链（终端1）
+### 5. 配置环境变量
+
+在项目根目录创建 `.env` 文件（参考 `.env.example`）：
+
+```ini
+# Sepolia 测试网 RPC URL
+SEPOLIA_RPC_URL=https://rpc.sepolia.org
+
+# 部署钱包私钥（需持有 SepoliaETH 作为 Gas 费）
+PRIVATE_KEY=你的钱包私钥
+```
+
+### 6. 部署合约到 Sepolia 测试网
 
 ```
-npx hardhat node
+npx hardhat run scripts/deploy_rental.js --network sepolia
 ```
 
-### 6. 部署合约（终端2）
+部署成功后会生成 `deployments-rental-sepolia.json`，其中包含合约地址。
 
+### 7. 配置前端合约地址
+
+打开 `rental-frontend/.env`，将部署得到的合约地址填入：
+
+```ini
+VITE_CONTRACT_ADDRESS=0x部署得到的合约地址
 ```
-npx hardhat run scripts/deploy_rental.js --network localhost
-```
 
-### 7. 配置合约地址
-
-打开 `rental-frontend/src/pages/ContractPage.jsx`，将 `CONTRACT_ADDR` 改为上一步的地址。
-
-### 8. 启动后端（终端3）
+### 8. 启动后端
 
 ```
 cd backend
@@ -69,7 +83,7 @@ node src/index.js
 
 启动在 http://localhost:3000
 
-### 9. 启动前端（终端4）
+### 9. 启动前端
 
 ```
 cd rental-frontend
@@ -80,12 +94,12 @@ npm run dev
 
 ### 10. 配置 MetaMask
 
-- 网络名称: Hardhat Local
-- RPC URL: http://127.0.0.1:8545
-- 链 ID: 31337
-- 货币符号: ETH
+- 网络名称: Sepolia
+- RPC URL: https://rpc.sepolia.org
+- 链 ID: 11155111
+- 货币符号: SepoliaETH
 
-导入测试账户私钥: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+> 💡 如果没有 SepoliaETH，请先到水龙头领取：https://sepoliafaucet.com
 
 ---
 
@@ -108,11 +122,34 @@ npm run dev
 
 ---
 
+## 重置环境（一键清零）
+
+如需从头开始测试，按以下步骤**完全重置**：
+
+```bash
+# 1. 删除数据库（清除用户、房源、合同等所有业务数据）
+del backend\database.sqlite
+
+# 2. 重新部署合约（获取全新的合约地址）
+npx hardhat run scripts/deploy_rental.js --network sepolia
+
+# 3. 更新前端合约地址
+#    将 rental-frontend/.env 中的 VITE_CONTRACT_ADDRESS 改为新地址
+
+# 4. 重启后端
+cd backend && node src/index.js
+```
+
+> ⚠️ 链上已存证的旧数据仍可在 Sepolia Etherscan 查到，因为区块链不可篡改。重置仅清除本地业务数据和新合约关联。
+
+---
+
 ## 常见问题
 
-- 页面空白？检查四个终端是否都正常运行
-- MetaMask 交易失败？检查网络是否切换到 Hardhat Local
-- 重新开始？删除 backend/database.sqlite 后重启后端
+- **MetaMask 交易失败？** 检查网络是否切换到 Sepolia，以及钱包是否有足够 SepoliaETH
+- **合约地址不对？** 确认 `rental-frontend/.env` 中的 `VITE_CONTRACT_ADDRESS` 与部署生成的地址一致
+- **重新部署？** 修改合约后重新编译部署，更新前端 `.env` 中的合约地址
+- **数据库重置？** 删除 `backend/database.sqlite` 后重启后端
 
 ---
 
