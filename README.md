@@ -1,296 +1,121 @@
-# 🏠 信源�?· 区块链租房平�?
+# 信源链 - 区块链租房平台
 
-基于以太坊智能合约的去中心化租房平台，实�?*房源信息存证、电子合同链上签署、押金托管结�?*全流程上链�?
-
----
-
-## 📋 项目概述
-
-```
-contracts/        �?智能合约（Solidity�?
-backend/          �?后端 API（Node.js + Express + SQLite�?
-rental-frontend/  �?前端页面（React + Vite + Tailwind�?
-```
+基于以太坊智能合约的去中心化租房平台，实现**房源信息存证、电子合同链上签署、押金托管结算**全流程上链。
 
 ---
 
-## 🚀 环境搭建（从零开始）
+## 项目概述
 
-### 1️⃣ 安装前置软件
+```
+contracts/          <- 智能合约（Solidity）
+backend/            <- 后端 API（Node.js + Express + SQLite）
+rental-frontend/    <- 前端页面（React + Vite + Tailwind）
+```
 
-| 软件 | 版本要求 | 下载地址 | 用�?|
-|:----|:--------:|:--------:|:----:|
-| **Node.js** | �?18 | https://nodejs.org/ | 运行后端和前�?|
-| **Git** | 任意 | https://git-scm.com/ | 下载代码 |
-| **MetaMask** | 最�?| 浏览器扩展商�?| 区块链钱�?|
+---
 
-### 2️⃣ 下载项目
+## 环境搭建（从零开始）
 
-```bash
+### 1. 安装前置软件
+
+| 软件 | 版本要求 | 下载地址 |
+|:----|:--------:|:--------|
+| Node.js | >= 18 | https://nodejs.org/ |
+| MetaMask | 最新 | 浏览器扩展商店 |
+
+### 2. 下载项目
+
+```
 git clone https://github.com/Asern-l/house-rent.git
 cd house-rent
 ```
 
-### 3️⃣ 安装依赖
+### 3. 安装依赖
 
-**三个目录都需要安�?*，请依次执行�?
-
-```bash
-# 1. 安装智能合约编译工具
+```
 npm install
-
-# 2. 安装后端
-cd backend
-npm install
-cd ..
-
-# 3. 安装前端
-cd rental-frontend
-npm install
-cd ..
+cd backend && npm install && cd ..
+cd rental-frontend && npm install && cd ..
 ```
 
-> �?每个 `npm install` 首次执行可能需�?1-3 分钟，请耐心等待
+### 4. 编译智能合约
 
-### 4️⃣ 编译智能合约
-
-```bash
+```
 npx hardhat compile
 ```
 
-看到 `Compiled 1 Solidity file successfully` 即编译成功�?
+### 5. 启动区块链（终端1）
 
-### 5️⃣ 启动本地区块�?
-
-```bash
+```
 npx hardhat node
 ```
 
-这会启动一条本地测试链，并输出 20 个测试账户（每个�?10000 ETH）�?*让这个终端保持运行，不要关闭�?*
+### 6. 部署合约（终端2）
 
 ```
-终端 1 ── npx hardhat node  �?本地区块�?
-```
-
-### 6️⃣ 部署合约
-
-**新开一个终�?*，执行：
-
-```bash
-# Windows
-cd 项目路径
 npx hardhat run scripts/deploy_rental.js --network localhost
 ```
 
-部署成功后会输出合约地址，例如：
-```
-�?部署成功�?
-📄 合约地址: 0x5FbDB2315678afecb367f032d93F642f64180aa3
-```
+### 7. 配置合约地址
 
-把这个地址记下来，下一步要用�?
+打开 `rental-frontend/src/pages/ContractPage.jsx`，将 `CONTRACT_ADDR` 改为上一步的地址。
+
+### 8. 启动后端（终端3）
 
 ```
-终端 1 ── npx hardhat node       �?本地区块�?
-终端 2 ── hardhat deploy ...     �?部署合约（执行完可关闭）
-```
-
-### 7️⃣ 配置合约地址
-
-打开 `rental-frontend/src/pages/ContractPage.jsx`，找到：
-
-```javascript
-const CONTRACT_ADDR = '0x...';
-```
-
-把它改为上一步得到的地址�?
-
-### 8️⃣ 启动后端
-
-```bash
-# 新开终端
-cd 项目路径/backend
+cd backend
 node src/index.js
 ```
 
-看到以下输出即启动成功：
-```
-🏠 信源�?- 区块链租房平台后�?
-🌐 http://localhost:3000
-```
+启动在 http://localhost:3000
+
+### 9. 启动前端（终端4）
 
 ```
-终端 1 ── npx hardhat node       �?本地区块�?
-终端 2 ── node src/index.js       �?后端 API
-```
-
-### 9️⃣ 启动前端
-
-```bash
-# 新开终端
-cd 项目路径/rental-frontend
+cd rental-frontend
 npm run dev
 ```
 
-浏览器自动打开 `http://localhost:3001`�?
+访问 http://localhost:3001
 
-```
-终端 1 ── npx hardhat node       �?本地区块�?
-终端 2 ── node src/index.js       �?后端 API
-终端 3 ── npm run dev             �?前端页面
-```
+### 10. 配置 MetaMask
 
-### 🔟 配置 MetaMask
+- 网络名称: Hardhat Local
+- RPC URL: http://127.0.0.1:8545
+- 链 ID: 31337
+- 货币符号: ETH
 
-1. 打开 MetaMask �?点击网络切换 �?**添加网络**
-2. 填写�?
-
-| 字段 | �?|
-|:----|:----|
-| 网络名称 | `Hardhat Local` |
-| RPC URL | `http://127.0.0.1:8545` |
-| �?ID | `31337` |
-| 货币符号 | `ETH` |
-
-3. 导入测试账户�?
-   - MetaMask �?点击圆形头像 �?**导入账户**
-   - 私钥：`0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`
-   - 这个账户�?10000 ETH，仅供本地测�?
-
-### �?启动完成
-
-访问 **http://localhost:3001**，点击右上角「登录」按钮�?
+导入测试账户私钥: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
 ---
 
-## 🎮 完整使用教程
+## 使用教程
 
-### 步骤 1：注册两个账号（房东 + 租客�?
+### 注册账号
 
-| 角色 | 手机�?| 密码 | 昵称 | 说明 |
-|:----:|:------:|:----:|:----:|:----:|
-| 🔑 房东 | 13800001111 | 123456 | 张房�?| 发布房源 |
-| 🏠 租客 | 13900002222 | 123456 | 李租�?| 租房 |
+| 角色 | 手机号 | 密码 | 昵称 |
+|:----:|:------:|:----:|:----:|
+| 房东 | 13800001111 | 123456 | 张房东 |
+| 租客 | 13900002222 | 123456 | 李租客 |
 
-> 注册时选择正确的角色（房东/租客），**同一个浏览器可以登录后注销再注册另一个账�?*
+### 完整流程
 
-### 步骤 2：房东发布房�?
-
-1. �?**房东** 账号登录
-2. 点击导航�?**「发布�?*
-3. 填写房源信息�?
-   - 标题：`朝阳区精装两居室`
-   - 描述：`交通便利，家具齐全`
-   - 地址：`北京市朝阳区建国�?8号`
-   - 月租金：`0.05`
-   - 其他字段可选填
-4. 点击 **发布房源（AI检测将自动进行�?*
-5. 发布成功后自动跳转到房源详情页，显示 AI 可信度评�?
-
-### 步骤 3：租客申请租�?
-
-1. 退出房东账号，�?**租客** 账号登录
-2. 点击 **「房源�?* �?浏览已发布的房源
-3. 点击进入房源详情 �?点击 **「申请租房�?*
-4. 系统自动生成合同草稿
-
-### 步骤 4：租客签署合�?
-
-1. 在合同页面查看合同内�?
-2. 点击 **「✍�?同意签署（租客）�?*
-3. 签署成功后状态变为「租客已签，待房东签署�?
-
-### 步骤 5：房东签署合同（哈希上链�?
-
-1. 退出租客账号，�?**房东** 账号登录
-2. 点击 **「合同�?* �?找到待签合同
-3. 点击进入合同详情
-4. 连接 MetaMask（点击右上角「绑钱包」）
-5. 确保 MetaMask 切换�?**Hardhat Local** 网络
-6. 点击 **「✍�?同意签署（房东）�?*
-7. MetaMask 弹出交易确认 �?点击 **「确认�?*
-8. 合同哈希自动上链，页面显示「✅ 本合同哈希已上链存证�?
-
-### 步骤 6：验证存�?
-
-1. 点击导航�?**「验证�?*
-2. 选择 **验证合同**
-3. 输入合同 ID（从合同页面复制�?
-4. 点击验证，看到：
-   - �?**哈希匹配: true**
-   - �?**合同自签署以来未被修�?*
+1. 房东登录 -> 发布房源
+2. 租客登录 -> 申请租房
+3. 租客签署合同
+4. 房东签署合同（连接 MetaMask，哈希自动上链）
+5. 验证工具输入合同 ID 查询链上存证
 
 ---
 
-## 🏗�?项目结构详解
+## 常见问题
 
-```
-house-rent/
-├── contracts/
-�?  └── RentalChain.sol        �?智能合约（核心）
-�?      ├── storeListing()      �?房源信息存证
-�?      ├── storeContract()     �?合同哈希上链
-�?      ├── payDeposit()        �?支付押金
-�?      ├── requestRefund()     �?申请退押金
-�?      ├── confirmRefund()     �?全额退押金
-�?      ├── proposeDeduction()  �?扣除部分押金
-�?      ├── acceptDeduction()   �?接受扣款
-�?      ├── disputeDeposit()    �?押金纠纷
-�?      └── resolveDeposit()    �?仲裁裁决
-�?
-├── backend/src/
-�?  ├── index.js               �?后端入口（端�?3000�?
-�?  ├── db.js                  �?SQLite 数据�?
-�?  ├── auth.js                �?JWT 认证
-�?  └── routes/
-�?      ├── auth.js            �?注册/登录
-�?      ├── listings.js        �?房源 API
-�?      ├── contracts.js       �?合同 API
-�?      └── verify.js          �?验证 API
-�?
-├── rental-frontend/src/
-�?  ├── App.jsx                �?应用主路�?
-�?  ├── context/AuthContext.jsx �?登录认证
-�?  └── pages/
-�?      ├── HomePage.jsx       �?首页
-�?      ├── LoginPage.jsx      �?登录/注册
-�?      ├── ListingsPage.jsx   �?房源列表
-�?      ├── ListingDetail.jsx  �?房源详情
-�?      ├── PublishListing.jsx �?发布房源
-�?      ├── ContractPage.jsx   �?合同签署（⭐ 核心�?
-�?      ├── MyContracts.jsx    �?我的合同
-�?      ├── MyListings.jsx     �?我的房源
-�?      ├── ProfilePage.jsx    �?个人中心
-�?      └── VerifyPage.jsx     �?链上验证
-�?
-├── scripts/
-�?  └── deploy_rental.js       �?合约部署脚本
-�?
-└── hardhat.config.js          �?区块链配�?
-```
+- 页面空白？检查四个终端是否都正常运行
+- MetaMask 交易失败？检查网络是否切换到 Hardhat Local
+- 重新开始？删除 backend/database.sqlite 后重启后端
 
 ---
 
-## 🔧 常见问题
-
-### Q：启动后页面空白/报错�?
-检查三个终端是否都正常运行，以及合约地址是否正确配置�?
-
-### Q：MetaMask 提示「交易失败」？
-确保 MetaMask 已切换到 Hardhat Local 网络（chain ID 31337），且账户有测试 ETH�?
-
-### Q：如何重新开始？
-删除 `backend/database.sqlite` 后重启后端，即可清空所有数据重新开始�?
-
-### Q：如何部署到 Sepolia 测试网？
-参�?`scripts/deploy_rental.js`，修�?`hardhat.config.js` 中的 `sepolia` 网络配置�?
-然后执行�?
-```bash
-npx hardhat run scripts/deploy_rental.js --network sepolia
-```
-
----
-
-## 📄 License
+## License
 
 MIT
