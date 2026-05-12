@@ -1,237 +1,293 @@
-# 🏠 信源链 · 区块链租房平台 (RentalChain)
+# 🏠 信源链 · 区块链租房平台
 
-基于以太坊智能合约的分布式租房平台，实现**房源信息存证、电子合同链上签署、押金托管结算**全流程上链。
+基于以太坊智能合约的去中心化租房平台，实现**房源信息存证、电子合同链上签署、押金托管结算**全流程上链。
 
 ---
 
-## 📋 项目结构
+## 📋 项目概述
 
 ```
-├── contracts/
-│   ├── CampusTrade.sol          ← 旧：校园二手交易合约（保留）
-│   └── RentalChain.sol          ← 信源链：房源存证 + 合同存证 + 押金托管
-│
-├── backend/                     ← 后端 API 服务（Node.js + Express + SQLite）
-│   └── src/
-│       ├── index.js             ← 主入口（端口 3001）
-│       ├── db.js                ← SQLite 数据库（自动迁移建表）
-│       ├── auth.js              ← JWT 认证中间件
-│       └── routes/
-│           ├── auth.js          ← 用户注册/登录（手机号+密码+角色）
-│           ├── listings.js      ← 房源 CRUD（含模拟 AI 检测）
-│           ├── contracts.js     ← 合同签署流程（双签 + 哈希上链）
-│           └── verify.js        ← 链上验证工具
-│
-├── rental-frontend/             ← 前端（React 18 + Vite + Tailwind CSS）
-│   └── src/
-│       ├── App.jsx              ← 主路由
-│       ├── context/AuthContext.jsx ← 登录认证 + Web3 钱包
-│       ├── pages/
-│       │   ├── HomePage.jsx     ← 首页
-│       │   ├── LoginPage.jsx    ← 登录/注册页
-│       │   ├── ListingsPage.jsx ← 房源列表（搜索/筛选）
-│       │   ├── ListingDetail.jsx← 房源详情 + 申请租房
-│       │   ├── PublishListing.jsx ← 发布房源（房东）
-│       │   ├── ContractPage.jsx ← 合同签署页（⭐⭐亮点）
-│       │   ├── MyContracts.jsx  ← 我的合同列表
-│       │   ├── MyListings.jsx   ← 我的房源管理（房东）
-│       │   ├── ProfilePage.jsx  ← 个人中心
-│       │   └── VerifyPage.jsx   ← 链上验证工具
-│       └── utils/
-│           ├── api.js           ← API 请求封装
-│           └── RentalChainABI.json ← 合约 ABI
-│
-├── scripts/
-│   ├── deploy.js                ← CampusTrade 部署脚本
-│   └── deploy_rental.js         ← RentalChain 部署脚本
-│
-├── start.bat                    ← Windows 一键启动（本地 Hardhat）
-├── deploy-sepolia.bat           ← 部署到 Sepolia 测试网
-├── hardhat.config.js
-└── .env                         ← 私钥配置（不提交 git）
+contracts/        ← 智能合约（Solidity）
+backend/          ← 后端 API（Node.js + Express + SQLite）
+rental-frontend/  ← 前端页面（React + Vite + Tailwind）
 ```
 
 ---
 
-## 🚀 快速启动（本地开发）
+## 🚀 环境搭建（从零开始）
 
-### 前置条件
+### 1️⃣ 安装前置软件
 
-- [Node.js](https://nodejs.org/) >= 18
-- [MetaMask](https://metamask.io/) 浏览器扩展
-- 可选：[SepoliaETH 测试币](https://sepolia-faucet.pk910.de/)（用于测试网上链）
+| 软件 | 版本要求 | 下载地址 | 用途 |
+|:----|:--------:|:--------:|:----:|
+| **Node.js** | ≥ 18 | https://nodejs.org/ | 运行后端和前端 |
+| **Git** | 任意 | https://git-scm.com/ | 下载代码 |
+| **MetaMask** | 最新 | 浏览器扩展商店 | 区块链钱包 |
 
-### 方式一：直接使用已部署的 Sepolia 合约（无需本地链）
-
-> 合约已部署在 Sepolia 测试网：`0x2282DDE81F8F591D036DF5f710f595038209281b`
+### 2️⃣ 下载项目
 
 ```bash
-# 1. 安装前端依赖
+git clone https://github.com/Asern-l/house-rent.git
+cd house-rent
+```
+
+### 3️⃣ 安装依赖
+
+**三个目录都需要安装**，请依次执行：
+
+```bash
+# 1. 安装智能合约编译工具
+npm install
+
+# 2. 安装后端
+cd backend
+npm install
+cd ..
+
+# 3. 安装前端
 cd rental-frontend
 npm install
-
-# 2. 启动前端
-npm run dev    # → http://localhost:3002
-
-# 3. 安装后端依赖
-cd ../backend
-npm install
-
-# 4. 启动后端
-node src/index.js    # → http://localhost:3001
+cd ..
 ```
 
-**MetaMask 配置**：
-- 网络：Sepolia 测试网
-- 领取测试币后即可使用
+> ⏳ 每个 `npm install` 首次执行可能需要 1-3 分钟，请耐心等待
 
-### 方式二：本地 Hardhat 链 + 重新部署
+### 4️⃣ 编译智能合约
 
 ```bash
-# 双击 start.bat 一键启动
-# 或手动执行：
-
-# 1. 启动本地区块链
-npx hardhat node    # 终端 1
-
-# 2. 部署合约
-npx hardhat run scripts/deploy_rental.js --network localhost   # 终端 2
-
-# 3. 部署后更新合约地址
-# 编辑 rental-frontend/src/pages/ContractPage.jsx 中的 CONTRACT_ADDR
-
-# 4. 启动后端
-cd backend && node src/index.js   # 终端 3
-
-# 5. 启动前端
-cd rental-frontend && npm run dev # 终端 4
+npx hardhat compile
 ```
 
----
+看到 `Compiled 1 Solidity file successfully` 即编译成功。
 
-## 🧪 完整流程测试
+### 5️⃣ 启动本地区块链
 
 ```bash
-# 注册房东
-curl -X POST http://localhost:3001/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"phone":"13800001111","password":"123456","role":"landlord","nickname":"张房东"}'
-
-# 注册租客
-curl -X POST http://localhost:3001/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"phone":"13900002222","password":"123456","role":"tenant","nickname":"李租客"}'
-
-# 房东发布房源（需替换 token）
-curl -X POST http://localhost:3001/api/listings \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <房东token>" \
-  -d '{"title":"朝阳区精装两居室","description":"交通便利","address":"北京市朝阳区","rentAmount":"0.05","depositMonths":2}'
-
-# 租客申请租房（需替换 token）
-curl -X POST http://localhost:3001/api/contracts \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <租客token>" \
-  -d '{"listingId":"<房源ID>"}'
-
-# 租客签署
-curl -X POST http://localhost:3001/api/contracts/<合同ID>/sign-tenant \
-  -H "Authorization: Bearer <租客token>"
-
-# 房东签署（含链上哈希存证）
-curl -X POST http://localhost:3001/api/contracts/<合同ID>/sign-landlord \
-  -H "Authorization: Bearer <房东token>"
-
-# 验证合同存证
-curl http://localhost:3001/api/verify/contract/<合同ID>
+npx hardhat node
 ```
 
----
+这会启动一条本地测试链，并输出 20 个测试账户（每个有 10000 ETH）。**让这个终端保持运行，不要关闭。**
 
-## 🔗 智能合约接口
+```
+终端 1 ── npx hardhat node  ← 本地区块链
+```
 
-### RentalChain.sol — Sepolia: `0x2282DDE81F8F591D036DF5f710f595038209281b`
+### 6️⃣ 部署合约
 
-| 方法 | 说明 | 调用者 |
-|------|------|--------|
-| `storeListing(listingId, aiScore, imageHashes)` | 房源创世存证 | 房东 |
-| `storeContract(contractId, listingId, contractHash, tenant, landlord)` | 合同哈希上链 | 任一方 |
-| `payDeposit(contractId)` | 支付押金到合约 | 租客 |
-| `requestRefund(contractId)` | 申请退押金 | 租客 |
-| `confirmRefund(contractId)` | 确认全额退押金 | 房东 |
-| `proposeDeduction(contractId, amount, reason)` | 提出扣款方案 | 房东 |
-| `acceptDeduction(contractId)` | 接受扣款方案 | 租客 |
-| `disputeDeposit(contractId)` | 发起纠纷 | 任一方 |
-| `resolveDeposit(contractId, toTenant)` | 仲裁裁决 | 管理员 |
-
----
-
-## ⚖️ 法律合规
-
-系统遵循以下法律法规设计：
-
-| 法规 | 对应实现 |
-|------|----------|
-| 《民法典》租赁合同 | 合同模板包含法定必备条款（当事人、标的、租期、租金、押金、违约责任） |
-| 《电子签名法》 | 双方各自签署意愿确认 + 合同哈希上链存证 |
-| 《网络安全法》 | 手机号+密码注册、密码 bcrypt 加密、JWT 令牌认证 |
-| 《个人信息保护法》 | 演示阶段仅收集必要信息（手机号、密码、钱包地址） |
-
-> 演示环境使用手机号代替身份证实名。答辩时说明："生产环境需对接公安部实名认证服务。"
-
----
-
-## 🛡️ 安全措施
-
-- **SQL 注入防御**：所有查询使用 `?` 参数化占位符
-- **密码安全**：bcrypt 哈希（10 轮 salt）
-- **认证**：JWT 令牌（7天过期）
-- **速率限制**：15分钟内每个 IP 最多100次请求，登录接口10次
-- **HTTP 安全头**：helmet 中间件
-- **CORS**：仅允许配置的前端来源
-- **智能合约**：Checks-Effects-Interactions 模式、权限修饰符、管理员仲裁
-
----
-
-## 📝 配置说明
-
-### .env 文件
+**新开一个终端**，执行：
 
 ```bash
-# Sepolia 测试网 RPC
-SEPOLIA_RPC_URL=https://ethereum-sepolia.publicnode.com
-
-# 部署钱包私钥（从 MetaMask 导出，不提交 git）
-# 注意：该钱包需要有 SepoliaETH 作为 Gas 费
-PRIVATE_KEY=your_private_key_here
+# Windows
+cd 项目路径
+npx hardhat run scripts/deploy_rental.js --network localhost
 ```
 
-### 后端配置 (`backend/src/index.js`)
+部署成功后会输出合约地址，例如：
+```
+✅ 部署成功！
+📄 合约地址: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+```
 
-| 配置 | 默认值 | 说明 |
-|------|--------|------|
-| `PORT` | `3001` | API 服务端口 |
-| `JWT_SECRET` | `xinyuanlian-dev-secret-...` | JWT 签名密钥（生产环境需修改） |
+把这个地址记下来，下一步要用。
 
-### 前端配置
+```
+终端 1 ── npx hardhat node       ← 本地区块链
+终端 2 ── hardhat deploy ...     ← 部署合约（执行完可关闭）
+```
 
-| 文件 | 配置项 | 说明 |
-|------|--------|------|
-| `vite.config.js` | `server.port` | 前端端口（默认 3002） |
-| `vite.config.js` | `proxy./api.target` | 后端代理地址 |
-| `pages/ContractPage.jsx` | `CONTRACT_ADDR` | RentalChain 合约地址 |
+### 7️⃣ 配置合约地址
+
+打开 `rental-frontend/src/pages/ContractPage.jsx`，找到：
+
+```javascript
+const CONTRACT_ADDR = '0x...';
+```
+
+把它改为上一步得到的地址。
+
+### 8️⃣ 启动后端
+
+```bash
+# 新开终端
+cd 项目路径/backend
+node src/index.js
+```
+
+看到以下输出即启动成功：
+```
+🏠 信源链 - 区块链租房平台后端
+🌐 http://localhost:3001
+```
+
+```
+终端 1 ── npx hardhat node       ← 本地区块链
+终端 2 ── node src/index.js       ← 后端 API
+```
+
+### 9️⃣ 启动前端
+
+```bash
+# 新开终端
+cd 项目路径/rental-frontend
+npm run dev
+```
+
+浏览器自动打开 `http://localhost:3002`。
+
+```
+终端 1 ── npx hardhat node       ← 本地区块链
+终端 2 ── node src/index.js       ← 后端 API
+终端 3 ── npm run dev             ← 前端页面
+```
+
+### 🔟 配置 MetaMask
+
+1. 打开 MetaMask → 点击网络切换 → **添加网络**
+2. 填写：
+
+| 字段 | 值 |
+|:----|:----|
+| 网络名称 | `Hardhat Local` |
+| RPC URL | `http://127.0.0.1:8545` |
+| 链 ID | `31337` |
+| 货币符号 | `ETH` |
+
+3. 导入测试账户：
+   - MetaMask → 点击圆形头像 → **导入账户**
+   - 私钥：`0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`
+   - 这个账户有 10000 ETH，仅供本地测试
+
+### ✅ 启动完成
+
+访问 **http://localhost:3002**，点击右上角「登录」按钮。
 
 ---
 
-## 🧰 技术栈
+## 🎮 完整使用教程
 
-| 层级 | 技术 | 版本 |
-|------|------|------|
-| 区块链 | Solidity + Hardhat + Ethers.js | 0.8.20 / ^6 |
-| 后端 | Node.js + Express + SQLite | ^24 |
-| 前端 | React + Vite + Tailwind CSS | 18 / 5 / 3 |
-| 合约网络 | Ethereum Sepolia 测试网 | — |
-| 钱包 | MetaMask | — |
+### 步骤 1：注册两个账号（房东 + 租客）
+
+| 角色 | 手机号 | 密码 | 昵称 | 说明 |
+|:----:|:------:|:----:|:----:|:----:|
+| 🔑 房东 | 13800001111 | 123456 | 张房东 | 发布房源 |
+| 🏠 租客 | 13900002222 | 123456 | 李租客 | 租房 |
+
+> 注册时选择正确的角色（房东/租客），**同一个浏览器可以登录后注销再注册另一个账号**
+
+### 步骤 2：房东发布房源
+
+1. 用 **房东** 账号登录
+2. 点击导航栏 **「发布」**
+3. 填写房源信息：
+   - 标题：`朝阳区精装两居室`
+   - 描述：`交通便利，家具齐全`
+   - 地址：`北京市朝阳区建国路88号`
+   - 月租金：`0.05`
+   - 其他字段可选填
+4. 点击 **发布房源（AI检测将自动进行）**
+5. 发布成功后自动跳转到房源详情页，显示 AI 可信度评分
+
+### 步骤 3：租客申请租房
+
+1. 退出房东账号，用 **租客** 账号登录
+2. 点击 **「房源」** → 浏览已发布的房源
+3. 点击进入房源详情 → 点击 **「申请租房」**
+4. 系统自动生成合同草稿
+
+### 步骤 4：租客签署合同
+
+1. 在合同页面查看合同内容
+2. 点击 **「✍️ 同意签署（租客）」**
+3. 签署成功后状态变为「租客已签，待房东签署」
+
+### 步骤 5：房东签署合同（哈希上链）
+
+1. 退出租客账号，用 **房东** 账号登录
+2. 点击 **「合同」** → 找到待签合同
+3. 点击进入合同详情
+4. 连接 MetaMask（点击右上角「绑钱包」）
+5. 确保 MetaMask 切换到 **Hardhat Local** 网络
+6. 点击 **「✍️ 同意签署（房东）」**
+7. MetaMask 弹出交易确认 → 点击 **「确认」**
+8. 合同哈希自动上链，页面显示「✅ 本合同哈希已上链存证」
+
+### 步骤 6：验证存证
+
+1. 点击导航栏 **「验证」**
+2. 选择 **验证合同**
+3. 输入合同 ID（从合同页面复制）
+4. 点击验证，看到：
+   - ✅ **哈希匹配: true**
+   - ✅ **合同自签署以来未被修改**
+
+---
+
+## 🏗️ 项目结构详解
+
+```
+house-rent/
+├── contracts/
+│   └── RentalChain.sol        ← 智能合约（核心）
+│       ├── storeListing()      ← 房源信息存证
+│       ├── storeContract()     ← 合同哈希上链
+│       ├── payDeposit()        ← 支付押金
+│       ├── requestRefund()     ← 申请退押金
+│       ├── confirmRefund()     ← 全额退押金
+│       ├── proposeDeduction()  ← 扣除部分押金
+│       ├── acceptDeduction()   ← 接受扣款
+│       ├── disputeDeposit()    ← 押金纠纷
+│       └── resolveDeposit()    ← 仲裁裁决
+│
+├── backend/src/
+│   ├── index.js               ← 后端入口（端口 3001）
+│   ├── db.js                  ← SQLite 数据库
+│   ├── auth.js                ← JWT 认证
+│   └── routes/
+│       ├── auth.js            ← 注册/登录
+│       ├── listings.js        ← 房源 API
+│       ├── contracts.js       ← 合同 API
+│       └── verify.js          ← 验证 API
+│
+├── rental-frontend/src/
+│   ├── App.jsx                ← 应用主路由
+│   ├── context/AuthContext.jsx ← 登录认证
+│   └── pages/
+│       ├── HomePage.jsx       ← 首页
+│       ├── LoginPage.jsx      ← 登录/注册
+│       ├── ListingsPage.jsx   ← 房源列表
+│       ├── ListingDetail.jsx  ← 房源详情
+│       ├── PublishListing.jsx ← 发布房源
+│       ├── ContractPage.jsx   ← 合同签署（⭐ 核心）
+│       ├── MyContracts.jsx    ← 我的合同
+│       ├── MyListings.jsx     ← 我的房源
+│       ├── ProfilePage.jsx    ← 个人中心
+│       └── VerifyPage.jsx     ← 链上验证
+│
+├── scripts/
+│   └── deploy_rental.js       ← 合约部署脚本
+│
+└── hardhat.config.js          ← 区块链配置
+```
+
+---
+
+## 🔧 常见问题
+
+### Q：启动后页面空白/报错？
+检查三个终端是否都正常运行，以及合约地址是否正确配置。
+
+### Q：MetaMask 提示「交易失败」？
+确保 MetaMask 已切换到 Hardhat Local 网络（chain ID 31337），且账户有测试 ETH。
+
+### Q：如何重新开始？
+删除 `backend/database.sqlite` 后重启后端，即可清空所有数据重新开始。
+
+### Q：如何部署到 Sepolia 测试网？
+参考 `scripts/deploy_rental.js`，修改 `hardhat.config.js` 中的 `sepolia` 网络配置，
+然后执行：
+```bash
+npx hardhat run scripts/deploy_rental.js --network sepolia
+```
 
 ---
 
