@@ -17,7 +17,7 @@ export default function VerifyPage() {
       const { default: axios } = await import('axios');
       const token = localStorage.getItem('token');
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await axios.get(`http://localhost:3001/api/verify/${type}/${id}`, { headers });
+      const res = await axios.get(`/api/verify/${type}/${id}`, { headers });
       setResult(res.data.data);
     } catch (err) {
       toast.error(err.response?.data?.error || '验证失败');
