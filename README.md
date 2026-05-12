@@ -52,7 +52,7 @@ npx hardhat compile
 
 ```ini
 # Sepolia 测试网 RPC URL
-SEPOLIA_RPC_URL=https://rpc.sepolia.org
+SEPOLIA_RPC_URL=https://ethereum-sepolia.publicnode.com
 
 # 部署钱包私钥（需持有 SepoliaETH 作为 Gas 费）
 PRIVATE_KEY=你的钱包私钥
