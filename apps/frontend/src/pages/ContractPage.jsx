@@ -13,8 +13,7 @@ import RentalChainABI from '../shared/blockchain/RentalChainABI.json';
 import toast from 'react-hot-toast';
 import { FileTextIcon, CheckCircleIcon, LoaderIcon, ArrowLeftIcon } from 'lucide-react';
 
-const CONTRACT_ADDR = import.meta.env.VITE_CONTRACT_ADDRESS || '0x5FbDB2315678afecb367f032d93F642f64180aa3';
-const FALLBACK_LOCAL_CONTRACT = '0x5FbDB2315678afecb367f032d93F642f64180aa3';
+const CONTRACT_ADDR = import.meta.env.VITE_CONTRACT_ADDRESS;
 // 函数 1: 生成前端请求追踪ID。
 const genRequestId = () => `web_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 const SEPOLIA_CHAIN_ID_DEC = 11155111;
@@ -27,9 +26,7 @@ const SEPOLIA_PARAMS = {
   blockExplorerUrls: ['https://sepolia.etherscan.io'],
 };
 const NETWORK_OPTIONS = [
-  { key: 'sepolia', label: 'Sepolia（支持）', chainId: SEPOLIA_CHAIN_ID_DEC, supported: true },
-  { key: 'ethereum', label: '以太坊主网（暂不支持）', chainId: 1, supported: false },
-  { key: 'base', label: 'Base（暂不支持）', chainId: 8453, supported: false },
+  { key: 'sepolia', label: 'Sepolia', chainId: SEPOLIA_CHAIN_ID_DEC },
 ];
 
 // 函数 2: 计算一次性支付金额，优先使用合同字段并提供兜底计算。
@@ -92,10 +89,6 @@ export default function ContractPage() {
 
     const requestId = genRequestId();
     const selected = NETWORK_OPTIONS.find((x) => x.key === preferredNetwork) || NETWORK_OPTIONS[0];
-    if (!selected.supported) {
-      toast.error(`${selected.label} 当前暂不支持`);
-      return;
-    }
     setSigning(true);
         // 函数 6: 上报前端签署失败信息到后端日志接口。
     const reportClientFailure = async (payload) => {
@@ -184,8 +177,8 @@ export default function ContractPage() {
 
       if (type === 'landlord' && res.data?.contentHash) {
         try {
-          if (!ethers.isAddress(CONTRACT_ADDR) || CONTRACT_ADDR === FALLBACK_LOCAL_CONTRACT) {
-            toast.error('VITE_CONTRACT_ADDRESS 未配置或仍是本地默认地址');
+          if (!ethers.isAddress(CONTRACT_ADDR)) {
+            toast.error('VITE_CONTRACT_ADDRESS 未配置或格式无效');
             return;
           }
 
@@ -319,10 +312,6 @@ export default function ContractPage() {
     }
 
     const selected = NETWORK_OPTIONS.find((x) => x.key === preferredNetwork) || NETWORK_OPTIONS[0];
-    if (!selected.supported) {
-      toast.error(`${selected.label} 当前暂不支持`);
-      return;
-    }
 
     setPaying(true);
     try {
@@ -335,8 +324,8 @@ export default function ContractPage() {
         });
       }
 
-      if (!ethers.isAddress(CONTRACT_ADDR) || CONTRACT_ADDR === FALLBACK_LOCAL_CONTRACT) {
-        toast.error('VITE_CONTRACT_ADDRESS 未配置或仍是本地默认地址');
+      if (!ethers.isAddress(CONTRACT_ADDR)) {
+        toast.error('VITE_CONTRACT_ADDRESS 未配置或格式无效');
         return;
       }
 

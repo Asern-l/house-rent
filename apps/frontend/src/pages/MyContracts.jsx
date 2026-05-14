@@ -20,7 +20,25 @@ const STATUS_MAP = {
   expired: { label: '已过期', color: 'badge-gray' },
 };
 
-// 函数 1: 页面主组件。
+// 函数 1: 将后端时间字符串格式化为北京时间展示。
+function formatCnDateTime(value) {
+  if (!value) return '-';
+  const text = String(value).trim().replace(' ', 'T');
+  const date = new Date(`${text}Z`);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(date);
+}
+
+// 函数 2: 页面主组件。
 export default function MyContracts() {
   const { user } = useAuth();
   const [contracts, setContracts] = useState([]);
@@ -29,7 +47,7 @@ export default function MyContracts() {
   useEffect(() => {
     let mounted = true;
 
-        // 函数 2: 加载当前用户合同列表。
+        // 函数 3: 加载当前用户合同列表。
     const loadContracts = async () => {
       if (!user) {
         setLoading(false);
@@ -114,7 +132,7 @@ export default function MyContracts() {
                   <div className="text-right">
                     <span className={status.color}>{status.label}</span>
                     <p className="mt-1 text-xs text-gray-400">
-                      {contract.created_at ? String(contract.created_at).slice(0, 10) : '-'}
+                      {formatCnDateTime(contract.created_at)}
                     </p>
                   </div>
                 </div>

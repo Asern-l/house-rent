@@ -17,11 +17,6 @@ function normalizeAmount(value) {
   return n.toFixed(8).replace(/\.?0+$/, '');
 }
 
-// 函数 1: 解析合同 JSON，兼容字符串和对象输入。
-function parseContractContent(contentJson) {
-  return typeof contentJson === 'string' ? JSON.parse(contentJson) : contentJson;
-}
-
 // 函数 2: 判断合同是否为终态。
 function isTerminalStatus(status) {
   return ['cancelled', 'expired', 'ended'].includes(status);
@@ -41,7 +36,29 @@ function normalizeDateOnly(value) {
 function addMonthsDateOnly(startDateOnly, months) {
   const d = new Date(`${startDateOnly}T00:00:00`);
   d.setMonth(d.getMonth() + Number(months));
-  return d.toISOString().slice(0, 10);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+// 函数 6: 生成北京时间日期（YYYY-MM-DD）。
+function getCnDateOnly(date = new Date()) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+// 函数 7: 生成北京时间日期时间（YYYY-MM-DD HH:mm:ss）。
+function getCnDateTime(date = new Date()) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mi = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
 }
 
 // 函数 3: 创建合同接口（租客发起）。
@@ -77,7 +94,7 @@ router.post('/', authMiddleware, requireRole('tenant'), async (req, res) => {
   const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const maxDate = new Date(todayDate);
   maxDate.setDate(maxDate.getDate() + 3);
-  const startDateOnly = normalizeDateOnly(startDate) || todayDate.toISOString().slice(0, 10);
+  const startDateOnly = normalizeDateOnly(startDate) || getCnDateOnly(todayDate);
   const startAt = new Date(`${startDateOnly}T00:00:00`);
   if (startAt < todayDate || startAt > maxDate) {
     return res.status(400).json({ error: '生效日期仅支持今天至未来3天' });
@@ -111,14 +128,14 @@ router.post('/', authMiddleware, requireRole('tenant'), async (req, res) => {
       leaseMonths: leaseMonthsNum,
       minLeaseMonths,
     },
-    createdAt: new Date().toISOString(),
+    createdAt: getCnDateTime(new Date()),
   };
 
   const contentJson = JSON.stringify(content, null, 2);
   const contentHash = `0x${crypto.createHash('sha256').update(contentJson).digest('hex')}`;
-  const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+  const expiresAt = getCnDateTime(new Date(Date.now() + 48 * 60 * 60 * 1000));
 
-  db.run('UPDATE listings SET status = \'locked\', updated_at = datetime(\'now\') WHERE id = ? AND status = \'available\'', [listingId]);
+  db.run('UPDATE listings SET status = \'locked\', updated_at = datetime(\'now\', \'+8 hours\') WHERE id = ? AND status = \'available\'', [listingId]);
   if (db.getRowsModified() !== 1) {
     return res.status(409).json({ error: '房源已被其他租客占用，请刷新后重试' });
   }
@@ -129,7 +146,7 @@ router.post('/', authMiddleware, requireRole('tenant'), async (req, res) => {
       contractId, listingId, req.user.id, listing.landlord_id, contentJson, contentHash, expiresAt,
     ]);
   } catch (error) {
-    db.run('UPDATE listings SET status = \'available\', updated_at = datetime(\'now\') WHERE id = ? AND status = \'locked\'', [listingId]);
+    db.run('UPDATE listings SET status = \'available\', updated_at = datetime(\'now\', \'+8 hours\') WHERE id = ? AND status = \'locked\'', [listingId]);
     throw error;
   }
   saveDb();
@@ -150,7 +167,7 @@ router.post('/:id/sign-tenant', authMiddleware, async (req, res) => {
   }
 
   db.run(
-    'UPDATE contracts SET status = \'tenant_signed\', tenant_signed_at = datetime(\'now\') WHERE id = ? AND status = \'pending\'',
+    'UPDATE contracts SET status = \'tenant_signed\', tenant_signed_at = datetime(\'now\', \'+8 hours\') WHERE id = ? AND status = \'pending\'',
     [req.params.id]
   );
   if (db.getRowsModified() !== 1) {
@@ -173,7 +190,7 @@ router.post('/:id/sign-landlord', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: '当前状态不允许房东签署', currentStatus: contract.status });
     }
 
-    const content = parseContractContent(contract.content_json);
+    const content = contract.content_json;
     const tenantAddress = String(content?.tenant?.walletAddress || '').trim();
     const landlordAddress = String(content?.landlord?.walletAddress || '').trim();
     const addrRe = /^0x[a-fA-F0-9]{40}$/;
@@ -184,7 +201,7 @@ router.post('/:id/sign-landlord', authMiddleware, async (req, res) => {
     }
 
     db.run(
-      'UPDATE contracts SET status = \'pending_payment\', landlord_signed_at = datetime(\'now\') WHERE id = ? AND status = \'tenant_signed\'',
+      'UPDATE contracts SET status = \'pending_payment\', landlord_signed_at = datetime(\'now\', \'+8 hours\') WHERE id = ? AND status = \'tenant_signed\'',
       [req.params.id]
     );
     if (db.getRowsModified() !== 1) {
@@ -277,7 +294,7 @@ router.post('/:id/payments/onchain', authMiddleware, async (req, res) => {
   const paymentId = `pay_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   db.run(
     `INSERT INTO payments (id, contract_id, payer_id, pay_type, amount, period, tx_hash, status, paid_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', datetime('now'))`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', datetime('now', '+8 hours'))`,
     [paymentId, req.params.id, req.user.id, payType, String(amount), period || '', txHash]
   );
 
@@ -289,7 +306,7 @@ router.post('/:id/payments/onchain', authMiddleware, async (req, res) => {
     return res.status(409).json({ error: '合同状态已变化，无法完成生效' });
   }
   db.run(
-    'UPDATE listings SET status = \'rented\', updated_at = datetime(\'now\') WHERE id = ? AND status = \'locked\'',
+    'UPDATE listings SET status = \'rented\', updated_at = datetime(\'now\', \'+8 hours\') WHERE id = ? AND status = \'locked\'',
     [contract.listing_id]
   );
   if (db.getRowsModified() !== 1) {
@@ -333,7 +350,7 @@ router.post('/:id/cancel', authMiddleware, async (req, res) => {
     const hasNonTerminal = siblingContracts.some((item) => !isTerminalStatus(item.status));
     if (!hasNonTerminal) {
       db.run(
-        'UPDATE listings SET status = \'available\', updated_at = datetime(\'now\') WHERE id = ? AND status = \'locked\'',
+        'UPDATE listings SET status = \'available\', updated_at = datetime(\'now\', \'+8 hours\') WHERE id = ? AND status = \'locked\'',
         [contract.listing_id]
       );
     }

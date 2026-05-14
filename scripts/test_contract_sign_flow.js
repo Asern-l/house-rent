@@ -108,7 +108,6 @@ async function main() {
       district: 'Pudong',
       rentAmount: '1.5',
       rentCycle: 'month',
-      prepayMonths: 2,
       imageUrls: [],
     }, landlordToken);
 

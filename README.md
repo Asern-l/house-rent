@@ -86,6 +86,7 @@ npm --prefix blockchain run deploy:sepolia
 ```env
 VITE_CONTRACT_ADDRESS=0x部署输出的合约地址
 ```
+- 当前前端已移除本地默认地址兜底，未配置或配置错误将直接阻断链上操作。
 
 5. 配置后端环境变量
 - 复制：`apps/backend/.env.example` -> `apps/backend/.env`

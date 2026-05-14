@@ -81,8 +81,8 @@ function rebuildListingsTable(d, oldColumns) {
     image_hashes TEXT DEFAULT '[]',
     tx_hash TEXT,
     status TEXT NOT NULL DEFAULT 'available' CHECK(status IN ('available','locked','rented','offline','closed')),
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
   )`);
 
   const hasMinLeaseMonths = oldColumns.includes('min_lease_months');
@@ -111,7 +111,7 @@ async function migrate() {
     role TEXT NOT NULL CHECK(role IN ('landlord','tenant','admin')),
     wallet_address TEXT DEFAULT '',
     nickname TEXT DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
   )`);
 
   d.run(`CREATE TABLE IF NOT EXISTS listings (
@@ -133,8 +133,8 @@ async function migrate() {
     image_hashes TEXT DEFAULT '[]',
     tx_hash TEXT,
     status TEXT NOT NULL DEFAULT 'available' CHECK(status IN ('available','locked','rented','offline','closed')),
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
   )`);
 
   d.run(`CREATE TABLE IF NOT EXISTS contracts (
@@ -149,7 +149,7 @@ async function migrate() {
     tenant_signed_at TEXT,
     landlord_signed_at TEXT,
     tx_hash TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
   )`);
 
   d.run(`CREATE TABLE IF NOT EXISTS payments (
@@ -161,8 +161,8 @@ async function migrate() {
     period TEXT DEFAULT '',
     tx_hash TEXT NOT NULL UNIQUE,
     status TEXT NOT NULL DEFAULT 'confirmed' CHECK(status IN ('pending','confirmed','failed')),
-    paid_at TEXT NOT NULL DEFAULT (datetime('now')),
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    paid_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
     FOREIGN KEY(contract_id) REFERENCES contracts(id)
   )`);
 
@@ -194,7 +194,7 @@ async function migrate() {
       tenant_signed_at TEXT,
       landlord_signed_at TEXT,
       tx_hash TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
     )`);
     d.run(`INSERT INTO contracts_new (
       id, listing_id, tenant_id, landlord_id, content_json, content_hash, status, expires_at, tenant_signed_at, landlord_signed_at, tx_hash, created_at
@@ -218,8 +218,8 @@ async function migrate() {
       period TEXT DEFAULT '',
       tx_hash TEXT NOT NULL UNIQUE,
       status TEXT NOT NULL DEFAULT 'confirmed' CHECK(status IN ('pending','confirmed','failed')),
-      paid_at TEXT NOT NULL DEFAULT (datetime('now')),
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      paid_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
       FOREIGN KEY(contract_id) REFERENCES contracts(id)
     )`);
     d.run(`INSERT INTO payments_new (

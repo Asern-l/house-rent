@@ -18,7 +18,21 @@ function createRequestId() {
   return `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-// 函数 2: 安装基础中间件（安全、跨域、解析、日志、限流）。
+// 函数 2: 生成北京时间字符串（用于接口展示）。
+function formatCnTime(date = new Date()) {
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(date);
+}
+
+// 函数 3: 安装基础中间件（安全、跨域、解析、日志、限流）。
 function setupMiddlewares() {
   app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
   app.use(cors({
@@ -38,7 +52,7 @@ function setupMiddlewares() {
   }));
 }
 
-// 函数 3: 安装请求ID中间件。
+// 函数 4: 安装请求ID中间件。
 function setupRequestId() {
   app.use((req, res, next) => {
     const requestId = String(req.headers['x-request-id'] || '').trim() || createRequestId();
@@ -48,7 +62,7 @@ function setupRequestId() {
   });
 }
 
-// 函数 4: 注册业务路由。
+// 函数 5: 注册业务路由。
 function setupRoutes() {
   app.use('/api/auth', require('./routes/auth'));
   app.use('/api/listings', require('./routes/listings'));
@@ -56,11 +70,12 @@ function setupRoutes() {
   app.use('/api/verify', require('./routes/verify'));
 
   app.get('/api/health', (req, res) => {
-    res.json({ success: true, status: 'ok', now: new Date().toISOString() });
+    const now = new Date();
+    res.json({ success: true, status: 'ok', now: now.toISOString(), nowCn: formatCnTime(now) });
   });
 }
 
-// 函数 5: 注册兜底异常处理。
+// 函数 6: 注册兜底异常处理。
 function setupErrorHandlers() {
   app.use((req, res) => {
     res.status(404).json({ error: '接口不存在' });
@@ -72,7 +87,7 @@ function setupErrorHandlers() {
   });
 }
 
-// 函数 6: 处理超时未支付合同（房东签署后 2 小时）。
+// 函数 7: 处理超时未支付合同（房东签署后 2 小时）。
 async function expirePendingPaymentContracts() {
   const db = await getDb();
   const timeoutContracts = parseResult(db.exec(
@@ -80,7 +95,7 @@ async function expirePendingPaymentContracts() {
      FROM contracts
      WHERE status = 'pending_payment'
        AND landlord_signed_at IS NOT NULL
-       AND datetime(landlord_signed_at, '+2 hours') <= datetime('now')`
+       AND datetime(landlord_signed_at, '+2 hours') <= datetime('now', '+8 hours')`
   ));
   if (timeoutContracts.length === 0) return;
 
@@ -100,7 +115,7 @@ async function expirePendingPaymentContracts() {
     ));
     if (sibling.length === 0) {
       db.run(
-        "UPDATE listings SET status = 'available', updated_at = datetime('now') WHERE id = ? AND status = 'locked'",
+        "UPDATE listings SET status = 'available', updated_at = datetime('now', '+8 hours') WHERE id = ? AND status = 'locked'",
         [item.listing_id]
       );
     }
@@ -109,7 +124,7 @@ async function expirePendingPaymentContracts() {
   saveDb();
 }
 
-// 函数 7: 处理租期到期合同（active -> ended）并释放房源（rented -> available）。
+// 函数 8: 处理租期到期合同（active -> ended）并释放房源（rented -> available）。
 async function expireActiveContractsByEndDate() {
   const db = await getDb();
   const activeContracts = parseResult(db.exec(
@@ -154,7 +169,7 @@ async function expireActiveContractsByEndDate() {
     ));
     if (sibling.length === 0) {
       db.run(
-        "UPDATE listings SET status = 'available', updated_at = datetime('now') WHERE id = ? AND status = 'rented'",
+        "UPDATE listings SET status = 'available', updated_at = datetime('now', '+8 hours') WHERE id = ? AND status = 'rented'",
         [item.listing_id]
       );
     }
@@ -165,7 +180,7 @@ async function expireActiveContractsByEndDate() {
   }
 }
 
-// 函数 8: 启动服务。
+// 函数 9: 启动服务。
 async function startServer() {
   try {
     await migrate();

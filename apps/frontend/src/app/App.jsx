@@ -25,7 +25,6 @@ export default function App() {
   const { user, logout, connectWallet, walletInfo, preferredNetwork, updatePreferredNetwork } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
-  const networkUnsupported = preferredNetwork !== 'sepolia';
 
   const navItems = [
     { path: '/', label: '首页', icon: HomeIcon },
@@ -69,16 +68,14 @@ export default function App() {
             <div className="flex items-center space-x-2">
               {user ? (
                 <div className="hidden md:flex items-center space-x-2">
-                  <div className={`flex items-center gap-2 rounded-lg border px-2 py-1 ${networkUnsupported ? 'border-amber-300 bg-amber-50' : 'border-gray-200 bg-white'}`}>
-                    <span className={`inline-block h-2 w-2 rounded-full ${networkUnsupported ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                  <div className="flex items-center gap-2 rounded-lg border px-2 py-1 border-gray-200 bg-white">
+                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
                     <select
                       className="text-xs bg-transparent text-gray-700 outline-none"
                       value={preferredNetwork}
                       onChange={(e) => updatePreferredNetwork(e.target.value)}
                     >
                       <option value="sepolia">Sepolia</option>
-                      <option value="ethereum">以太坊主网（暂不支持）</option>
-                      <option value="base">Base（暂不支持）</option>
                     </select>
                   </div>
 
@@ -122,8 +119,6 @@ export default function App() {
                     onChange={(e) => updatePreferredNetwork(e.target.value)}
                   >
                     <option value="sepolia">Sepolia</option>
-                    <option value="ethereum">以太坊主网（暂不支持）</option>
-                    <option value="base">Base（暂不支持）</option>
                   </select>
                   {walletInfo && <div className="text-xs text-blue-700 mt-2">{walletInfo.network} | {walletInfo.balanceEth} ETH</div>}
                 </div>
