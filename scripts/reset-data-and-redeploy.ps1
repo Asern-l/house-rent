@@ -46,8 +46,8 @@ Write-Log "Compile and deploy contract to Sepolia"
 
 Push-Location $blockchainDir
 try {
-  & npx hardhat compile
-  & npx hardhat run scripts/deploy_rental.js --network sepolia
+  & npm run compile
+  & npm run deploy:sepolia
 } finally {
   Pop-Location
 }
