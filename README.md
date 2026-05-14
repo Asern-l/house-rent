@@ -1,158 +1,93 @@
-# 信源链 - 区块链租房平台
+﻿# CCL Housing（信源链租房原型）
 
-基于以太坊智能合约的去中心化租房平台，实现**房源信息存证、电子合同链上签署、押金托管结算**全流程上链。
+## 项目简介
+CCL Housing 是一个以“合同签署上链存证”为主线的区块链租房系统原型。  
+当前重点是跑通房源发布、合同签署、合同哈希上链、验真查询的端到端流程。
 
-> ⚠️ **当前部署网络：Sepolia 测试网** — 所有链上交易均为测试网交易，可在 [Sepolia Etherscan](https://sepolia.etherscan.io) 查询
+## 核心功能
+1. 用户与权限
+- 租客/房东双角色注册与登录。
+- JWT 鉴权与个人资料管理（钱包强绑定：首次绑定后不可更改/解绑，仅支持重连同一地址）。
 
----
+2. 房源管理
+- 房东发布房源。
+- 房源列表与详情浏览。
+- 房东可对房源执行上下架。
 
-## 项目概述
+3. 合同签署与上链
+- 租客发起合同。
+- 租客签署、房东签署，合同状态机流转。
+- 房东签署后可调用合约写入合同哈希。
+- 上链交易哈希回写后端用于追踪。
 
-```
-contracts/          <- 智能合约（Solidity）
-backend/            <- 后端 API（Node.js + Express + SQLite）
-rental-frontend/    <- 前端页面（React + Vite + Tailwind）
-```
+4. 验真与日志
+- 按合同ID进行哈希校验和上链状态查询。
+- 签署失败日志自动记录到日志文件。
 
----
+## 架构组成
 
-## 环境搭建（从零开始）
+### 1. 前端（`apps/frontend`）
+- 技术栈：React + Vite + Tailwind。
+- 主要职责：
+  - 登录注册、房源发布/浏览、合同签署流程页面。
+  - 调用 MetaMask 发起链上交易。
+  - 调用后端 API 完成业务状态回写。
 
-### 1. 安装前置软件
+### 2. 后端（`apps/backend`）
+- 技术栈：Node.js + Express + sql.js。
+- 主要职责：
+  - 用户、房源、合同、验真 API。
+  - 合同状态机和权限控制。
+  - 交易哈希回写与签署异常日志记录。
 
-| 软件 | 版本要求 | 下载地址 |
-|:----|:--------:|:--------|
-| Node.js | >= 18 | https://nodejs.org/ |
-| MetaMask | 最新 | 浏览器扩展商店 |
+### 3. 合约（`blockchain`）
+- 技术栈：Solidity + Hardhat。
+- 主要职责：
+  - 房源最小存证（listingId）。
+  - 合同哈希存证。
+  - 押金状态机与租金存证事件（已定义，系统侧部分未闭环）。
 
-### 2. 下载项目
+### 4. 文档与日志
+- `docs`：接口文档、结构文档、待实现清单、部署教程。
+- `logs`：运行期日志（重点为签署错误日志）。
 
-```
-git clone https://github.com/Asern-l/house-rent.git
-cd house-rent
-```
+## 目录结构
+- `apps/backend`：后端源码
+- `apps/frontend`：前端源码
+- `blockchain`：合约与部署脚本
+- `docs`：项目文档
+- `logs`：运行日志
+- `scripts`：一键启动与测试脚本
 
-### 3. 安装依赖
-
-```
-npm install
-cd backend && npm install && cd ..
-cd rental-frontend && npm install && cd ..
-```
-
-### 4. 编译智能合约
-
-```
-npx hardhat compile
-```
-
-### 5. 配置环境变量
-
-在项目根目录创建 `.env` 文件（参考 `.env.example`）：
-
-```ini
-# Sepolia 测试网 RPC URL
-SEPOLIA_RPC_URL=https://ethereum-sepolia.publicnode.com
-
-# 部署钱包私钥（需持有 SepoliaETH 作为 Gas 费）
-PRIVATE_KEY=你的钱包私钥
-```
-
-### 6. 部署合约到 Sepolia 测试网
-
-```
-npx hardhat run scripts/deploy_rental.js --network sepolia
-```
-
-部署成功后会生成 `deployments-rental-sepolia.json`，其中包含合约地址。
-
-### 7. 配置前端合约地址
-
-打开 `rental-frontend/.env`，将部署得到的合约地址填入：
-
-```ini
-VITE_CONTRACT_ADDRESS=0x部署得到的合约地址
-```
-
-### 8. 启动后端
-
-```
-cd backend
-node src/index.js
-```
-
-启动在 http://localhost:3000
-
-### 9. 启动前端
-
-```
-cd rental-frontend
-npm run dev
-```
-
-访问 http://localhost:3001
-
-### 10. 配置 MetaMask
-
-- 网络名称: Sepolia
-- RPC URL: https://rpc.sepolia.org
-- 链 ID: 11155111
-- 货币符号: SepoliaETH
-
-> 💡 如果没有 SepoliaETH，请先到水龙头领取：https://sepoliafaucet.com
-
----
-
-## 使用教程
-
-### 注册账号
-
-| 角色 | 手机号 | 密码 | 昵称 |
-|:----:|:------:|:----:|:----:|
-| 房东 | 13800001111 | 123456 | 张房东 |
-| 租客 | 13900002222 | 123456 | 李租客 |
-
-### 完整流程
-
-1. 房东登录 -> 发布房源
-2. 租客登录 -> 申请租房
-3. 租客签署合同
-4. 房东签署合同（连接 MetaMask，哈希自动上链）
-5. 验证工具输入合同 ID 查询链上存证
-
----
-
-## 重置环境（一键清零）
-
-如需从头开始测试，按以下步骤**完全重置**：
-
+## 快速启动
+1. 安装后端依赖
 ```bash
-# 1. 删除数据库（清除用户、房源、合同等所有业务数据）
-del backend\database.sqlite
-
-# 2. 重新部署合约（获取全新的合约地址）
-npx hardhat run scripts/deploy_rental.js --network sepolia
-
-# 3. 更新前端合约地址
-#    将 rental-frontend/.env 中的 VITE_CONTRACT_ADDRESS 改为新地址
-
-# 4. 重启后端
-cd backend && node src/index.js
+npm --prefix apps/backend install
+```
+2. 安装前端依赖
+```bash
+npm --prefix apps/frontend install
+```
+3. 启动后端
+```bash
+npm --prefix apps/backend run dev
+```
+4. 启动前端
+```bash
+npm --prefix apps/frontend run dev
 ```
 
-> ⚠️ 链上已存证的旧数据仍可在 Sepolia Etherscan 查到，因为区块链不可篡改。重置仅清除本地业务数据和新合约关联。
+或执行一键脚本：
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start-basic-services.ps1
+```
 
----
+## 关键文档
+- 接口文档：`docs/后端接口与前端调用文档.md`
+- 结构说明：`docs/项目结构与文件职责说明.md`
+- 部署教程：`docs/配置与部署教程.md`
+- 待实现清单：`docs/待实现_合同签署模块.md`、`docs/待实现_房源AI评分模块.md`
 
-## 常见问题
-
-- **MetaMask 交易失败？** 检查网络是否切换到 Sepolia，以及钱包是否有足够 SepoliaETH
-- **合约地址不对？** 确认 `rental-frontend/.env` 中的 `VITE_CONTRACT_ADDRESS` 与部署生成的地址一致
-- **重新部署？** 修改合约后重新编译部署，更新前端 `.env` 中的合约地址
-- **数据库重置？** 删除 `backend/database.sqlite` 后重启后端
-
----
-
-## License
-
-MIT
+## 当前范围说明
+- 当前版本以“系统原型可运行”为目标。
+- 房源图片上传、房源上链完整闭环、实名/CA 等功能已记录待实现，未作为当前必做项。
