@@ -13,21 +13,43 @@ import RentalChainABI from '../shared/blockchain/RentalChainABI.json';
 import toast from 'react-hot-toast';
 import { FileTextIcon, CheckCircleIcon, LoaderIcon, ArrowLeftIcon } from 'lucide-react';
 
-const CONTRACT_ADDR = import.meta.env.VITE_CONTRACT_ADDRESS;
+const CONTRACT_ADDR_MAP = {
+  sepolia: import.meta.env.VITE_CONTRACT_ADDRESS_SEPOLIA || '',
+  local: import.meta.env.VITE_CONTRACT_ADDRESS_LOCAL || '',
+};
 // 函数 1: 生成前端请求追踪ID。
 const genRequestId = () => `web_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-const SEPOLIA_CHAIN_ID_DEC = 11155111;
-const SEPOLIA_CHAIN_ID_HEX = '0xaa36a7';
-const SEPOLIA_PARAMS = {
-  chainId: SEPOLIA_CHAIN_ID_HEX,
-  chainName: 'Sepolia 测试网',
-  nativeCurrency: { name: 'SepoliaETH', symbol: 'ETH', decimals: 18 },
-  rpcUrls: ['https://ethereum-sepolia.publicnode.com'],
-  blockExplorerUrls: ['https://sepolia.etherscan.io'],
-};
 const NETWORK_OPTIONS = [
-  { key: 'sepolia', label: 'Sepolia', chainId: SEPOLIA_CHAIN_ID_DEC },
+  {
+    key: 'sepolia',
+    label: 'Sepolia',
+    chainId: 11155111,
+    chainIdHex: '0xaa36a7',
+    addParams: {
+      chainId: '0xaa36a7',
+      chainName: 'Sepolia 测试网',
+      nativeCurrency: { name: 'SepoliaETH', symbol: 'ETH', decimals: 18 },
+      rpcUrls: ['https://ethereum-sepolia.publicnode.com'],
+      blockExplorerUrls: ['https://sepolia.etherscan.io'],
+    },
+  },
+  {
+    key: 'local',
+    label: 'Local EVM (31337)',
+    chainId: 31337,
+    chainIdHex: '0x7a69',
+    addParams: {
+      chainId: '0x7a69',
+      chainName: 'Local EVM (31337)',
+      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+      rpcUrls: ['http://127.0.0.1:8545'],
+    },
+  },
 ];
+const TX_EXPLORER_BASE = {
+  sepolia: 'https://sepolia.etherscan.io/tx/',
+  local: '',
+};
 
 // 函数 2: 计算一次性支付金额，优先使用合同字段并提供兜底计算。
 function resolveInitialAmount(content) {
@@ -56,6 +78,8 @@ export default function ContractPage() {
   const [payments, setPayments] = useState([]);
   const [lastTxHash, setLastTxHash] = useState('');
   const initialAmount = resolveInitialAmount(content);
+  const selectedNetwork = NETWORK_OPTIONS.find((x) => x.key === preferredNetwork) || NETWORK_OPTIONS[0];
+  const txExplorerBase = TX_EXPLORER_BASE[selectedNetwork.key] || '';
 
     // 函数 3: 加载合同详情与合同内容。
   const loadContract = async () => {
@@ -89,6 +113,7 @@ export default function ContractPage() {
 
     const requestId = genRequestId();
     const selected = NETWORK_OPTIONS.find((x) => x.key === preferredNetwork) || NETWORK_OPTIONS[0];
+    const contractAddr = String(CONTRACT_ADDR_MAP[selected.key] || '').trim();
     setSigning(true);
         // 函数 6: 上报前端签署失败信息到后端日志接口。
     const reportClientFailure = async (payload) => {
@@ -110,24 +135,25 @@ export default function ContractPage() {
         try {
           await window.ethereum.request({
             method: 'wallet_switchEthereumChain',
-            params: [{ chainId: SEPOLIA_CHAIN_ID_HEX }],
+            params: [{ chainId: selected.chainIdHex }],
           });
         } catch (switchErr) {
           try {
             await window.ethereum.request({
               method: 'wallet_addEthereumChain',
-              params: [SEPOLIA_PARAMS],
+              params: [selected.addParams],
             });
             await window.ethereum.request({
               method: 'wallet_switchEthereumChain',
-              params: [{ chainId: SEPOLIA_CHAIN_ID_HEX }],
+              params: [{ chainId: selected.chainIdHex }],
             });
           } catch {
-            await reportClientFailure({
-              type,
-              message: 'wallet_switchEthereumChain 调用失败',
-              apiStatus: null,
-              apiError: { reason: 'switch_to_sepolia_failed' },
+        await reportClientFailure({
+          type,
+          preferredNetwork: selected.key,
+          message: 'wallet_switchEthereumChain 调用失败',
+          apiStatus: null,
+          apiError: { reason: 'switch_to_sepolia_failed' },
               walletAddress: '',
               chainId: String(net.chainId),
               pageUrl: window.location.href,
@@ -143,6 +169,7 @@ export default function ContractPage() {
       if (!ethers.isAddress(signerAddress)) {
         await reportClientFailure({
           type,
+          preferredNetwork: selected.key,
           message: 'MetaMask 返回的钱包地址无效',
           apiStatus: null,
           apiError: { reason: 'invalid_wallet_address' },
@@ -158,6 +185,7 @@ export default function ContractPage() {
       if (boundAddress && boundAddress !== signerAddress.toLowerCase()) {
         await reportClientFailure({
           type,
+          preferredNetwork: selected.key,
           message: '钱包地址不匹配',
           apiStatus: null,
           apiError: { reason: 'wallet_mismatch', boundAddress },
@@ -177,8 +205,8 @@ export default function ContractPage() {
 
       if (type === 'landlord' && res.data?.contentHash) {
         try {
-          if (!ethers.isAddress(CONTRACT_ADDR)) {
-            toast.error('VITE_CONTRACT_ADDRESS 未配置或格式无效');
+          if (!ethers.isAddress(contractAddr)) {
+            toast.error(`VITE_CONTRACT_ADDRESS_${selected.key.toUpperCase()} 未配置或格式无效`);
             return;
           }
 
@@ -194,7 +222,7 @@ export default function ContractPage() {
           }
 
           const signer = await provider.getSigner();
-          const rContract = new ethers.Contract(CONTRACT_ADDR, RentalChainABI, signer);
+          const rContract = new ethers.Contract(contractAddr, RentalChainABI, signer);
           const tx = await rContract.storeContract(
             id,
             contract?.listing_id || '',
@@ -214,6 +242,7 @@ export default function ContractPage() {
         } catch (err) {
           await reportClientFailure({
             type,
+            preferredNetwork: selected.key,
             message: err?.message || 'onchain_failed',
             apiStatus: err.response?.status || null,
             apiError: err.response?.data || { reason: 'onchain_failed' },
@@ -247,6 +276,7 @@ export default function ContractPage() {
 
       await reportClientFailure({
         type,
+        preferredNetwork: selected.key,
         message: err?.message || '',
         apiStatus: err.response?.status || null,
         apiError: apiErr || null,
@@ -287,6 +317,7 @@ export default function ContractPage() {
         `/contracts/${id}/sign-client-report`,
         {
           type: 'cancel',
+          preferredNetwork,
           message: err?.message || '取消合同失败',
           apiStatus: err.response?.status || null,
           apiError: err.response?.data || null,
@@ -312,6 +343,7 @@ export default function ContractPage() {
     }
 
     const selected = NETWORK_OPTIONS.find((x) => x.key === preferredNetwork) || NETWORK_OPTIONS[0];
+    const contractAddr = String(CONTRACT_ADDR_MAP[selected.key] || '').trim();
 
     setPaying(true);
     try {
@@ -320,12 +352,12 @@ export default function ContractPage() {
       if (Number(network.chainId) !== selected.chainId) {
         await window.ethereum.request({
           method: 'wallet_switchEthereumChain',
-          params: [{ chainId: SEPOLIA_CHAIN_ID_HEX }],
+          params: [{ chainId: selected.chainIdHex }],
         });
       }
 
-      if (!ethers.isAddress(CONTRACT_ADDR)) {
-        toast.error('VITE_CONTRACT_ADDRESS 未配置或格式无效');
+      if (!ethers.isAddress(contractAddr)) {
+        toast.error(`VITE_CONTRACT_ADDRESS_${selected.key.toUpperCase()} 未配置或格式无效`);
         return;
       }
 
@@ -339,7 +371,7 @@ export default function ContractPage() {
 
       const weiAmount = ethers.parseEther(String(initialAmount));
       const orderNo = `order_${Date.now()}`;
-      const rContract = new ethers.Contract(CONTRACT_ADDR, RentalChainABI, signer);
+      const rContract = new ethers.Contract(contractAddr, RentalChainABI, signer);
       const tx = await rContract.recordRentPayment(
         id,
         content?.tenant?.walletAddress || ethers.ZeroAddress,
@@ -421,10 +453,16 @@ export default function ContractPage() {
                   <p className="font-medium">合同哈希已上链</p>
                   <p className="text-xs mt-1 font-mono break-all">TxHash: {contract.tx_hash}</p>
                   <p className="text-xs mt-1">
-                    查看{' '}
-                    <a href={`https://sepolia.etherscan.io/tx/${contract.tx_hash}`} target="_blank" className="underline" rel="noreferrer">
-                      区块浏览器
-                    </a>
+                    {txExplorerBase ? (
+                      <>
+                        查看{' '}
+                        <a href={`${txExplorerBase}${contract.tx_hash}`} target="_blank" className="underline" rel="noreferrer">
+                          区块浏览器
+                        </a>
+                      </>
+                    ) : (
+                      'Local 网络暂无区块浏览器链接'
+                    )}
                   </p>
                 </div>
               </div>
@@ -436,10 +474,16 @@ export default function ContractPage() {
                   <p className="font-medium">最新交易</p>
                   <p className="text-xs mt-1 font-mono break-all">TxHash: {lastTxHash}</p>
                   <p className="text-xs mt-1">
-                    查看{' '}
-                    <a href={`https://sepolia.etherscan.io/tx/${lastTxHash}`} target="_blank" className="underline" rel="noreferrer">
-                      区块浏览器
-                    </a>
+                    {txExplorerBase ? (
+                      <>
+                        查看{' '}
+                        <a href={`${txExplorerBase}${lastTxHash}`} target="_blank" className="underline" rel="noreferrer">
+                          区块浏览器
+                        </a>
+                      </>
+                    ) : (
+                      'Local 网络暂无区块浏览器链接'
+                    )}
                   </p>
                 </div>
               </div>
@@ -501,6 +545,7 @@ export default function ContractPage() {
     </div>
   );
 }
+
 
 
 

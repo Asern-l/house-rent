@@ -6,10 +6,18 @@ const initSqlJs = require('sql.js');
 const fs = require('fs');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, '..', 'data', 'database.sqlite');
+// 函数 1: 解析链环境标识并返回标准值。
+function resolveChainEnv() {
+  const raw = String(process.env.CHAIN_ENV || 'sepolia').trim().toLowerCase();
+  if (raw === 'local') return 'local';
+  return 'sepolia';
+}
+
+const CHAIN_ENV = resolveChainEnv();
+const DB_PATH = path.join(__dirname, '..', 'data', `database.${CHAIN_ENV}.sqlite`);
 let db;
 
-// 函数 1: 确保数据库目录存在。
+// 函数 2: 确保数据库目录存在。
 function ensureDataDir() {
   const dir = path.dirname(DB_PATH);
   if (!fs.existsSync(dir)) {
@@ -17,7 +25,7 @@ function ensureDataDir() {
   }
 }
 
-// 函数 2: 获取数据库连接（惰性初始化）。
+// 函数 3: 获取数据库连接（惰性初始化）。
 async function getDb() {
   if (db) return db;
   ensureDataDir();
@@ -31,14 +39,14 @@ async function getDb() {
   return db;
 }
 
-// 函数 3: 将内存数据库持久化到磁盘。
+// 函数 4: 将内存数据库持久化到磁盘。
 function saveDb() {
   if (!db) return;
   ensureDataDir();
   fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
 }
 
-// 函数 4: 将 sql.js 查询结果转换为对象数组。
+// 函数 5: 将 sql.js 查询结果转换为对象数组。
 function parseResult(result) {
   if (!result.length || !result[0].values.length) return [];
   const { columns, values } = result[0];
@@ -60,7 +68,7 @@ function parseResult(result) {
   });
 }
 
-// 函数 5: 重建 listings 表结构，移除预付字段并保留状态机字段。
+// 函数 6: 重建 listings 表结构，移除预付字段并保留状态机字段。
 function rebuildListingsTable(d, oldColumns) {
   d.run(`CREATE TABLE listings_new (
     id TEXT PRIMARY KEY,
@@ -101,19 +109,9 @@ function rebuildListingsTable(d, oldColumns) {
   d.run('ALTER TABLE listings_new RENAME TO listings');
 }
 
-// 函数 5: 执行数据库表结构迁移。
+// 函数 7: 执行数据库表结构迁移。
 async function migrate() {
   const d = await getDb();
-  d.run(`CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    phone TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('landlord','tenant','admin')),
-    wallet_address TEXT DEFAULT '',
-    nickname TEXT DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
-  )`);
-
   d.run(`CREATE TABLE IF NOT EXISTS listings (
     id TEXT PRIMARY KEY,
     landlord_id TEXT NOT NULL,
@@ -235,7 +233,7 @@ async function migrate() {
   }
 
   saveDb();
-  console.log('数据库迁移完成');
+  console.log(`数据库迁移完成（CHAIN_ENV=${CHAIN_ENV}，DB=${DB_PATH}）`);
 }
 
-module.exports = { getDb, saveDb, migrate, parseResult };
+module.exports = { getDb, saveDb, migrate, parseResult, CHAIN_ENV, DB_PATH };

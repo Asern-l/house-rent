@@ -4,7 +4,7 @@
  * - 提供全局目标网络切换、钱包状态展示与移动端菜单。
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
 import { useAuth } from './providers/AuthContext';
 import { HomeIcon, SearchIcon, PlusCircleIcon, FileTextIcon, UserIcon, MenuIcon, XIcon, ShieldCheckIcon, LogOutIcon, WalletIcon } from 'lucide-react';
@@ -24,6 +24,7 @@ import VerifyPage from '../pages/VerifyPage';
 export default function App() {
   const { user, logout, connectWallet, walletInfo, preferredNetwork, updatePreferredNetwork } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [backendHealth, setBackendHealth] = useState({ sepolia: null, local: null });
   const location = useLocation();
 
   const navItems = [
@@ -36,6 +37,30 @@ export default function App() {
 
   // 函数 2: 判断导航项是否为当前激活路由。
   const isActive = (p) => location.pathname === p;
+
+  // 函数 3: 检测前后端代理对应的网络后端是否可用。
+  useEffect(() => {
+    let mounted = true;
+    const check = async () => {
+      const checks = await Promise.allSettled([
+        fetch('/api/health'),
+        fetch('/api-local/health'),
+      ]);
+      if (!mounted) return;
+      const sepoliaOk = checks[0].status === 'fulfilled' && checks[0].value.ok;
+      const localOk = checks[1].status === 'fulfilled' && checks[1].value.ok;
+      setBackendHealth({ sepolia: sepoliaOk, local: localOk });
+    };
+
+    check();
+    const timer = setInterval(check, 10000);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  const selectedBackendOk = preferredNetwork === 'local' ? backendHealth.local : backendHealth.sepolia;
 
   if (location.pathname === '/login') {
     return <LoginPage />;
@@ -68,17 +93,17 @@ export default function App() {
             <div className="flex items-center space-x-2">
               {user ? (
                 <div className="hidden md:flex items-center space-x-2">
-                  <div className="flex items-center gap-2 rounded-lg border px-2 py-1 border-gray-200 bg-white">
-                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+                  <div className={`flex items-center gap-2 rounded-lg border px-2 py-1 ${selectedBackendOk === false ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-white'}`}>
+                    <span className={`inline-block h-2 w-2 rounded-full ${selectedBackendOk === false ? 'bg-red-500' : 'bg-emerald-500'}`} />
                     <select
                       className="text-xs bg-transparent text-gray-700 outline-none"
                       value={preferredNetwork}
                       onChange={(e) => updatePreferredNetwork(e.target.value)}
                     >
                       <option value="sepolia">Sepolia</option>
+                      <option value="local">Local EVM (31337)</option>
                     </select>
                   </div>
-
                   {walletInfo && (
                     <div className="text-xs bg-blue-50 text-blue-700 rounded-lg px-2 py-1 border border-blue-100">
                       {walletInfo.network} | {walletInfo.balanceEth} ETH
@@ -114,11 +139,12 @@ export default function App() {
                 <div className="mb-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
                   <div className="text-xs text-gray-500 mb-1">目标网络</div>
                   <select
-                    className="w-full text-sm bg-white border border-gray-200 rounded-md px-2 py-2 text-gray-700"
+                    className={`w-full text-sm bg-white rounded-md px-2 py-2 text-gray-700 ${selectedBackendOk === false ? 'border border-red-300 bg-red-50' : 'border border-gray-200'}`}
                     value={preferredNetwork}
                     onChange={(e) => updatePreferredNetwork(e.target.value)}
                   >
                     <option value="sepolia">Sepolia</option>
+                    <option value="local">Local EVM (31337)</option>
                   </select>
                   {walletInfo && <div className="text-xs text-blue-700 mt-2">{walletInfo.network} | {walletInfo.balanceEth} ETH</div>}
                 </div>
@@ -185,6 +211,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 

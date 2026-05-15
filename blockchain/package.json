@@ -4,11 +4,14 @@
   "private": true,
   "scripts": {
     "compile": "hardhat compile",
-    "deploy:sepolia": "hardhat run scripts/deploy_rental.js --network sepolia"
+    "deploy:sepolia": "hardhat run scripts/deploy_rental.js --network sepolia",
+    "deploy:local": "hardhat run scripts/deploy_rental.js --network localhost",
+    "node:local": "ganache --server.host 127.0.0.1 --server.port 8545 --chain.chainId 31337 --database.dbPath ./.ganache-db"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "dotenv": "^16.6.1",
+    "ganache": "^7.9.2",
     "hardhat": "^2.22.10"
   }
 }

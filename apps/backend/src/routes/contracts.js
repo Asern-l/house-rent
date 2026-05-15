@@ -5,6 +5,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const { getDb, saveDb, parseResult } = require('../db');
+const { getUserDb, parseResult: parseUserResult } = require('../user-db');
 const { authMiddleware, requireRole } = require('../auth');
 const { logSignFlow } = require('../logger');
 
@@ -69,6 +70,7 @@ router.post('/', authMiddleware, requireRole('tenant'), async (req, res) => {
   }
 
   const db = await getDb();
+  const userDb = await getUserDb();
   const listings = parseResult(db.exec('SELECT * FROM listings WHERE id = ?', [listingId]));
   if (!listings.length) return res.status(404).json({ error: '房源不存在' });
   const listing = listings[0];
@@ -100,8 +102,11 @@ router.post('/', authMiddleware, requireRole('tenant'), async (req, res) => {
     return res.status(400).json({ error: '生效日期仅支持今天至未来3天' });
   }
 
-  const [tenant] = parseResult(db.exec('SELECT * FROM users WHERE id = ?', [req.user.id]));
-  const [landlord] = parseResult(db.exec('SELECT * FROM users WHERE id = ?', [listing.landlord_id]));
+  const [tenant] = parseUserResult(userDb.exec('SELECT * FROM users WHERE id = ?', [req.user.id]));
+  const [landlord] = parseUserResult(userDb.exec('SELECT * FROM users WHERE id = ?', [listing.landlord_id]));
+  if (!tenant || !landlord) {
+    return res.status(400).json({ error: '用户信息不存在，请重新登录后重试' });
+  }
   const rentAmount = normalizeAmount(listing.rent_amount);
   if (!rentAmount) {
     return res.status(400).json({ error: '房源租金配置无效，请房东先修正房源信息' });

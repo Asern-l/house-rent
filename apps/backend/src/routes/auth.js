@@ -5,7 +5,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { getDb, saveDb, parseResult } = require('../db');
+const { getUserDb, saveUserDb, parseResult } = require('../user-db');
 const { JWT_SECRET, authMiddleware } = require('../auth');
 
 const router = express.Router();
@@ -32,7 +32,7 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: '钱包地址格式不正确' });
     }
 
-    const db = await getDb();
+    const db = await getUserDb();
     const exists = parseResult(db.exec('SELECT id FROM users WHERE phone = ?', [phone]));
     if (exists.length) {
       return res.status(409).json({ error: '手机号已注册' });
@@ -44,7 +44,7 @@ router.post('/register', async (req, res) => {
       'INSERT INTO users (id, phone, password_hash, role, wallet_address, nickname) VALUES (?, ?, ?, ?, ?, ?)',
       [userId, phone, hash, role, walletAddress, nickname]
     );
-    saveDb();
+    saveUserDb();
 
     const token = jwt.sign({ id: userId, phone, role }, JWT_SECRET, { expiresIn: '7d' });
     res.json({ success: true, data: { token, user: { id: userId, phone, role, walletAddress, nickname } } });
@@ -60,7 +60,7 @@ router.post('/login', async (req, res) => {
     if (!phone || !password) {
       return res.status(400).json({ error: '手机号和密码不能为空' });
     }
-    const db = await getDb();
+    const db = await getUserDb();
     const users = parseResult(db.exec('SELECT * FROM users WHERE phone = ?', [phone]));
     if (!users.length) {
       return res.status(401).json({ error: '账号或密码错误' });
@@ -93,7 +93,7 @@ router.post('/login', async (req, res) => {
 
 // 函数 4: 获取当前用户信息接口。
 router.get('/me', authMiddleware, async (req, res) => {
-  const db = await getDb();
+  const db = await getUserDb();
   const users = parseResult(db.exec(
     'SELECT id, phone, role, wallet_address, nickname, created_at FROM users WHERE id = ?',
     [req.user.id]
@@ -107,7 +107,7 @@ router.get('/me', authMiddleware, async (req, res) => {
 // 函数 5: 更新当前用户信息接口。
 router.put('/me', authMiddleware, async (req, res) => {
   const { nickname, walletAddress } = req.body;
-  const db = await getDb();
+  const db = await getUserDb();
   if (nickname !== undefined) {
     db.run('UPDATE users SET nickname = ? WHERE id = ?', [nickname, req.user.id]);
   }
@@ -130,7 +130,7 @@ router.put('/me', authMiddleware, async (req, res) => {
       }
     }
   }
-  saveDb();
+  saveUserDb();
   res.json({ success: true, message: '用户信息更新成功' });
 });
 

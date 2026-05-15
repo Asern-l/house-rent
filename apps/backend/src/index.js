@@ -8,7 +8,8 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
-const { migrate, getDb, parseResult, saveDb } = require('./db');
+const { migrate, getDb, parseResult, saveDb, CHAIN_ENV, DB_PATH } = require('./db');
+const { getUserDb, USER_DB_PATH } = require('./user-db');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -71,7 +72,14 @@ function setupRoutes() {
 
   app.get('/api/health', (req, res) => {
     const now = new Date();
-    res.json({ success: true, status: 'ok', now: now.toISOString(), nowCn: formatCnTime(now) });
+    res.json({
+      success: true,
+      status: 'ok',
+      now: now.toISOString(),
+      nowCn: formatCnTime(now),
+      chainEnv: CHAIN_ENV,
+      dbFile: DB_PATH,
+    });
   });
 }
 
@@ -183,6 +191,7 @@ async function expireActiveContractsByEndDate() {
 // 函数 9: 启动服务。
 async function startServer() {
   try {
+    await getUserDb();
     await migrate();
     setInterval(() => {
       expirePendingPaymentContracts().catch((err) => {
@@ -193,7 +202,8 @@ async function startServer() {
       });
     }, 60 * 1000);
     app.listen(PORT, () => {
-      console.log(`后端启动成功: http://localhost:${PORT}`);
+      console.log(`后端启动成功: http://localhost:${PORT} (CHAIN_ENV=${CHAIN_ENV})`);
+      console.log(`共享账号库: ${USER_DB_PATH}`);
     });
   } catch (error) {
     console.error('后端启动失败:', error);

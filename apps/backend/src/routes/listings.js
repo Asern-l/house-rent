@@ -5,6 +5,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const { getDb, saveDb, parseResult } = require('../db');
+const { getUserDb, parseResult: parseUserResult } = require('../user-db');
 const { authMiddleware, requireRole } = require('../auth');
 const { logListingError } = require('../logger');
 
@@ -15,6 +16,30 @@ function normalizeAmount(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return null;
   return n.toFixed(8).replace(/\.?0+$/, '');
+}
+
+// 函数 2: 批量补齐房东昵称与手机号。
+async function attachLandlordProfile(rows) {
+  if (!rows.length) return rows;
+  const userDb = await getUserDb();
+  const landlordIds = [...new Set(rows.map((item) => item.landlord_id).filter(Boolean))];
+  if (landlordIds.length === 0) return rows;
+
+  const placeholders = landlordIds.map(() => '?').join(',');
+  const users = parseUserResult(userDb.exec(
+    `SELECT id, nickname, phone FROM users WHERE id IN (${placeholders})`,
+    landlordIds
+  ));
+  const profileMap = new Map(users.map((u) => [u.id, u]));
+
+  return rows.map((item) => {
+    const profile = profileMap.get(item.landlord_id) || {};
+    return {
+      ...item,
+      landlord_name: profile.nickname || '',
+      landlord_phone: profile.phone || '',
+    };
+  });
 }
 
 // 函数 2: 发布房源接口（房东）。
@@ -67,21 +92,22 @@ router.post('/', authMiddleware, requireRole('landlord'), async (req, res) => {
   }
 });
 
-// 函数 2: 获取房源列表接口。
+// 函数 3: 获取房源列表接口。
 router.get('/', async (req, res) => {
   const { keyword = '', status = 'available' } = req.query;
   const db = await getDb();
   const rows = parseResult(db.exec(
-    `SELECT l.*, u.nickname AS landlord_name, u.phone AS landlord_phone
-     FROM listings l JOIN users u ON l.landlord_id = u.id
-     WHERE l.status = ? AND (l.title LIKE ? OR l.description LIKE ? OR l.address LIKE ?)
-     ORDER BY l.created_at DESC`,
+    `SELECT *
+     FROM listings
+     WHERE status = ? AND (title LIKE ? OR description LIKE ? OR address LIKE ?)
+     ORDER BY created_at DESC`,
     [status, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`]
   ));
-  res.json({ success: true, data: rows, total: rows.length });
+  const data = await attachLandlordProfile(rows);
+  res.json({ success: true, data, total: data.length });
 });
 
-// 函数 3: 获取当前房东房源列表接口。
+// 函数 4: 获取当前房东房源列表接口。
 router.get('/my', authMiddleware, requireRole('landlord'), async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec(
@@ -91,21 +117,23 @@ router.get('/my', authMiddleware, requireRole('landlord'), async (req, res) => {
   res.json({ success: true, data: rows });
 });
 
-// 函数 4: 获取房源详情接口。
+// 函数 5: 获取房源详情接口。
 router.get('/:id', async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec(
-    `SELECT l.*, u.nickname AS landlord_name, u.phone AS landlord_phone
-     FROM listings l JOIN users u ON l.landlord_id = u.id WHERE l.id = ?`,
+    `SELECT *
+     FROM listings
+     WHERE id = ?`,
     [req.params.id]
   ));
   if (!rows.length) {
     return res.status(404).json({ error: '房源不存在' });
   }
-  res.json({ success: true, data: rows[0] });
+  const [detail] = await attachLandlordProfile(rows);
+  res.json({ success: true, data: detail });
 });
 
-// 函数 5: 更新房源状态接口（房东上下架）。
+// 函数 6: 更新房源状态接口（房东上下架）。
 router.put('/:id/status', authMiddleware, requireRole('landlord'), async (req, res) => {
   const { status } = req.body;
   if (!['available', 'offline'].includes(status)) {

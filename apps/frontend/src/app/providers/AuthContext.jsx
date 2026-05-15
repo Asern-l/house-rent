@@ -9,14 +9,19 @@ import axios from 'axios';
 import { ethers } from 'ethers';
 import toast from 'react-hot-toast';
 
-const API_BASE = '/api';
 const AuthContext = createContext(null);
+const DEFAULT_NETWORK = String(import.meta.env.VITE_DEFAULT_NETWORK || 'sepolia').trim().toLowerCase();
+const API_BASE_MAP = {
+  sepolia: import.meta.env.VITE_API_BASE_SEPOLIA || '/api',
+  local: import.meta.env.VITE_API_BASE_LOCAL || '/api-local',
+};
+const AUTH_API_BASE = import.meta.env.VITE_API_BASE_AUTH || '/api-auth';
 
 // 函数 1: 根据链ID转换为可读网络名称。
 function networkName(chainId) {
   const id = Number(chainId);
   if (id === 11155111) return 'Sepolia';
-  if (id === 31337) return 'Hardhat';
+  if (id === 31337) return 'Local EVM';
   if (id === 1) return 'Ethereum';
   return `Chain ${id}`;
 }
@@ -33,19 +38,14 @@ const NETWORK_CONFIG = {
       blockExplorerUrls: ['https://sepolia.etherscan.io'],
     },
   },
-  ethereum: {
-    chainIdDec: 1,
-    chainIdHex: '0x1',
-  },
-  base: {
-    chainIdDec: 8453,
-    chainIdHex: '0x2105',
+  local: {
+    chainIdDec: 31337,
+    chainIdHex: '0x7a69',
     addParams: {
-      chainId: '0x2105',
-      chainName: 'Base',
+      chainId: '0x7a69',
+      chainName: 'Local EVM (31337)',
       nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-      rpcUrls: ['https://mainnet.base.org'],
-      blockExplorerUrls: ['https://basescan.org'],
+      rpcUrls: ['http://127.0.0.1:8545'],
     },
   },
 };
@@ -55,22 +55,54 @@ function isWalletAddress(addr) {
   return /^0x[a-fA-F0-9]{40}$/.test(String(addr || '').trim());
 }
 
+// 函数 3: 获取当前网络对应的本地存储键名。
+function storageKeys(network) {
+  return {
+    token: `token:${network}`,
+    user: `user:${network}`,
+  };
+}
+
+// 函数 4: 获取当前网络 API 前缀。
+function apiBaseByNetwork(network) {
+  return API_BASE_MAP[network] || '/api';
+}
+
 // 函数 2: 鉴权上下文提供者，统一管理用户与钱包状态。
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [walletInfo, setWalletInfo] = useState(null);
-  const [preferredNetwork, setPreferredNetwork] = useState(() => localStorage.getItem('preferredNetwork') || 'sepolia');
+  const [preferredNetwork, setPreferredNetwork] = useState(() => {
+    const saved = String(localStorage.getItem('preferredNetwork') || '').trim().toLowerCase();
+    if (NETWORK_CONFIG[saved]) return saved;
+    return NETWORK_CONFIG[DEFAULT_NETWORK] ? DEFAULT_NETWORK : 'sepolia';
+  });
+
+  // 函数 5: 读取当前网络会话。
+  const loadSessionForNetwork = useCallback((networkKey) => {
+    const keys = storageKeys(networkKey);
+    const token = localStorage.getItem(keys.token);
+    const savedUser = localStorage.getItem(keys.user);
+    if (token && savedUser) {
+      try {
+        const parsed = JSON.parse(savedUser);
+        setUser(parsed);
+        axios.defaults.headers.common.Authorization = `Bearer ${token}`;
+        return;
+      } catch {
+        localStorage.removeItem(keys.user);
+        localStorage.removeItem(keys.token);
+      }
+    }
+    setUser(null);
+    delete axios.defaults.headers.common.Authorization;
+  }, []);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    const savedUser = localStorage.getItem('user');
-    if (token && savedUser) {
-      setUser(JSON.parse(savedUser));
-      axios.defaults.headers.common.Authorization = `Bearer ${token}`;
-    }
+    loadSessionForNetwork(preferredNetwork);
     setLoading(false);
-  }, []);
+  }, [preferredNetwork, loadSessionForNetwork]);
 
     // 函数 3: 刷新当前钱包网络与余额信息。
   const refreshWalletInfo = useCallback(async () => {
@@ -110,34 +142,37 @@ export function AuthProvider({ children }) {
     };
   }, [refreshWalletInfo]);
 
-    // 函数 6: 用户登录并写入本地会话。
+    // 函数 6: 用户登录并写入当前网络会话。
   const login = async (phone, password) => {
-    const res = await axios.post(`${API_BASE}/auth/login`, { phone, password });
+    const res = await axios.post(`${AUTH_API_BASE}/auth/login`, { phone, password });
     const { token, user: userData } = res.data.data;
-    localStorage.setItem('token', token);
-    localStorage.setItem('user', JSON.stringify(userData));
+    const keys = storageKeys(preferredNetwork);
+    localStorage.setItem(keys.token, token);
+    localStorage.setItem(keys.user, JSON.stringify(userData));
     axios.defaults.headers.common.Authorization = `Bearer ${token}`;
     setUser(userData);
     return userData;
   };
 
-    // 函数 7: 用户注册并写入本地会话。
+    // 函数 7: 用户注册并写入当前网络会话。
   const register = async (phone, password, role, nickname, walletAddress) => {
-    const res = await axios.post(`${API_BASE}/auth/register`, {
+    const res = await axios.post(`${AUTH_API_BASE}/auth/register`, {
       phone, password, role, nickname, walletAddress,
     });
     const { token, user: userData } = res.data.data;
-    localStorage.setItem('token', token);
-    localStorage.setItem('user', JSON.stringify(userData));
+    const keys = storageKeys(preferredNetwork);
+    localStorage.setItem(keys.token, token);
+    localStorage.setItem(keys.user, JSON.stringify(userData));
     axios.defaults.headers.common.Authorization = `Bearer ${token}`;
     setUser(userData);
     return userData;
   };
 
-    // 函数 8: 退出登录并清理本地状态。
+    // 函数 8: 退出登录并清理当前网络会话。
   const logout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+    const keys = storageKeys(preferredNetwork);
+    localStorage.removeItem(keys.token);
+    localStorage.removeItem(keys.user);
     delete axios.defaults.headers.common.Authorization;
     setUser(null);
     setWalletInfo(null);
@@ -164,12 +199,14 @@ export function AuthProvider({ children }) {
           return null;
         }
 
-        await axios.put(`${API_BASE}/auth/me`, { walletAddress: selected }, {
-          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+        const keys = storageKeys(preferredNetwork);
+        const token = localStorage.getItem(keys.token) || '';
+        await axios.put(`${AUTH_API_BASE}/auth/me`, { walletAddress: selected }, {
+          headers: { Authorization: `Bearer ${token}` },
         });
         const nextUser = { ...user, walletAddress: selected };
         setUser(nextUser);
-        localStorage.setItem('user', JSON.stringify(nextUser));
+        localStorage.setItem(keys.user, JSON.stringify(nextUser));
         await refreshWalletInfo();
         toast.success(bound ? '钱包已重连' : '钱包绑定成功');
       }
@@ -187,8 +224,13 @@ export function AuthProvider({ children }) {
 
     // 函数 11: 更新目标网络并尝试切换钱包网络。
   const updatePreferredNetwork = async (networkKey) => {
+    if (!NETWORK_CONFIG[networkKey]) {
+      toast.error(`不支持的网络：${networkKey}`);
+      return;
+    }
     setPreferredNetwork(networkKey);
     localStorage.setItem('preferredNetwork', networkKey);
+    loadSessionForNetwork(networkKey);
     if (!window.ethereum) return;
     const cfg = NETWORK_CONFIG[networkKey];
     if (!cfg) return;
@@ -233,7 +275,7 @@ export function AuthProvider({ children }) {
       walletInfo,
       preferredNetwork,
       updatePreferredNetwork,
-      API_BASE,
+      API_BASE: apiBaseByNetwork(preferredNetwork),
     }}>
       {children}
     </AuthContext.Provider>
@@ -246,6 +288,7 @@ export function useAuth() {
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 }
+
 
 
 

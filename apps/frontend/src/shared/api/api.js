@@ -6,33 +6,54 @@
 
 import axios from 'axios';
 
-const API_BASE = '/api';
+const DEFAULT_NETWORK = String(import.meta.env.VITE_DEFAULT_NETWORK || 'sepolia').trim().toLowerCase();
+const API_BASE_MAP = {
+  sepolia: import.meta.env.VITE_API_BASE_SEPOLIA || '/api',
+  local: import.meta.env.VITE_API_BASE_LOCAL || '/api-local',
+};
+
+// 函数 1: 获取当前网络标识。
+function getCurrentNetwork() {
+  const key = String(localStorage.getItem('preferredNetwork') || DEFAULT_NETWORK).trim().toLowerCase();
+  return API_BASE_MAP[key] ? key : 'sepolia';
+}
+
+// 函数 2: 获取当前网络 API 前缀。
+function getApiBase() {
+  return API_BASE_MAP[getCurrentNetwork()] || '/api';
+}
+
+// 函数 3: 获取当前网络 token。
+function getToken() {
+  const network = getCurrentNetwork();
+  return localStorage.getItem(`token:${network}`) || localStorage.getItem('token') || '';
+}
 
 // Wrapper APIs keep auth header behavior consistent across pages.
-// 函数 1: 发送 GET 请求并自动附带登录令牌。
+// 函数 4: 发送 GET 请求并自动附带登录令牌。
 export async function apiGet(url) {
-  const res = await axios.get(`${API_BASE}${url}`, {
-    headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+  const res = await axios.get(`${getApiBase()}${url}`, {
+    headers: { Authorization: `Bearer ${getToken()}` }
   });
   return res.data;
 }
 
-// 函数 2: 发送 POST 请求并自动附带登录令牌。
+// 函数 5: 发送 POST 请求并自动附带登录令牌。
 export async function apiPost(url, data, options = {}) {
-  const res = await axios.post(`${API_BASE}${url}`, data, {
+  const res = await axios.post(`${getApiBase()}${url}`, data, {
     headers: {
-      Authorization: `Bearer ${localStorage.getItem('token')}`,
+      Authorization: `Bearer ${getToken()}`,
       ...(options.headers || {}),
     }
   });
   return res.data;
 }
 
-// 函数 3: 发送 PUT 请求并自动附带登录令牌。
+// 函数 6: 发送 PUT 请求并自动附带登录令牌。
 export async function apiPut(url, data, options = {}) {
-  const res = await axios.put(`${API_BASE}${url}`, data, {
+  const res = await axios.put(`${getApiBase()}${url}`, data, {
     headers: {
-      Authorization: `Bearer ${localStorage.getItem('token')}`,
+      Authorization: `Bearer ${getToken()}`,
       ...(options.headers || {}),
     }
   });

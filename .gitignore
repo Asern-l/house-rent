@@ -12,6 +12,8 @@ coverage/
 # Runtime data
 apps/backend/data/
 logs/*.log
+blockchain/.ganache-db/
+blockchain/deployments-rental-localhost.json
 
 # Environment files
 .env

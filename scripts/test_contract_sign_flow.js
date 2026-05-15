@@ -10,7 +10,6 @@ const path = require('path');
 
 const rootDir = path.resolve(__dirname, '..');
 const backendDir = path.join(rootDir, 'apps', 'backend');
-const dbPath = path.join(backendDir, 'data', 'database.sqlite');
 const TEST_PORT = process.env.SIGN_FLOW_TEST_PORT || '3011';
 const apiBase = `http://127.0.0.1:${TEST_PORT}/api`;
 
@@ -51,6 +50,8 @@ async function request(method, pathname, body, token) {
 }
 
 async function main() {
+  const chainEnv = String(process.env.CHAIN_ENV || 'local').trim().toLowerCase() === 'sepolia' ? 'sepolia' : 'local';
+  const dbPath = path.join(backendDir, 'data', `database.${chainEnv}.sqlite`);
   const backupPath = `${dbPath}.bak-test`;
   const hadDb = fs.existsSync(dbPath);
   if (hadDb) fs.copyFileSync(dbPath, backupPath);
@@ -59,6 +60,7 @@ async function main() {
   const env = { ...process.env };
   if (!env.JWT_SECRET) env.JWT_SECRET = 'test_jwt_secret_for_sign_flow';
   env.PORT = TEST_PORT;
+  env.CHAIN_ENV = chainEnv;
 
   const child = spawn('node', ['src/index.js'], {
     cwd: backendDir,
