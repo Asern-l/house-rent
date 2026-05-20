@@ -8,11 +8,14 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
 const { migrate, getDb, parseResult, saveDb, CHAIN_ENV, DB_PATH } = require('./db');
 const { getUserDb, USER_DB_PATH } = require('./user-db');
+const { logApiError, logSystemError } = require('./logger');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
+const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || '100mb');
 
 // 函数 1: 生成请求追踪ID，便于前后端日志关联。
 function createRequestId() {
@@ -41,7 +44,7 @@ function setupMiddlewares() {
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
   }));
-  app.use(express.json({ limit: '5mb' }));
+  app.use(express.json({ limit: JSON_BODY_LIMIT }));
   app.use(express.urlencoded({ extended: true }));
   app.use(morgan(':method :url :status :response-time ms'));
   app.use('/api', rateLimit({
@@ -51,6 +54,7 @@ function setupMiddlewares() {
     legacyHeaders: false,
     message: { error: '请求过于频繁，请稍后重试' },
   }));
+  app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 }
 
 // 函数 4: 安装请求ID中间件。
@@ -83,14 +87,65 @@ function setupRoutes() {
   });
 }
 
+// 函数 5-1: 记录请求完成时的 4xx/5xx 响应日志（覆盖非异常分支）。
+function setupResponseStatusLogger() {
+  app.use((req, res, next) => {
+    const startAt = Date.now();
+    res.on('finish', () => {
+      const status = Number(res.statusCode || 0);
+      if (status < 400) return;
+      logApiError('response.status', {
+        requestId: req.requestId || '',
+        method: req.method,
+        url: req.originalUrl || req.url || '',
+        status,
+        userId: req.user?.id || '',
+        ip: req.ip || '',
+        durationMs: Date.now() - startAt,
+      });
+    });
+    next();
+  });
+}
+
 // 函数 6: 注册兜底异常处理。
 function setupErrorHandlers() {
   app.use((req, res) => {
+    logApiError('not-found', {
+      requestId: req.requestId || '',
+      method: req.method,
+      url: req.originalUrl || req.url || '',
+      status: 404,
+      ip: req.ip || '',
+      userId: req.user?.id || '',
+    });
     res.status(404).json({ error: '接口不存在' });
   });
 
   app.use((err, req, res, next) => {
-    console.error('未捕获异常:', err);
+    if (err?.type === 'entity.too.large') {
+      logApiError('middleware.payload-too-large', {
+        requestId: req.requestId || '',
+        method: req.method,
+        url: req.originalUrl || req.url || '',
+        status: 413,
+        userId: req.user?.id || '',
+        ip: req.ip || '',
+        message: err?.message || 'payload_too_large',
+      });
+      return res.status(413).json({ error: `请求体过大，请压缩图片或减少上传数量（当前限制 ${JSON_BODY_LIMIT}）` });
+    }
+
+    logApiError('middleware.exception', {
+      requestId: req.requestId || '',
+      method: req.method,
+      url: req.originalUrl || req.url || '',
+      status: err?.status || 500,
+      userId: req.user?.id || '',
+      ip: req.ip || '',
+      message: err?.message || 'unknown_error',
+      stack: err?.stack || '',
+    });
     res.status(500).json({ error: '服务端内部错误' });
   });
 }
@@ -201,9 +256,21 @@ async function startServer() {
         console.error('租期到期任务失败:', err);
       });
     }, 60 * 1000);
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`后端启动成功: http://localhost:${PORT} (CHAIN_ENV=${CHAIN_ENV})`);
       console.log(`共享账号库: ${USER_DB_PATH}`);
+      console.log(`JSON_BODY_LIMIT=${JSON_BODY_LIMIT}`);
+    });
+    server.on('error', (error) => {
+      logSystemError('server.listen.error', {
+        message: error?.message || 'listen_failed',
+        code: error?.code || '',
+        port: PORT,
+      });
+      if (error?.code === 'EADDRINUSE') {
+        console.error(`端口 ${PORT} 已被占用，请先关闭占用进程后重试。`);
+      }
+      process.exit(1);
     });
   } catch (error) {
     console.error('后端启动失败:', error);
@@ -213,6 +280,22 @@ async function startServer() {
 
 setupMiddlewares();
 setupRequestId();
+setupResponseStatusLogger();
 setupRoutes();
 setupErrorHandlers();
+
+// 函数 10: 注册进程级异常日志，避免漏记崩溃原因。
+process.on('unhandledRejection', (reason) => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  const stack = reason instanceof Error ? (reason.stack || '') : '';
+  logSystemError('process.unhandledRejection', { message, stack });
+});
+
+process.on('uncaughtException', (error) => {
+  logSystemError('process.uncaughtException', {
+    message: error?.message || 'unknown_error',
+    stack: error?.stack || '',
+  });
+});
+
 startServer();

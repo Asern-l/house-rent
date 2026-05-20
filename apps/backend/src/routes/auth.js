@@ -7,8 +7,10 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { getUserDb, saveUserDb, parseResult } = require('../user-db');
 const { JWT_SECRET, authMiddleware } = require('../auth');
+const { logApiError } = require('../logger');
 
 const router = express.Router();
+const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // 函数 1: 校验钱包地址格式。
 function isValidWalletAddress(walletAddress) {
@@ -16,7 +18,7 @@ function isValidWalletAddress(walletAddress) {
 }
 
 // 函数 2: 用户注册接口。
-router.post('/register', async (req, res) => {
+router.post('/register', asyncHandler(async (req, res) => {
   try {
     const { phone, password, role, walletAddress = '', nickname = '' } = req.body;
     if (!phone || !password || !role) {
@@ -49,12 +51,13 @@ router.post('/register', async (req, res) => {
     const token = jwt.sign({ id: userId, phone, role }, JWT_SECRET, { expiresIn: '7d' });
     res.json({ success: true, data: { token, user: { id: userId, phone, role, walletAddress, nickname } } });
   } catch (error) {
+    logApiError('auth.register.exception', { requestId: req.requestId || '', message: error.message, stack: error.stack || '' });
     res.status(500).json({ error: '注册失败' });
   }
-});
+}));
 
 // 函数 3: 用户登录接口。
-router.post('/login', async (req, res) => {
+router.post('/login', asyncHandler(async (req, res) => {
   try {
     const { phone, password } = req.body;
     if (!phone || !password) {
@@ -87,12 +90,13 @@ router.post('/login', async (req, res) => {
       },
     });
   } catch (error) {
+    logApiError('auth.login.exception', { requestId: req.requestId || '', message: error.message, stack: error.stack || '' });
     res.status(500).json({ error: '登录失败' });
   }
-});
+}));
 
 // 函数 4: 获取当前用户信息接口。
-router.get('/me', authMiddleware, async (req, res) => {
+router.get('/me', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getUserDb();
   const users = parseResult(db.exec(
     'SELECT id, phone, role, wallet_address, nickname, created_at FROM users WHERE id = ?',
@@ -102,10 +106,10 @@ router.get('/me', authMiddleware, async (req, res) => {
     return res.status(404).json({ error: '用户不存在' });
   }
   res.json({ success: true, data: users[0] });
-});
+}));
 
 // 函数 5: 更新当前用户信息接口。
-router.put('/me', authMiddleware, async (req, res) => {
+router.put('/me', authMiddleware, asyncHandler(async (req, res) => {
   const { nickname, walletAddress } = req.body;
   const db = await getUserDb();
   if (nickname !== undefined) {
@@ -132,6 +136,6 @@ router.put('/me', authMiddleware, async (req, res) => {
   }
   saveUserDb();
   res.json({ success: true, message: '用户信息更新成功' });
-});
+}));
 
 module.exports = router;

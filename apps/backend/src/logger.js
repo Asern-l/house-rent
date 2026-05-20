@@ -8,6 +8,8 @@ const path = require('path');
 const LOG_DIR = path.join(__dirname, '..', '..', '..', 'logs');
 const SIGN_LOG_FILE = path.join(LOG_DIR, 'sign-flow-error.log');
 const LISTING_LOG_FILE = path.join(LOG_DIR, 'listing-error.log');
+const API_LOG_FILE = path.join(LOG_DIR, 'api-error.log');
+const SYSTEM_LOG_FILE = path.join(LOG_DIR, 'system-error.log');
 
 // 函数 0: 解析网络键（sepolia/local）。
 function resolveNetworkKey(detail = {}) {
@@ -86,4 +88,45 @@ function logListingError(stage, detail = {}) {
   writeJsonLine(getEnvLogFile('listing-error', networkKey), payload);
 }
 
-module.exports = { logSignFlow, logListingError, SIGN_LOG_FILE, LISTING_LOG_FILE };
+// 函数 6: 记录通用 API 错误日志（覆盖 4xx/5xx 与路由兜底）。
+function logApiError(stage, detail = {}) {
+  const now = new Date();
+  const networkKey = resolveNetworkKey(detail);
+  const payload = {
+    at: now.toISOString(),
+    cnAt: formatCnTime(now),
+    network: networkKey,
+    stage,
+    ...detail,
+  };
+  console.error('[api-error]', payload);
+  writeJsonLine(API_LOG_FILE, payload);
+  writeJsonLine(getEnvLogFile('api-error', networkKey), payload);
+}
+
+// 函数 7: 记录进程级系统错误日志（未捕获异常/Promise 拒绝等）。
+function logSystemError(stage, detail = {}) {
+  const now = new Date();
+  const networkKey = resolveNetworkKey(detail);
+  const payload = {
+    at: now.toISOString(),
+    cnAt: formatCnTime(now),
+    network: networkKey,
+    stage,
+    ...detail,
+  };
+  console.error('[system-error]', payload);
+  writeJsonLine(SYSTEM_LOG_FILE, payload);
+  writeJsonLine(getEnvLogFile('system-error', networkKey), payload);
+}
+
+module.exports = {
+  logSignFlow,
+  logListingError,
+  logApiError,
+  logSystemError,
+  SIGN_LOG_FILE,
+  LISTING_LOG_FILE,
+  API_LOG_FILE,
+  SYSTEM_LOG_FILE,
+};

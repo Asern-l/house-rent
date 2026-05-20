@@ -11,6 +11,8 @@ import { apiPost } from '../shared/api/api';
 import toast from 'react-hot-toast';
 import { PlusCircleIcon, LoaderIcon, AlertCircleIcon } from 'lucide-react';
 
+const MAX_IMAGE_COUNT = 12;
+
 // 函数 1: 页面主组件。
 export default function PublishListing() {
   const { user } = useAuth();
@@ -28,6 +30,8 @@ export default function PublishListing() {
     area: '',
   });
   const [submitting, setSubmitting] = useState(false);
+  const [imageFiles, setImageFiles] = useState([]);
+  const [imagePreviews, setImagePreviews] = useState([]);
 
   if (!user || user.role !== 'landlord') {
     return (
@@ -38,7 +42,27 @@ export default function PublishListing() {
     );
   }
 
-    // 函数 2: 提交房源发布请求。
+  // 函数 2: 把文件读取为 dataUrl 供上传接口使用。
+  const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('图片读取失败'));
+    reader.readAsDataURL(file);
+  });
+
+  // 函数 3: 处理图片选择（可选，最多 12 张）。
+  const handleImageChange = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length > MAX_IMAGE_COUNT) {
+      toast.error(`最多选择 ${MAX_IMAGE_COUNT} 张图片`);
+      return;
+    }
+    imagePreviews.forEach((url) => URL.revokeObjectURL(url));
+    setImageFiles(files);
+    setImagePreviews(files.map((item) => URL.createObjectURL(item)));
+  };
+
+  // 函数 4: 提交房源发布请求。
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.title || !form.description || !form.address || !form.rentAmount) {
@@ -48,7 +72,20 @@ export default function PublishListing() {
 
     setSubmitting(true);
     try {
-      const res = await apiPost('/listings', { ...form, imageUrls: [] });
+      let uploadedImageUrls = [];
+      if (imageFiles.length > 0) {
+        const images = [];
+        for (const file of imageFiles) {
+          const dataUrl = await readFileAsDataUrl(file);
+          images.push({ dataUrl });
+        }
+        const uploadRes = await apiPost('/listings/upload-images', { images });
+        uploadedImageUrls = Array.isArray(uploadRes?.data?.images)
+          ? uploadRes.data.images.map((item) => item.url).filter(Boolean)
+          : [];
+      }
+
+      const res = await apiPost('/listings', { ...form, imageUrls: uploadedImageUrls });
       toast.success(res.data?.message || '发布成功');
       navigate(`/listing/${res.data?.id}`);
     } catch (err) {
@@ -57,6 +94,13 @@ export default function PublishListing() {
       setSubmitting(false);
     }
   };
+
+  // 函数 5: 组件卸载时释放预览 URL，防止内存泄漏。
+  React.useEffect(() => {
+    return () => {
+      imagePreviews.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [imagePreviews]);
 
   return (
     <div className="max-w-2xl mx-auto animate-fade-in">
@@ -185,6 +229,24 @@ export default function PublishListing() {
               onChange={(e) => setForm((p) => ({ ...p, bathrooms: parseInt(e.target.value, 10) }))}
             />
           </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">房源图片（可选，最多12张）</label>
+          <input
+            type="file"
+            className="input-field"
+            accept="image/jpeg,image/png,image/webp"
+            multiple
+            onChange={handleImageChange}
+          />
+          {imagePreviews.length > 0 && (
+            <div className="grid grid-cols-3 gap-3 mt-3">
+              {imagePreviews.map((url, index) => (
+                <img key={`${url}_${index}`} src={url} alt={`preview_${index}`} className="w-full h-24 object-cover rounded-lg border" />
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-700">

@@ -7,9 +7,10 @@ const crypto = require('crypto');
 const { getDb, parseResult } = require('../db');
 
 const router = express.Router();
+const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // 函数 1: 房源验真接口。
-router.get('/listing/:id', async (req, res) => {
+router.get('/listing/:id', asyncHandler(async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM listings WHERE id = ?', [req.params.id]));
   if (!rows.length) {
@@ -25,10 +26,10 @@ router.get('/listing/:id', async (req, res) => {
       createdAt: listing.created_at,
     },
   });
-});
+}));
 
 // 函数 2: 合同验真接口。
-router.get('/contract/:id', async (req, res) => {
+router.get('/contract/:id', asyncHandler(async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
   if (!rows.length) {
@@ -73,6 +74,6 @@ router.get('/contract/:id', async (req, res) => {
       conclusion: hashMatch ? '合同未被篡改' : '合同哈希不匹配，疑似被篡改',
     },
   });
-});
+}));
 
 module.exports = router;

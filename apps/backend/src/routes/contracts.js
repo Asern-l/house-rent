@@ -10,6 +10,7 @@ const { authMiddleware, requireRole } = require('../auth');
 const { logSignFlow } = require('../logger');
 
 const router = express.Router();
+const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // 函数 1: 将金额规范化为字符串，避免精度展示异常。
 function normalizeAmount(value) {
@@ -63,7 +64,7 @@ function getCnDateTime(date = new Date()) {
 }
 
 // 函数 3: 创建合同接口（租客发起）。
-router.post('/', authMiddleware, requireRole('tenant'), async (req, res) => {
+router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req, res) => {
   const { listingId, startDate, leaseMonths } = req.body || {};
   if (!listingId) {
     return res.status(400).json({ error: 'listingId 不能为空' });
@@ -157,10 +158,10 @@ router.post('/', authMiddleware, requireRole('tenant'), async (req, res) => {
   saveDb();
 
   res.json({ success: true, data: { contractId, contentHash, expiresAt } });
-});
+}));
 
 // 函数 4: 租客签署合同接口。
-router.post('/:id/sign-tenant', authMiddleware, async (req, res) => {
+router.post('/:id/sign-tenant', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
   if (!rows.length) return res.status(404).json({ error: '合同不存在' });
@@ -180,10 +181,10 @@ router.post('/:id/sign-tenant', authMiddleware, async (req, res) => {
   }
   saveDb();
   res.json({ success: true, message: '租客签署成功' });
-});
+}));
 
 // 函数 5: 房东签署合同接口。
-router.post('/:id/sign-landlord', authMiddleware, async (req, res) => {
+router.post('/:id/sign-landlord', authMiddleware, asyncHandler(async (req, res) => {
   try {
     const db = await getDb();
     const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
@@ -229,10 +230,10 @@ router.post('/:id/sign-landlord', authMiddleware, async (req, res) => {
     logSignFlow('sign-landlord.exception', { contractId: req.params.id, message: error.message, requestId: req.requestId });
     res.status(500).json({ error: '房东签署失败' });
   }
-});
+}));
 
 // 函数 6: 上链交易哈希回写接口。
-router.post('/:id/onchain', authMiddleware, async (req, res) => {
+router.post('/:id/onchain', authMiddleware, asyncHandler(async (req, res) => {
   const { txHash } = req.body;
   if (!/^0x[a-fA-F0-9]{64}$/.test(txHash || '')) {
     return res.status(400).json({ error: 'txHash 格式不正确' });
@@ -256,10 +257,10 @@ router.post('/:id/onchain', authMiddleware, async (req, res) => {
   }
   saveDb();
   res.json({ success: true, message: '链上交易回写成功' });
-});
+}));
 
 // 函数 7: 支付成功回写接口（当前仅支持一次性首笔支付）。
-router.post('/:id/payments/onchain', authMiddleware, async (req, res) => {
+router.post('/:id/payments/onchain', authMiddleware, asyncHandler(async (req, res) => {
   const { txHash, amount, payType = 'initial', period = '' } = req.body || {};
   if (!/^0x[a-fA-F0-9]{64}$/.test(txHash || '')) {
     return res.status(400).json({ error: 'txHash 格式不正确' });
@@ -320,10 +321,10 @@ router.post('/:id/payments/onchain', authMiddleware, async (req, res) => {
 
   saveDb();
   res.json({ success: true, message: '支付回写成功', data: { paymentId } });
-});
+}));
 
 // 函数 7: 取消合同接口。
-router.post('/:id/cancel', authMiddleware, async (req, res) => {
+router.post('/:id/cancel', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
   if (!rows.length) return res.status(404).json({ error: '合同不存在' });
@@ -362,10 +363,10 @@ router.post('/:id/cancel', authMiddleware, async (req, res) => {
   }
   saveDb();
   res.json({ success: true, message: '合同已取消' });
-});
+}));
 
 // 函数 8: 获取合同支付记录接口。
-router.get('/:id/payments', authMiddleware, async (req, res) => {
+router.get('/:id/payments', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
   if (!rows.length) return res.status(404).json({ error: '合同不存在' });
@@ -381,10 +382,10 @@ router.get('/:id/payments', authMiddleware, async (req, res) => {
     [req.params.id]
   ));
   res.json({ success: true, data: payments });
-});
+}));
 
 // 函数 9: 前端签署失败上报接口。
-router.post('/:id/sign-client-report', authMiddleware, async (req, res) => {
+router.post('/:id/sign-client-report', authMiddleware, asyncHandler(async (req, res) => {
   const payload = req.body || {};
   logSignFlow('client.report', {
     contractId: req.params.id,
@@ -393,24 +394,26 @@ router.post('/:id/sign-client-report', authMiddleware, async (req, res) => {
     ...payload,
   });
   res.json({ success: true });
-});
+}));
 
 // 函数 10: 获取我的合同列表接口。
-router.get('/', authMiddleware, async (req, res) => {
+router.get('/', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec(`SELECT c.*, l.title AS listing_title, l.address AS listing_address
     FROM contracts c JOIN listings l ON c.listing_id = l.id
     WHERE c.tenant_id = ? OR c.landlord_id = ? ORDER BY c.created_at DESC`, [req.user.id, req.user.id]));
   res.json({ success: true, data: rows });
-});
+}));
 
 // 函数 11: 获取合同详情接口。
-router.get('/:id', async (req, res) => {
+router.get('/:id', asyncHandler(async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec(`SELECT c.*, l.title AS listing_title, l.address AS listing_address
     FROM contracts c JOIN listings l ON c.listing_id = l.id WHERE c.id = ?`, [req.params.id]));
   if (!rows.length) return res.status(404).json({ error: '合同不存在' });
   res.json({ success: true, data: rows[0] });
-});
+}));
 
 module.exports = router;
+
+
