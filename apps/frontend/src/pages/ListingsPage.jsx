@@ -8,6 +8,26 @@ import { Link } from 'react-router-dom';
 import { HomeIcon, MapPinIcon, SearchIcon, LoaderIcon } from 'lucide-react';
 import { apiGet } from '../shared/api/api';
 
+// 函数 0: 解析房源图片数组并返回首图 URL。
+function getFirstImageUrl(item) {
+  try {
+    const raw = item?.image_urls;
+    const arr = Array.isArray(raw) ? raw : JSON.parse(raw || '[]');
+    return Array.isArray(arr) && arr.length > 0 ? String(arr[0] || '') : '';
+  } catch {
+    return '';
+  }
+}
+
+// 函数 0-1: 按当前网络修正图片 URL 代理前缀。
+function resolveImageUrl(url) {
+  const network = String(localStorage.getItem('preferredNetwork') || 'sepolia').toLowerCase();
+  if (network === 'local' && String(url).startsWith('/uploads/')) {
+    return String(url).replace('/uploads/', '/uploads-local/');
+  }
+  return String(url || '');
+}
+
 // 函数 1: 页面主组件。
 export default function ListingsPage() {
   const [listings, setListings] = useState([]);
@@ -91,9 +111,17 @@ export default function ListingsPage() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {filteredListings.map((item) => (
             <Link key={item.id} to={`/listing/${item.id}`} className="card block p-4 transition-all hover:translate-y-[-2px]">
-              <div className="mb-3 flex h-36 items-center justify-center rounded-lg bg-gradient-to-br from-primary-100 to-blue-100">
-                <HomeIcon className="h-12 w-12 text-primary-300" />
-              </div>
+              {getFirstImageUrl(item) ? (
+                <img
+                  src={resolveImageUrl(getFirstImageUrl(item))}
+                  alt={item.title || 'listing'}
+                  className="mb-3 h-36 w-full rounded-lg object-cover"
+                />
+              ) : (
+                <div className="mb-3 flex h-36 items-center justify-center rounded-lg bg-gradient-to-br from-primary-100 to-blue-100">
+                  <HomeIcon className="h-12 w-12 text-primary-300" />
+                </div>
+              )}
               <h3 className="line-clamp-1 text-base font-semibold text-gray-800">{item.title || '未命名房源'}</h3>
               <p className="mt-2 flex items-start text-sm text-gray-500">
                 <MapPinIcon className="mr-1 mt-0.5 h-4 w-4" />

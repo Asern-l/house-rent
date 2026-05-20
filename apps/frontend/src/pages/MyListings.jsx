@@ -17,6 +17,26 @@ const LISTING_STATUS_MAP = {
   closed: { label: '已关闭', badge: 'badge-gray' },
 };
 
+// 函数 0: 解析房源首图 URL。
+function getFirstImageUrl(item) {
+  try {
+    const raw = item?.image_urls;
+    const arr = Array.isArray(raw) ? raw : JSON.parse(raw || '[]');
+    return Array.isArray(arr) && arr.length > 0 ? String(arr[0] || '') : '';
+  } catch {
+    return '';
+  }
+}
+
+// 函数 0-1: 按当前网络修正图片 URL 代理前缀。
+function resolveImageUrl(url) {
+  const network = String(localStorage.getItem('preferredNetwork') || 'sepolia').toLowerCase();
+  if (network === 'local' && String(url).startsWith('/uploads/')) {
+    return String(url).replace('/uploads/', '/uploads-local/');
+  }
+  return String(url || '');
+}
+
 // 函数 1: 页面主组件。
 export default function MyListings() {
   const [listings, setListings] = useState([]);
@@ -87,10 +107,19 @@ export default function MyListings() {
           {listings.map((item) => (
             <div key={item.id} className="card p-4">
               <div className="flex items-start justify-between gap-3">
-                <div>
+                <div className="flex items-start gap-3">
+                  {getFirstImageUrl(item) ? (
+                    <img src={resolveImageUrl(getFirstImageUrl(item))} alt={item.title || 'listing'} className="h-20 w-28 rounded-md object-cover" />
+                  ) : (
+                    <div className="flex h-20 w-28 items-center justify-center rounded-md bg-gray-100">
+                      <HomeIcon className="h-6 w-6 text-gray-300" />
+                    </div>
+                  )}
+                  <div>
                   <h3 className="text-lg font-semibold text-gray-800">{item.title || '未命名房源'}</h3>
                   <p className="mt-1 text-sm text-gray-500">{item.address || '-'}</p>
                   <p className="mt-2 text-primary-600">{item.rent_amount} ETH/月</p>
+                  </div>
                 </div>
                 <div className="text-right">
                   <span className={(LISTING_STATUS_MAP[item.status] || LISTING_STATUS_MAP.offline).badge}>

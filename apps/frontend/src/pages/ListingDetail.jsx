@@ -17,6 +17,25 @@ import {
 import { useAuth } from '../app/providers/AuthContext';
 import { apiGet, apiPost } from '../shared/api/api';
 
+// 函数 0: 解析房源图片数组。
+function parseImageUrls(raw) {
+  try {
+    const arr = Array.isArray(raw) ? raw : JSON.parse(raw || '[]');
+    return Array.isArray(arr) ? arr.filter(Boolean).map((x) => String(x)) : [];
+  } catch {
+    return [];
+  }
+}
+
+// 函数 0-1: 按当前网络修正图片 URL 代理前缀。
+function resolveImageUrl(url) {
+  const network = String(localStorage.getItem('preferredNetwork') || 'sepolia').toLowerCase();
+  if (network === 'local' && String(url).startsWith('/uploads/')) {
+    return String(url).replace('/uploads/', '/uploads-local/');
+  }
+  return String(url || '');
+}
+
 // 函数 1: 页面主组件。
 export default function ListingDetail() {
   const { id } = useParams();
@@ -115,6 +134,7 @@ export default function ListingDetail() {
   const isAvailable = listing.status === 'available';
   const isOwner = user && listing.landlord_id === user.id;
   const minLeaseMonths = Number(listing.min_lease_months || 1);
+  const imageUrls = parseImageUrls(listing.image_urls);
   const maxLeaseMonths = 12;
   const today = new Date();
   const minDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
@@ -135,9 +155,22 @@ export default function ListingDetail() {
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <div className="card">
-          <div className="flex h-64 items-center justify-center bg-gradient-to-br from-primary-100 to-blue-100">
-            <HomeIcon className="h-20 w-20 text-primary-300" />
-          </div>
+          {imageUrls.length > 0 ? (
+            <div className="p-3">
+              <img src={resolveImageUrl(imageUrls[0])} alt={listing.title || 'listing'} className="h-64 w-full rounded-lg object-cover" />
+              {imageUrls.length > 1 && (
+                <div className="mt-3 grid grid-cols-4 gap-2">
+                  {imageUrls.slice(1, 5).map((url, idx) => (
+                    <img key={`${url}_${idx}`} src={resolveImageUrl(url)} alt={`listing_${idx}`} className="h-16 w-full rounded-md object-cover" />
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex h-64 items-center justify-center bg-gradient-to-br from-primary-100 to-blue-100">
+              <HomeIcon className="h-20 w-20 text-primary-300" />
+            </div>
+          )}
         </div>
 
         <div className="space-y-4">

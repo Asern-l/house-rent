@@ -11,6 +11,7 @@ coverage/
 
 # Runtime data
 apps/backend/data/
+apps/backend/uploads/
 logs/*.log
 blockchain/.ganache-db/
 blockchain/deployments-rental-localhost.json
