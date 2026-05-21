@@ -29,37 +29,64 @@ function getToken() {
   return localStorage.getItem(`token:${network}`) || localStorage.getItem('token') || '';
 }
 
+// 函数 3-1: 业务后端返回 401 时清理当前网络的过期会话。
+function clearExpiredSession() {
+  const network = getCurrentNetwork();
+  localStorage.removeItem(`token:${network}`);
+  localStorage.removeItem(`user:${network}`);
+  localStorage.removeItem('token');
+  window.dispatchEvent(new CustomEvent('auth-session-expired', { detail: { network } }));
+}
+
+function handleApiError(error) {
+  if (error?.response?.status === 401) {
+    clearExpiredSession();
+  }
+  throw error;
+}
+
 // Wrapper APIs keep auth header behavior consistent across pages.
 // 函数 4: 发送 GET 请求并自动附带登录令牌。
 export async function apiGet(url) {
-  const res = await axios.get(`${getApiBase()}${url}`, {
-    headers: { Authorization: `Bearer ${getToken()}` }
-  });
-  return res.data;
+  try {
+    const res = await axios.get(`${getApiBase()}${url}`, {
+      headers: { Authorization: `Bearer ${getToken()}` }
+    });
+    return res.data;
+  } catch (error) {
+    handleApiError(error);
+  }
 }
 
 // 函数 5: 发送 POST 请求并自动附带登录令牌。
 export async function apiPost(url, data, options = {}) {
-  const res = await axios.post(`${getApiBase()}${url}`, data, {
-    headers: {
-      Authorization: `Bearer ${getToken()}`,
-      ...(options.headers || {}),
-    }
-  });
-  return res.data;
+  try {
+    const res = await axios.post(`${getApiBase()}${url}`, data, {
+      headers: {
+        Authorization: `Bearer ${getToken()}`,
+        ...(options.headers || {}),
+      }
+    });
+    return res.data;
+  } catch (error) {
+    handleApiError(error);
+  }
 }
 
 // 函数 6: 发送 PUT 请求并自动附带登录令牌。
 export async function apiPut(url, data, options = {}) {
-  const res = await axios.put(`${getApiBase()}${url}`, data, {
-    headers: {
-      Authorization: `Bearer ${getToken()}`,
-      ...(options.headers || {}),
-    }
-  });
-  return res.data;
+  try {
+    const res = await axios.put(`${getApiBase()}${url}`, data, {
+      headers: {
+        Authorization: `Bearer ${getToken()}`,
+        ...(options.headers || {}),
+      }
+    });
+    return res.data;
+  } catch (error) {
+    handleApiError(error);
+  }
 }
-
 
 
 

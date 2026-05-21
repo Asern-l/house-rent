@@ -104,6 +104,18 @@ export function AuthProvider({ children }) {
     setLoading(false);
   }, [preferredNetwork, loadSessionForNetwork]);
 
+  useEffect(() => {
+    const handleSessionExpired = (event) => {
+      const expiredNetwork = event.detail?.network;
+      if (expiredNetwork && expiredNetwork !== preferredNetwork) return;
+      setUser(null);
+      setWalletInfo(null);
+      delete axios.defaults.headers.common.Authorization;
+    };
+    window.addEventListener('auth-session-expired', handleSessionExpired);
+    return () => window.removeEventListener('auth-session-expired', handleSessionExpired);
+  }, [preferredNetwork]);
+
     // 函数 3: 刷新当前钱包网络与余额信息。
   const refreshWalletInfo = useCallback(async () => {
     if (!window.ethereum || !user?.walletAddress) {
@@ -338,7 +350,6 @@ export function useAuth() {
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 }
-
 
 
 

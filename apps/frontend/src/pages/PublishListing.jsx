@@ -18,6 +18,7 @@ export default function PublishListing({ onClose }) {
   const [submitting, setSubmitting] = useState(false);
   const [imageFiles, setImageFiles] = useState([]);
   const [imagePreviews, setImagePreviews] = useState([]);
+  const imagePreviewsRef = React.useRef([]);
 
   const close = () => onClose?.();
 
@@ -36,7 +37,12 @@ export default function PublishListing({ onClose }) {
       return;
     }
     setImageFiles((prev) => [...prev, ...files]);
-    setImagePreviews((prev) => [...prev, ...files.map((item) => URL.createObjectURL(item))]);
+    const nextPreviews = files.map((item) => URL.createObjectURL(item));
+    setImagePreviews((prev) => {
+      const next = [...prev, ...nextPreviews];
+      imagePreviewsRef.current = next;
+      return next;
+    });
     e.target.value = '';
   };
 
@@ -45,7 +51,9 @@ export default function PublishListing({ onClose }) {
     setImagePreviews((prev) => {
       const target = prev[index];
       if (target) URL.revokeObjectURL(target);
-      return prev.filter((_, itemIndex) => itemIndex !== index);
+      const next = prev.filter((_, itemIndex) => itemIndex !== index);
+      imagePreviewsRef.current = next;
+      return next;
     });
   };
 
@@ -75,15 +83,22 @@ export default function PublishListing({ onClose }) {
       close();
       navigate(`/listing/${res.data?.id}`);
     } catch (err) {
-      toast.error(err.response?.data?.error || '发布失败');
+      if (err.response?.status === 401) {
+        toast.error('登录已过期，请重新登录后再发布');
+      } else {
+        toast.error(err.response?.data?.error || '发布失败');
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
   React.useEffect(() => {
-    return () => { imagePreviews.forEach((url) => URL.revokeObjectURL(url)); };
-  }, [imagePreviews]);
+    return () => {
+      imagePreviewsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      imagePreviewsRef.current = [];
+    };
+  }, []);
 
   if (!user || user.role !== 'landlord') {
     return (

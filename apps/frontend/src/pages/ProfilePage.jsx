@@ -68,6 +68,16 @@ export default function ProfilePage({ onClose }) {
     { to: '/verify', label: '链上验真', icon: ShieldCheckIcon },
   ];
 
+  const handleQuickAction = (event, item) => {
+    if (item.to !== '/verify') {
+      onClose?.();
+      return;
+    }
+    event.preventDefault();
+    window.dispatchEvent(new CustomEvent('open-verify-modal'));
+    onClose?.();
+  };
+
   const handleAvatarChange = (event) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -178,7 +188,7 @@ export default function ProfilePage({ onClose }) {
               <Link
                 key={item.to}
                 to={item.to}
-                onClick={onClose}
+                onClick={(event) => handleQuickAction(event, item)}
                 className="group flex items-center justify-between rounded-2xl border border-transparent px-3 py-3 text-sm font-semibold text-stone-700 transition-all hover:border-primary-600/40 hover:bg-primary-600/15"
               >
                 <span className="flex items-center gap-3">

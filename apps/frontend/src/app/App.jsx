@@ -26,6 +26,7 @@ export default function App() {
   const [authModal, setAuthModal] = useState(location.pathname === '/login' ? 'login' : null);
   const [profileModalOpen, setProfileModalOpen] = useState(location.pathname === '/profile');
   const [publishModalOpen, setPublishModalOpen] = useState(location.pathname === '/publish');
+  const [verifyModalOpen, setVerifyModalOpen] = useState(location.pathname === '/verify');
   const [backendHealth, setBackendHealth] = useState({ sepolia: null, local: null });
 
   const navItems = [
@@ -33,7 +34,6 @@ export default function App() {
     { path: '/listings', label: '房源', icon: SearchIcon },
     ...(user?.role === 'landlord' ? [{ path: '/publish', label: '发布房源', icon: PlusCircleIcon }] : []),
     { path: '/contracts', label: '合同', icon: FileTextIcon },
-    { path: '/verify', label: '验真', icon: ShieldCheckIcon },
   ];
 
   const isActive = (p) => location.pathname === p;
@@ -62,7 +62,23 @@ export default function App() {
     if (location.pathname === '/login') setAuthModal('login');
     if (location.pathname === '/profile') setProfileModalOpen(true);
     if (location.pathname === '/publish') setPublishModalOpen(true);
+    if (location.pathname === '/verify') setVerifyModalOpen(true);
   }, [location.pathname]);
+
+  useEffect(() => {
+    const handleOpenVerifyModal = () => setVerifyModalOpen(true);
+    window.addEventListener('open-verify-modal', handleOpenVerifyModal);
+    return () => window.removeEventListener('open-verify-modal', handleOpenVerifyModal);
+  }, []);
+
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      setAuthModal('login');
+      setMobileOpen(false);
+    };
+    window.addEventListener('auth-session-expired', handleSessionExpired);
+    return () => window.removeEventListener('auth-session-expired', handleSessionExpired);
+  }, []);
 
   const openAuthModal = (mode = 'login') => {
     setAuthModal(mode);
@@ -89,6 +105,16 @@ export default function App() {
     if (location.pathname === '/publish') navigate('/');
   };
 
+  const openVerifyModal = () => {
+    setVerifyModalOpen(true);
+    setMobileOpen(false);
+  };
+
+  const closeVerifyModal = () => {
+    setVerifyModalOpen(false);
+    if (location.pathname === '/verify') navigate('/');
+  };
+
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-gray-950 text-gray-100">
 
@@ -105,11 +131,11 @@ export default function App() {
           {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-0.5 flex-1">
             {navItems.map((item) => (
-              item.path === '/publish' ? (
+              item.path === '/publish' || item.path === '/verify' ? (
                 <button
                   key={item.path}
                   type="button"
-                  onClick={openPublishModal}
+                  onClick={item.path === '/publish' ? openPublishModal : openVerifyModal}
                   className="px-3 py-1.5 rounded-md text-sm font-medium text-stone-500 transition-colors hover:bg-stone-900/5 hover:text-stone-900"
                 >
                   {item.label}
@@ -212,11 +238,11 @@ export default function App() {
         {mobileOpen && (
           <div className="md:hidden border-t border-stone-200 bg-[#f5f0e8] px-4 py-3 space-y-0.5">
             {navItems.map((item) => (
-              item.path === '/publish' ? (
+              item.path === '/publish' || item.path === '/verify' ? (
                 <button
                   key={item.path}
                   type="button"
-                  onClick={openPublishModal}
+                  onClick={item.path === '/publish' ? openPublishModal : openVerifyModal}
                   className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-stone-600 hover:bg-stone-900/5"
                 >
                   <item.icon className="w-4 h-4" />
@@ -293,7 +319,7 @@ export default function App() {
           <Route path="/contracts"  element={<MyContracts />} />
           <Route path="/my-listings" element={<MyListings />} />
           <Route path="/profile"    element={<HomePage />} />
-          <Route path="/verify"     element={<VerifyPage />} />
+          <Route path="/verify"     element={<HomePage />} />
         </Routes>
       </main>
 
@@ -308,6 +334,9 @@ export default function App() {
       )}
       {publishModalOpen && (
         <PublishListing onClose={closePublishModal} />
+      )}
+      {verifyModalOpen && (
+        <VerifyPage onClose={closeVerifyModal} />
       )}
     </div>
   );
