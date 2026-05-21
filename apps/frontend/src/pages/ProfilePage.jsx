@@ -1,11 +1,13 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../app/providers/AuthContext';
 import toast from 'react-hot-toast';
 import {
   ArrowRightIcon,
+  CameraIcon,
   FileTextIcon,
   HomeIcon,
+  LoaderIcon,
   LogOutIcon,
   ShieldCheckIcon,
   UserIcon,
@@ -14,8 +16,17 @@ import {
 } from 'lucide-react';
 
 export default function ProfilePage({ onClose }) {
-  const { user, logout, connectWallet } = useAuth();
+  const { user, logout, connectWallet, updateProfile } = useAuth();
   const navigate = useNavigate();
+  const [nickname, setNickname] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    setNickname(user.nickname || '');
+    setAvatarUrl(user.avatarUrl || '');
+  }, [user]);
 
   const handleLogout = () => {
     logout();
@@ -42,7 +53,7 @@ export default function ProfilePage({ onClose }) {
     );
   }
 
-  const displayName = user.nickname || `用户${user.phone?.slice(-4)}`;
+  const displayName = nickname || user.nickname || `用户${user.phone?.slice(-4)}`;
   const initial = String(displayName || user.phone || '?').slice(0, 1).toUpperCase();
   const roleLabel = user.role === 'landlord' ? '房东' : '租客';
   const quickActions = [
@@ -57,6 +68,40 @@ export default function ProfilePage({ onClose }) {
     { to: '/verify', label: '链上验真', icon: ShieldCheckIcon },
   ];
 
+  const handleAvatarChange = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      toast.error('头像仅支持 jpeg/png/webp');
+      return;
+    }
+    if (file.size > 700 * 1024) {
+      toast.error('头像不能超过 700KB');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => setAvatarUrl(String(reader.result || ''));
+    reader.onerror = () => toast.error('头像读取失败');
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveProfile = async () => {
+    setSaving(true);
+    try {
+      await updateProfile({
+        nickname: nickname.trim(),
+        avatarUrl,
+      });
+      toast.success('个人资料已更新');
+    } catch (error) {
+      toast.error(error.response?.data?.error || '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-stone-950/55 px-4 py-6 backdrop-blur-sm">
       <div
@@ -69,14 +114,37 @@ export default function ProfilePage({ onClose }) {
         {onClose && <CloseButton onClose={onClose} />}
 
         <div className="mb-7 text-center">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-600 text-2xl font-bold text-stone-950 shadow-[0_12px_30px_rgba(231,167,121,0.35)]">
-            {initial}
-          </div>
-          <h1 className="text-2xl font-bold text-stone-950">{displayName}</h1>
+          <label className="group relative mx-auto mb-4 flex h-20 w-20 cursor-pointer items-center justify-center overflow-hidden rounded-2xl bg-primary-600 text-2xl font-bold text-stone-950 shadow-[0_12px_30px_rgba(231,167,121,0.35)]">
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="头像" className="h-full w-full object-cover" />
+            ) : (
+              initial
+            )}
+            <span className="absolute inset-0 flex items-center justify-center bg-stone-950/45 text-[#f5f0e8] opacity-0 transition-opacity group-hover:opacity-100">
+              <CameraIcon className="h-5 w-5" />
+            </span>
+            <input type="file" className="hidden" accept="image/jpeg,image/png,image/webp" onChange={handleAvatarChange} />
+          </label>
+          <input
+            className="mx-auto block w-full max-w-[260px] rounded-2xl border border-stone-300 bg-[#fbf7ef] px-4 py-2 text-center text-2xl font-bold text-stone-950 outline-none transition-colors focus:border-primary-600/80"
+            value={nickname}
+            onChange={(event) => setNickname(event.target.value)}
+            placeholder={displayName}
+            maxLength={32}
+          />
           <p className="mt-2 text-sm text-stone-500">{user.email || user.phone}</p>
           <span className="mt-3 inline-flex rounded-full border border-primary-600/40 bg-primary-600/20 px-3 py-1 text-xs font-semibold text-stone-800">
             {roleLabel}
           </span>
+          <button
+            type="button"
+            onClick={handleSaveProfile}
+            disabled={saving}
+            className="mx-auto mt-4 flex h-10 min-w-[160px] items-center justify-center gap-2 rounded-2xl bg-stone-950 px-4 text-sm font-semibold text-[#f5f0e8] transition-colors hover:bg-stone-800 disabled:opacity-60"
+          >
+            {saving && <LoaderIcon className="h-4 w-4 animate-spin" />}
+            保存资料
+          </button>
         </div>
 
         <section className="rounded-2xl border border-stone-300 bg-[#fbf7ef] p-4">

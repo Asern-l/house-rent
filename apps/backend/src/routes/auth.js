@@ -20,6 +20,14 @@ function isValidWalletAddress(walletAddress) {
   return /^0x[a-fA-F0-9]{40}$/.test(String(walletAddress || '').trim());
 }
 
+function normalizeAvatarUrl(input) {
+  const avatarUrl = String(input || '').trim();
+  if (!avatarUrl) return '';
+  if (avatarUrl.length > 700 * 1024) return null;
+  if (!/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(avatarUrl)) return null;
+  return avatarUrl;
+}
+
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim());
 }
@@ -136,7 +144,7 @@ router.post('/register', asyncHandler(async (req, res) => {
     emailCodes.delete(account);
 
     const token = jwt.sign({ id: userId, phone: account, role }, JWT_SECRET, { expiresIn: '7d' });
-    res.json({ success: true, data: { token, user: { id: userId, phone: account, email: account, role, walletAddress, nickname } } });
+    res.json({ success: true, data: { token, user: { id: userId, phone: account, email: account, role, walletAddress, nickname, avatarUrl: '' } } });
   } catch (error) {
     logApiError('auth.register.exception', { requestId: req.requestId || '', message: error.message, stack: error.stack || '' });
     res.status(500).json({ error: '注册失败' });
@@ -212,6 +220,7 @@ router.post('/login', asyncHandler(async (req, res) => {
           role: user.role,
           walletAddress: user.wallet_address,
           nickname: user.nickname,
+          avatarUrl: user.avatar_url || '',
         },
       },
     });
@@ -225,7 +234,7 @@ router.post('/login', asyncHandler(async (req, res) => {
 router.get('/me', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getUserDb();
   const users = parseResult(db.exec(
-    'SELECT id, phone, role, wallet_address, nickname, created_at FROM users WHERE id = ?',
+    'SELECT id, phone, role, wallet_address, nickname, avatar_url, created_at FROM users WHERE id = ?',
     [req.user.id]
   ));
   if (!users.length) {
@@ -236,10 +245,18 @@ router.get('/me', authMiddleware, asyncHandler(async (req, res) => {
 
 // 函数 6: 更新当前用户信息接口。
 router.put('/me', authMiddleware, asyncHandler(async (req, res) => {
-  const { nickname, walletAddress } = req.body;
+  const { nickname, walletAddress, avatarUrl } = req.body;
   const db = await getUserDb();
   if (nickname !== undefined) {
-    db.run('UPDATE users SET nickname = ? WHERE id = ?', [nickname, req.user.id]);
+    const nextNickname = String(nickname || '').trim().slice(0, 32);
+    db.run('UPDATE users SET nickname = ? WHERE id = ?', [nextNickname, req.user.id]);
+  }
+  if (avatarUrl !== undefined) {
+    const nextAvatarUrl = normalizeAvatarUrl(avatarUrl);
+    if (nextAvatarUrl === null) {
+      return res.status(400).json({ error: '头像格式不正确，仅支持 700KB 内的 jpeg/png/webp 图片' });
+    }
+    db.run('UPDATE users SET avatar_url = ? WHERE id = ?', [nextAvatarUrl, req.user.id]);
   }
   if (walletAddress !== undefined) {
     const users = parseResult(db.exec('SELECT wallet_address FROM users WHERE id = ?', [req.user.id]));
@@ -261,7 +278,26 @@ router.put('/me', authMiddleware, asyncHandler(async (req, res) => {
     }
   }
   saveUserDb();
-  res.json({ success: true, message: '用户信息更新成功' });
+  const users = parseResult(db.exec(
+    'SELECT id, phone, role, wallet_address, nickname, avatar_url FROM users WHERE id = ?',
+    [req.user.id]
+  ));
+  const nextUser = users[0] || {};
+  res.json({
+    success: true,
+    message: '用户信息更新成功',
+    data: {
+      user: {
+        id: nextUser.id,
+        phone: nextUser.phone,
+        email: nextUser.phone,
+        role: nextUser.role,
+        walletAddress: nextUser.wallet_address,
+        nickname: nextUser.nickname,
+        avatarUrl: nextUser.avatar_url || '',
+      },
+    },
+  });
 }));
 
 module.exports = router;
