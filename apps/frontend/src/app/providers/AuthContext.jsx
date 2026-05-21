@@ -143,8 +143,14 @@ export function AuthProvider({ children }) {
   }, [refreshWalletInfo]);
 
     // 函数 6: 用户登录并写入当前网络会话。
-  const login = async (phone, password) => {
-    const res = await axios.post(`${AUTH_API_BASE}/auth/login`, { phone, password });
+  const login = async (email, password, captcha = {}) => {
+    const res = await axios.post(`${AUTH_API_BASE}/auth/login`, {
+      email,
+      phone: email,
+      password,
+      captchaId: captcha.id,
+      captchaAnswer: captcha.answer,
+    });
     const { token, user: userData } = res.data.data;
     const keys = storageKeys(preferredNetwork);
     localStorage.setItem(keys.token, token);
@@ -155,9 +161,9 @@ export function AuthProvider({ children }) {
   };
 
     // 函数 7: 用户注册并写入当前网络会话。
-  const register = async (phone, password, role, nickname, walletAddress) => {
+  const register = async (email, password, role, nickname, walletAddress, emailCode) => {
     const res = await axios.post(`${AUTH_API_BASE}/auth/register`, {
-      phone, password, role, nickname, walletAddress,
+      email, phone: email, password, role, nickname, walletAddress, emailCode,
     });
     const { token, user: userData } = res.data.data;
     const keys = storageKeys(preferredNetwork);
@@ -166,6 +172,30 @@ export function AuthProvider({ children }) {
     axios.defaults.headers.common.Authorization = `Bearer ${token}`;
     setUser(userData);
     return userData;
+  };
+
+  const getCaptcha = async () => {
+    const res = await axios.get(`${AUTH_API_BASE}/auth/captcha`);
+    return res.data?.data || {};
+  };
+
+  const sendEmailCode = async (email, captcha = {}) => {
+    const res = await axios.post(`${AUTH_API_BASE}/auth/email-code`, {
+      email,
+      captchaId: captcha.id,
+      captchaAnswer: captcha.answer,
+    });
+    return res.data?.data || {};
+  };
+
+  const resetPassword = async (email, password, emailCode) => {
+    const res = await axios.post(`${AUTH_API_BASE}/auth/reset-password`, {
+      email,
+      phone: email,
+      password,
+      emailCode,
+    });
+    return res.data;
   };
 
     // 函数 8: 退出登录并清理当前网络会话。
@@ -268,6 +298,9 @@ export function AuthProvider({ children }) {
       loading,
       login,
       register,
+      getCaptcha,
+      sendEmailCode,
+      resetPassword,
       logout,
       connectWallet,
       disconnectWallet,
@@ -288,9 +321,6 @@ export function useAuth() {
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 }
-
-
-
 
 
 

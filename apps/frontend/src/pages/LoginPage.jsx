@@ -1,179 +1,354 @@
-﻿/**
- * 文件说明：LoginPage.jsx
- * - 登录/注册页面。
- * - 登录后写入本地会话并跳转首页；注册后自动登录。
- */
-
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../app/providers/AuthContext';
 import toast from 'react-hot-toast';
-import { HomeIcon, LoaderIcon, EyeIcon, EyeOffIcon } from 'lucide-react';
+import {
+  ArrowRightToLineIcon,
+  AtSignIcon,
+  CheckCircleIcon,
+  KeyRoundIcon,
+  LoaderIcon,
+  LockIcon,
+  MailIcon,
+  UserIcon,
+  XIcon,
+} from 'lucide-react';
+import { useAuth } from '../app/providers/AuthContext';
 
-// 函数 1: 页面主组件。
-export default function LoginPage() {
-  const { login, register } = useAuth();
+const CREAM = '#f5f0e8';
+
+export default function LoginPage({ initialMode = 'login', onClose }) {
+  const { login, register, getCaptcha, sendEmailCode, resetPassword } = useAuth();
   const navigate = useNavigate();
-  const [mode, setMode] = useState('login');
+  const [mode, setMode] = useState(initialMode);
   const [form, setForm] = useState({
-    phone: '',
+    email: '',
     password: '',
     confirmPassword: '',
-    role: 'tenant',
     nickname: '',
+    role: 'tenant',
+    emailCode: '',
+    captchaAnswer: '',
   });
+  const [captcha, setCaptcha] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [showPwd, setShowPwd] = useState(false);
+  const [codeLoading, setCodeLoading] = useState(false);
+  const [devCode, setDevCode] = useState('');
 
-    // 函数 2: 提交登录或注册表单。
+  const isRegister = mode === 'register';
+  const isReset = mode === 'reset';
+
+  const loadCaptcha = useCallback(async () => {
+    try {
+      const nextCaptcha = await getCaptcha();
+      setCaptcha(nextCaptcha);
+      setForm((prev) => ({ ...prev, captchaAnswer: '' }));
+    } catch {
+      setCaptcha(null);
+    }
+  }, [getCaptcha]);
+
+  useEffect(() => {
+    loadCaptcha();
+  }, [loadCaptcha, mode]);
+
+  const updateForm = (key, value) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleSendCode = async () => {
+    if (!form.email.trim()) {
+      toast.error('请先填写邮箱');
+      return;
+    }
+    if (!form.captchaAnswer.trim()) {
+      toast.error('请先完成人机验证');
+      return;
+    }
+    setCodeLoading(true);
+    try {
+      const data = await sendEmailCode(form.email.trim(), {
+        id: captcha?.id,
+        answer: form.captchaAnswer.trim(),
+      });
+      setDevCode(data.devCode || '');
+      toast.success(data.devCode ? `验证码：${data.devCode}` : '验证码已发送');
+    } catch (err) {
+      toast.error(err.response?.data?.error || '验证码发送失败');
+    } finally {
+      await loadCaptcha();
+      setCodeLoading(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
-      if (mode === 'login') {
-        await login(form.phone, form.password);
-        toast.success('登录成功');
-      } else {
+      if (isRegister || isReset) {
         if (form.password !== form.confirmPassword) {
           toast.error('两次密码不一致');
           setLoading(false);
           return;
         }
-        await register(form.phone, form.password, form.role, form.nickname);
-        toast.success('注册成功');
       }
-      navigate('/');
+
+      if (isReset) {
+        await resetPassword(form.email.trim(), form.password, form.emailCode.trim());
+        toast.success('密码已重置，请登录');
+        setMode('login');
+        updateForm('password', '');
+        updateForm('confirmPassword', '');
+        updateForm('emailCode', '');
+      } else if (isRegister) {
+        await register(
+          form.email.trim(),
+          form.password,
+          form.role,
+          form.nickname.trim(),
+          '',
+          form.emailCode.trim()
+        );
+        toast.success('注册成功');
+        if (onClose) onClose(); else navigate('/');
+      } else {
+        if (!form.captchaAnswer.trim()) {
+          toast.error('请先完成人机验证');
+          setLoading(false);
+          return;
+        }
+        await login(form.email.trim(), form.password, {
+          id: captcha?.id,
+          answer: form.captchaAnswer.trim(),
+        });
+        toast.success('登录成功');
+        if (onClose) onClose(); else navigate('/');
+      }
     } catch (err) {
       toast.error(err.response?.data?.error || '操作失败');
+      if (!isRegister && !isReset) await loadCaptcha();
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="bg-primary-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <HomeIcon className="w-8 h-8 text-white" />
-          </div>
-          <h1 className="text-2xl font-bold text-gray-800">信源链</h1>
-          <p className="text-gray-500 text-sm mt-1">区块链租房平台</p>
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-950/55 px-4 py-6 backdrop-blur-sm">
+      <div
+        className="relative w-full max-w-[385px] rounded-[1.5rem] border border-primary-600/20 p-8 shadow-[0_22px_55px_rgba(27,23,18,0.28)]"
+        style={{
+          background:
+            'linear-gradient(180deg, rgba(245,240,232,0.98) 0%, rgba(242,236,226,0.98) 100%)',
+        }}
+      >
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-4 top-4 rounded-full p-1.5 text-stone-400 transition-colors hover:bg-stone-900/5 hover:text-stone-700"
+            aria-label="关闭"
+          >
+            <XIcon className="h-4 w-4" />
+          </button>
+        )}
+
+        <div className="mx-auto mb-7 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#fbf7ef] text-stone-950 shadow-[0_12px_30px_rgba(36,31,26,0.18)]">
+          <ArrowRightToLineIcon className="h-7 w-7" />
         </div>
 
-        <div className="card p-6">
-          <div className="flex mb-6 bg-gray-100 rounded-lg p-1">
-            <button
-              onClick={() => setMode('login')}
-              className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${mode === 'login' ? 'bg-white text-primary-600 shadow-sm' : 'text-gray-500'}`}
-            >
-              登录
-            </button>
-            <button
-              onClick={() => setMode('register')}
-              className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${mode === 'register' ? 'bg-white text-primary-600 shadow-sm' : 'text-gray-500'}`}
-            >
-              注册
-            </button>
-          </div>
+        <div className="mb-7 text-center">
+          <h1 className="text-2xl font-bold text-stone-950">
+            {isReset ? 'Reset your password' : isRegister ? 'Create your account' : 'Sign in with email'}
+          </h1>
+          <p className="mx-auto mt-3 max-w-[280px] text-sm leading-6 text-stone-500">
+            {isReset
+              ? 'Use your email code to verify identity and rebuild a new password.'
+              : isRegister
+                ? 'Create a verifiable rental identity with email code protection.'
+                : 'Make a new doc to bring your words, data, and teams together. For free'}
+          </p>
+        </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">手机号</label>
-              <input
-                type="tel"
-                className="input-field"
-                placeholder="请输入手机号"
-                value={form.phone}
-                onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))}
-                required
-                maxLength={11}
-              />
-            </div>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <Field icon={MailIcon}>
+            <input
+              type="email"
+              className="auth-input"
+              placeholder="Email"
+              value={form.email}
+              onChange={(e) => updateForm('email', e.target.value)}
+              required
+            />
+          </Field>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">密码</label>
-              <div className="relative">
+          <Field icon={LockIcon}>
+            <input
+              type="password"
+              className="auth-input"
+              placeholder="Password"
+              value={form.password}
+              onChange={(e) => updateForm('password', e.target.value)}
+              required
+              minLength={6}
+            />
+          </Field>
+
+          {(isRegister || isReset) && (
+            <>
+              <Field icon={KeyRoundIcon}>
                 <input
-                  type={showPwd ? 'text' : 'password'}
-                  className="input-field pr-10"
-                  placeholder="至少6位"
-                  value={form.password}
-                  onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
+                  type="password"
+                  className="auth-input"
+                  placeholder="Confirm password"
+                  value={form.confirmPassword}
+                  onChange={(e) => updateForm('confirmPassword', e.target.value)}
                   required
                   minLength={6}
                 />
-                <button
-                  type="button"
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
-                  onClick={() => setShowPwd(!showPwd)}
-                >
-                  {showPwd ? <EyeOffIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
+              </Field>
 
-            {mode === 'register' && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">确认密码</label>
-                  <input
-                    type="password"
-                    className="input-field"
-                    placeholder="再次输入密码"
-                    value={form.confirmPassword}
-                    onChange={(e) => setForm((p) => ({ ...p, confirmPassword: e.target.value }))}
-                    required
-                  />
-                </div>
+              {isRegister && (
+                <>
+                  <Field icon={UserIcon}>
+                    <input
+                      type="text"
+                      className="auth-input"
+                      placeholder="Nickname"
+                      value={form.nickname}
+                      onChange={(e) => updateForm('nickname', e.target.value)}
+                    />
+                  </Field>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">昵称</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      ['tenant', '租客'],
+                      ['landlord', '房东'],
+                    ].map(([role, label]) => (
+                      <button
+                        key={role}
+                        type="button"
+                        onClick={() => updateForm('role', role)}
+                        className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition-all ${
+                          form.role === role
+                            ? 'border-primary-600 bg-primary-600/25 text-stone-950 shadow-[0_10px_24px_rgba(231,167,121,0.32)]'
+                            : 'border-stone-300 bg-[#fbf7ef] text-stone-500 hover:border-primary-600/60'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              <div className="flex gap-2">
+                <Field icon={AtSignIcon} className="flex-1">
                   <input
                     type="text"
-                    className="input-field"
-                    placeholder="可选"
-                    value={form.nickname}
-                    onChange={(e) => setForm((p) => ({ ...p, nickname: e.target.value }))}
+                    inputMode="numeric"
+                    className="auth-input"
+                    placeholder="Email code"
+                    value={form.emailCode}
+                    onChange={(e) => updateForm('emailCode', e.target.value)}
+                    required
+                    maxLength={6}
                   />
-                </div>
+                </Field>
+                <button
+                  type="button"
+                  onClick={handleSendCode}
+                  disabled={codeLoading}
+                  className="h-[38px] rounded-2xl bg-stone-950 px-4 text-xs font-semibold text-[#f5f0e8] transition-colors hover:bg-stone-800 disabled:opacity-60"
+                >
+                  {codeLoading ? <LoaderIcon className="h-4 w-4 animate-spin" /> : 'Send'}
+                </button>
+              </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">注册角色</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setForm((p) => ({ ...p, role: 'tenant' }))}
-                      className={`py-3 rounded-lg border-2 text-sm font-medium transition-colors ${form.role === 'tenant' ? 'border-primary-500 bg-primary-50 text-primary-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
-                    >
-                      租客
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setForm((p) => ({ ...p, role: 'landlord' }))}
-                      className={`py-3 rounded-lg border-2 text-sm font-medium transition-colors ${form.role === 'landlord' ? 'border-primary-500 bg-primary-50 text-primary-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
-                    >
-                      房东
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
+              <HumanCheck
+                captcha={captcha}
+                value={form.captchaAnswer}
+                onChange={(value) => updateForm('captchaAnswer', value)}
+                onRefresh={loadCaptcha}
+              />
 
-            <button type="submit" disabled={loading} className="btn-primary w-full flex items-center justify-center space-x-2">
-              {loading && <LoaderIcon className="w-4 h-4 animate-spin" />}
-              <span>{loading ? '处理中...' : mode === 'login' ? '登录' : '注册'}</span>
+              {devCode && (
+                <div className="flex items-center gap-2 rounded-2xl bg-primary-600/18 px-3 py-2 text-xs text-stone-700">
+                  <CheckCircleIcon className="h-4 w-4 text-primary-700" />
+                  开发验证码：{devCode}
+                </div>
+              )}
+            </>
+          )}
+
+          {!isRegister && !isReset && (
+            <HumanCheck
+              captcha={captcha}
+              value={form.captchaAnswer}
+              onChange={(value) => updateForm('captchaAnswer', value)}
+              onRefresh={loadCaptcha}
+            />
+          )}
+
+          {!isRegister && !isReset && (
+            <button
+              type="button"
+              onClick={() => setMode('reset')}
+              className="ml-auto block text-xs font-semibold text-stone-800"
+            >
+              Forgot password?
             </button>
-          </form>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="flex h-11 w-full items-center justify-center rounded-2xl bg-gradient-to-b from-slate-800 to-slate-950 text-base font-semibold text-[#f5f0e8] shadow-[0_6px_12px_rgba(15,23,42,0.32)] transition-transform hover:-translate-y-0.5 disabled:opacity-60"
+          >
+            {loading ? <LoaderIcon className="h-5 w-5 animate-spin" /> : isReset ? 'Reset Password' : isRegister ? 'Create Account' : 'Get Started'}
+          </button>
+        </form>
+
+        <div className="mt-7 flex items-center gap-3 text-xs text-stone-400">
+          <span className="h-px flex-1 border-t border-dashed border-stone-300" />
+          <button
+            type="button"
+            onClick={() => setMode(isRegister || isReset ? 'login' : 'register')}
+            className="font-medium text-stone-500 transition-colors hover:text-stone-900"
+          >
+            {isRegister || isReset ? 'log in' : 'log in'}
+          </button>
+          <span className="h-px flex-1 border-t border-dashed border-stone-300" />
         </div>
       </div>
     </div>
   );
 }
 
+function Field({ icon: Icon, className = '', children }) {
+  return (
+    <label className={`flex h-[38px] items-center gap-3 rounded-2xl border border-stone-300 bg-[#fbf7ef] px-3 shadow-[inset_0_1px_2px_rgba(0,0,0,0.03)] focus-within:border-primary-600/80 ${className}`}>
+      <Icon className="h-4 w-4 shrink-0 text-stone-400" />
+      {children}
+    </label>
+  );
+}
 
-
-
-
-
-
+function HumanCheck({ captcha, value, onChange, onRefresh }) {
+  return (
+    <div className="flex items-center gap-2 rounded-2xl border border-stone-300 bg-[#fbf7ef] px-3 py-2">
+      <span className="shrink-0 text-xs font-semibold text-stone-500">
+        {captcha?.question || '验证加载中'}
+      </span>
+      <input
+        type="text"
+        inputMode="numeric"
+        className="min-w-0 flex-1 bg-transparent text-sm text-stone-800 outline-none placeholder:text-stone-400"
+        placeholder="Answer"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <button type="button" onClick={onRefresh} className="text-xs font-semibold text-primary-700">
+        换题
+      </button>
+    </div>
+  );
+}
