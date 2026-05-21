@@ -18,6 +18,7 @@ export default function PublishListing({ onClose }) {
   const [submitting, setSubmitting] = useState(false);
   const [imageFiles, setImageFiles] = useState([]);
   const [imagePreviews, setImagePreviews] = useState([]);
+  const imagePreviewsRef = React.useRef([]);
 
   const close = () => onClose?.();
 
@@ -30,13 +31,30 @@ export default function PublishListing({ onClose }) {
 
   const handleImageChange = (e) => {
     const files = Array.from(e.target.files || []);
-    if (files.length > MAX_IMAGE_COUNT) {
+    if (imageFiles.length + files.length > MAX_IMAGE_COUNT) {
       toast.error(`最多选择 ${MAX_IMAGE_COUNT} 张图片`);
+      e.target.value = '';
       return;
     }
-    imagePreviews.forEach((url) => URL.revokeObjectURL(url));
-    setImageFiles(files);
-    setImagePreviews(files.map((item) => URL.createObjectURL(item)));
+    setImageFiles((prev) => [...prev, ...files]);
+    const nextPreviews = files.map((item) => URL.createObjectURL(item));
+    setImagePreviews((prev) => {
+      const next = [...prev, ...nextPreviews];
+      imagePreviewsRef.current = next;
+      return next;
+    });
+    e.target.value = '';
+  };
+
+  const removeImage = (index) => {
+    setImageFiles((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
+    setImagePreviews((prev) => {
+      const target = prev[index];
+      if (target) URL.revokeObjectURL(target);
+      const next = prev.filter((_, itemIndex) => itemIndex !== index);
+      imagePreviewsRef.current = next;
+      return next;
+    });
   };
 
   const handleSubmit = async (e) => {
@@ -65,15 +83,22 @@ export default function PublishListing({ onClose }) {
       close();
       navigate(`/listing/${res.data?.id}`);
     } catch (err) {
-      toast.error(err.response?.data?.error || '发布失败');
+      if (err.response?.status === 401) {
+        toast.error('登录已过期，请重新登录后再发布');
+      } else {
+        toast.error(err.response?.data?.error || '发布失败');
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
   React.useEffect(() => {
-    return () => { imagePreviews.forEach((url) => URL.revokeObjectURL(url)); };
-  }, [imagePreviews]);
+    return () => {
+      imagePreviewsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      imagePreviewsRef.current = [];
+    };
+  }, []);
 
   if (!user || user.role !== 'landlord') {
     return (
@@ -186,7 +211,17 @@ export default function PublishListing({ onClose }) {
             {imagePreviews.length > 0 && (
               <div className="mt-3 grid grid-cols-3 gap-3 md:grid-cols-4">
                 {imagePreviews.map((url, index) => (
-                  <img key={`${url}_${index}`} src={url} alt={`preview_${index}`} className="h-24 w-full rounded-2xl border border-stone-300 object-cover" />
+                  <div key={`${url}_${index}`} className="group relative overflow-hidden rounded-2xl border border-stone-300">
+                    <img src={url} alt={`preview_${index}`} className="h-24 w-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => removeImage(index)}
+                      className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-stone-950/85 text-[#f5f0e8] shadow-sm transition-colors hover:bg-red-600"
+                      aria-label={`删除第 ${index + 1} 张图片`}
+                    >
+                      <XIcon className="h-4 w-4" />
+                    </button>
+                  </div>
                 ))}
               </div>
             )}

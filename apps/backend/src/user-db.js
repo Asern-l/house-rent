@@ -39,8 +39,14 @@ function migrateUserDb(db) {
     role TEXT NOT NULL CHECK(role IN ('landlord','tenant','admin')),
     wallet_address TEXT DEFAULT '',
     nickname TEXT DEFAULT '',
+    avatar_url TEXT DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
   )`);
+
+  const columns = parseResult(db.exec('PRAGMA table_info(users)')).map((item) => item.name);
+  if (!columns.includes('avatar_url')) {
+    db.run("ALTER TABLE users ADD COLUMN avatar_url TEXT DEFAULT ''");
+  }
 }
 
 // 函数 4: 获取共享用户数据库连接（惰性初始化）。

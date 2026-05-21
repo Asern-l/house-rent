@@ -104,6 +104,18 @@ export function AuthProvider({ children }) {
     setLoading(false);
   }, [preferredNetwork, loadSessionForNetwork]);
 
+  useEffect(() => {
+    const handleSessionExpired = (event) => {
+      const expiredNetwork = event.detail?.network;
+      if (expiredNetwork && expiredNetwork !== preferredNetwork) return;
+      setUser(null);
+      setWalletInfo(null);
+      delete axios.defaults.headers.common.Authorization;
+    };
+    window.addEventListener('auth-session-expired', handleSessionExpired);
+    return () => window.removeEventListener('auth-session-expired', handleSessionExpired);
+  }, [preferredNetwork]);
+
     // 函数 3: 刷新当前钱包网络与余额信息。
   const refreshWalletInfo = useCallback(async () => {
     if (!window.ethereum || !user?.walletAddress) {
@@ -196,6 +208,22 @@ export function AuthProvider({ children }) {
       emailCode,
     });
     return res.data;
+  };
+
+  const updateProfile = async ({ nickname, avatarUrl }) => {
+    const keys = storageKeys(preferredNetwork);
+    const token = localStorage.getItem(keys.token) || '';
+    const res = await axios.put(`${AUTH_API_BASE}/auth/me`, { nickname, avatarUrl }, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const nextUser = res.data?.data?.user || {
+      ...user,
+      ...(nickname !== undefined ? { nickname } : {}),
+      ...(avatarUrl !== undefined ? { avatarUrl } : {}),
+    };
+    setUser(nextUser);
+    localStorage.setItem(keys.user, JSON.stringify(nextUser));
+    return nextUser;
   };
 
     // 函数 8: 退出登录并清理当前网络会话。
@@ -301,6 +329,7 @@ export function AuthProvider({ children }) {
       getCaptcha,
       sendEmailCode,
       resetPassword,
+      updateProfile,
       logout,
       connectWallet,
       disconnectWallet,
@@ -321,8 +350,6 @@ export function useAuth() {
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 }
-
-
 
 
 
