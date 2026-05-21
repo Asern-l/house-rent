@@ -30,13 +30,23 @@ export default function PublishListing({ onClose }) {
 
   const handleImageChange = (e) => {
     const files = Array.from(e.target.files || []);
-    if (files.length > MAX_IMAGE_COUNT) {
+    if (imageFiles.length + files.length > MAX_IMAGE_COUNT) {
       toast.error(`最多选择 ${MAX_IMAGE_COUNT} 张图片`);
+      e.target.value = '';
       return;
     }
-    imagePreviews.forEach((url) => URL.revokeObjectURL(url));
-    setImageFiles(files);
-    setImagePreviews(files.map((item) => URL.createObjectURL(item)));
+    setImageFiles((prev) => [...prev, ...files]);
+    setImagePreviews((prev) => [...prev, ...files.map((item) => URL.createObjectURL(item))]);
+    e.target.value = '';
+  };
+
+  const removeImage = (index) => {
+    setImageFiles((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
+    setImagePreviews((prev) => {
+      const target = prev[index];
+      if (target) URL.revokeObjectURL(target);
+      return prev.filter((_, itemIndex) => itemIndex !== index);
+    });
   };
 
   const handleSubmit = async (e) => {
@@ -186,7 +196,17 @@ export default function PublishListing({ onClose }) {
             {imagePreviews.length > 0 && (
               <div className="mt-3 grid grid-cols-3 gap-3 md:grid-cols-4">
                 {imagePreviews.map((url, index) => (
-                  <img key={`${url}_${index}`} src={url} alt={`preview_${index}`} className="h-24 w-full rounded-2xl border border-stone-300 object-cover" />
+                  <div key={`${url}_${index}`} className="group relative overflow-hidden rounded-2xl border border-stone-300">
+                    <img src={url} alt={`preview_${index}`} className="h-24 w-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => removeImage(index)}
+                      className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-stone-950/85 text-[#f5f0e8] shadow-sm transition-colors hover:bg-red-600"
+                      aria-label={`删除第 ${index + 1} 张图片`}
+                    >
+                      <XIcon className="h-4 w-4" />
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
