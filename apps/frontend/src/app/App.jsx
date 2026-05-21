@@ -1,13 +1,11 @@
-﻿/**
- * 文件说明：App.jsx
- * - 前端全局路由与导航容器。
- * - 提供全局目标网络切换、钱包状态展示与移动端菜单。
- */
-
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, Link, useLocation } from 'react-router-dom';
+import { Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './providers/AuthContext';
-import { HomeIcon, SearchIcon, PlusCircleIcon, FileTextIcon, UserIcon, MenuIcon, XIcon, ShieldCheckIcon, LogOutIcon, WalletIcon } from 'lucide-react';
+import {
+  HomeIcon, SearchIcon, PlusCircleIcon, FileTextIcon,
+  ShieldCheckIcon, LogOutIcon, WalletIcon,
+  MenuIcon, XIcon, ArrowRightIcon,
+} from 'lucide-react';
 
 import HomePage from '../pages/HomePage';
 import LoginPage from '../pages/LoginPage';
@@ -20,25 +18,26 @@ import MyListings from '../pages/MyListings';
 import ProfilePage from '../pages/ProfilePage';
 import VerifyPage from '../pages/VerifyPage';
 
-// 函数 1: 应用主组件，负责导航、路由和全局布局。
 export default function App() {
   const { user, logout, connectWallet, walletInfo, preferredNetwork, updatePreferredNetwork } = useAuth();
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [backendHealth, setBackendHealth] = useState({ sepolia: null, local: null });
   const location = useLocation();
+  const navigate = useNavigate();
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [authModal, setAuthModal] = useState(location.pathname === '/login' ? 'login' : null);
+  const [profileModalOpen, setProfileModalOpen] = useState(location.pathname === '/profile');
+  const [publishModalOpen, setPublishModalOpen] = useState(location.pathname === '/publish');
+  const [backendHealth, setBackendHealth] = useState({ sepolia: null, local: null });
 
   const navItems = [
     { path: '/', label: '首页', icon: HomeIcon },
     { path: '/listings', label: '房源', icon: SearchIcon },
-    ...(user?.role === 'landlord' ? [{ path: '/publish', label: '发布', icon: PlusCircleIcon, highlight: true }] : []),
+    ...(user?.role === 'landlord' ? [{ path: '/publish', label: '发布房源', icon: PlusCircleIcon }] : []),
     { path: '/contracts', label: '合同', icon: FileTextIcon },
     { path: '/verify', label: '验真', icon: ShieldCheckIcon },
   ];
 
-  // 函数 2: 判断导航项是否为当前激活路由。
   const isActive = (p) => location.pathname === p;
 
-  // 函数 3: 检测前后端代理对应的网络后端是否可用。
   useEffect(() => {
     let mounted = true;
     const check = async () => {
@@ -47,172 +46,265 @@ export default function App() {
         fetch('/api-local/health'),
       ]);
       if (!mounted) return;
-      const sepoliaOk = checks[0].status === 'fulfilled' && checks[0].value.ok;
-      const localOk = checks[1].status === 'fulfilled' && checks[1].value.ok;
-      setBackendHealth({ sepolia: sepoliaOk, local: localOk });
+      setBackendHealth({
+        sepolia: checks[0].status === 'fulfilled' && checks[0].value.ok,
+        local:   checks[1].status === 'fulfilled' && checks[1].value.ok,
+      });
     };
-
     check();
     const timer = setInterval(check, 10000);
-    return () => {
-      mounted = false;
-      clearInterval(timer);
-    };
+    return () => { mounted = false; clearInterval(timer); };
   }, []);
 
   const selectedBackendOk = preferredNetwork === 'local' ? backendHealth.local : backendHealth.sepolia;
 
-  if (location.pathname === '/login') {
-    return <LoginPage />;
-  }
+  useEffect(() => {
+    if (location.pathname === '/login') setAuthModal('login');
+    if (location.pathname === '/profile') setProfileModalOpen(true);
+    if (location.pathname === '/publish') setPublishModalOpen(true);
+  }, [location.pathname]);
+
+  const openAuthModal = (mode = 'login') => {
+    setAuthModal(mode);
+    setMobileOpen(false);
+  };
+
+  const openProfileModal = () => {
+    setProfileModalOpen(true);
+    setMobileOpen(false);
+  };
+
+  const closeProfileModal = () => {
+    setProfileModalOpen(false);
+    if (location.pathname === '/profile') navigate('/');
+  };
+
+  const openPublishModal = () => {
+    setPublishModalOpen(true);
+    setMobileOpen(false);
+  };
+
+  const closePublishModal = () => {
+    setPublishModalOpen(false);
+    if (location.pathname === '/publish') navigate('/');
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50">
-      <header className="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <Link to="/" className="flex items-center space-x-2">
-              <div className="bg-primary-600 p-2 rounded-lg"><HomeIcon className="w-5 h-5 text-white" /></div>
-              <span className="text-lg font-bold text-gray-800">信源链</span>
-            </Link>
+    <div className="flex flex-col h-screen overflow-hidden bg-gray-950 text-gray-100">
 
-            <nav className="hidden md:flex items-center space-x-1">
-              {navItems.map((item) => (
+      {/* ── Top header ── */}
+      <header className="flex-shrink-0 sticky top-0 z-40 border-b border-stone-200/80"
+        style={{ backgroundColor: '#f5f0e8' }}>
+        <div className="relative flex items-center h-14 px-5 lg:px-10">
+
+          {/* Logo */}
+          <Link to="/" className="absolute left-1/2 -translate-x-1/2 flex items-center flex-shrink-0">
+            <span className="font-bold text-stone-900 text-base tracking-wide">信源链</span>
+          </Link>
+
+          {/* Desktop nav */}
+          <nav className="hidden md:flex items-center gap-0.5 flex-1">
+            {navItems.map((item) => (
+              item.path === '/publish' ? (
+                <button
+                  key={item.path}
+                  type="button"
+                  onClick={openPublishModal}
+                  className="px-3 py-1.5 rounded-md text-sm font-medium text-stone-500 transition-colors hover:bg-stone-900/5 hover:text-stone-900"
+                >
+                  {item.label}
+                </button>
+              ) : (
                 <Link
                   key={item.path}
                   to={item.path}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${isActive(item.path) ? 'bg-primary-100 text-primary-700' : item.highlight ? 'bg-primary-600 text-white hover:bg-primary-700' : 'text-gray-600 hover:bg-gray-100'}`}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors
+                    ${isActive(item.path)
+                      ? 'bg-primary-600/20 text-stone-900 shadow-[0_8px_24px_rgba(231,167,121,0.38)]'
+                      : 'text-stone-500 hover:text-stone-900 hover:bg-stone-900/5'}`}
                 >
-                  <span className="flex items-center space-x-1.5">
-                    <item.icon className="w-4 h-4" /><span>{item.label}</span>
-                  </span>
+                  {item.label}
                 </Link>
-              ))}
-            </nav>
+              )
+            ))}
+          </nav>
 
-            <div className="flex items-center space-x-2">
-              {user ? (
-                <div className="hidden md:flex items-center space-x-2">
-                  <div className={`flex items-center gap-2 rounded-lg border px-2 py-1 ${selectedBackendOk === false ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-white'}`}>
-                    <span className={`inline-block h-2 w-2 rounded-full ${selectedBackendOk === false ? 'bg-red-500' : 'bg-emerald-500'}`} />
-                    <select
-                      className="text-xs bg-transparent text-gray-700 outline-none"
-                      value={preferredNetwork}
-                      onChange={(e) => updatePreferredNetwork(e.target.value)}
-                    >
-                      <option value="sepolia">Sepolia</option>
-                      <option value="local">Local EVM (31337)</option>
-                    </select>
-                  </div>
-                  {walletInfo && (
-                    <div className="text-xs bg-blue-50 text-blue-700 rounded-lg px-2 py-1 border border-blue-100">
-                      {walletInfo.network} | {walletInfo.balanceEth} ETH
-                    </div>
-                  )}
-
-                  <Link to="/profile" className="flex items-center space-x-2 bg-gray-100 rounded-lg px-3 py-1.5 hover:bg-gray-200 transition-colors">
-                    <UserIcon className="w-4 h-4 text-gray-500" />
-                    <span className="text-sm text-gray-700">{user.nickname || user.phone?.slice(-4)}</span>
-                  </Link>
-
-                  {!user.walletAddress && (
-                    <button onClick={connectWallet} className="text-xs text-primary-600 hover:underline">连接钱包</button>
-                  )}
-                </div>
-              ) : (
-                <Link to="/login" className="hidden md:flex items-center space-x-2 bg-primary-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary-700">
-                  <WalletIcon className="w-4 h-4" /><span>登录</span>
-                </Link>
-              )}
-
-              <button onClick={() => setMobileOpen(!mobileOpen)} className="md:hidden p-2 rounded-lg text-gray-600 hover:bg-gray-100">
-                {mobileOpen ? <XIcon className="w-6 h-6" /> : <MenuIcon className="w-6 h-6" />}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {mobileOpen && (
-          <div className="md:hidden border-t border-gray-200 bg-white">
-            <div className="px-4 py-3 space-y-1">
-              {user && (
-                <div className="mb-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
-                  <div className="text-xs text-gray-500 mb-1">目标网络</div>
+          {/* Right side */}
+          <div className="flex items-center gap-2 ml-auto">
+            {user ? (
+              <>
+                {/* Network selector */}
+                <div className={`hidden sm:flex items-center gap-1.5 text-xs border rounded-full px-2.5 py-1 transition-colors
+                  ${selectedBackendOk === false
+                    ? 'border-red-300 text-red-500 bg-red-50'
+                    : 'border-stone-300 text-stone-500 bg-white/60'}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${selectedBackendOk === false ? 'bg-red-500' : 'bg-emerald-500'}`} />
                   <select
-                    className={`w-full text-sm bg-white rounded-md px-2 py-2 text-gray-700 ${selectedBackendOk === false ? 'border border-red-300 bg-red-50' : 'border border-gray-200'}`}
+                    className="bg-transparent outline-none text-xs"
                     value={preferredNetwork}
                     onChange={(e) => updatePreferredNetwork(e.target.value)}
                   >
                     <option value="sepolia">Sepolia</option>
-                    <option value="local">Local EVM (31337)</option>
+                    <option value="local">Local</option>
                   </select>
-                  {walletInfo && <div className="text-xs text-blue-700 mt-2">{walletInfo.network} | {walletInfo.balanceEth} ETH</div>}
                 </div>
-              )}
 
-              {navItems.map((item) => (
+                {/* Wallet balance */}
+                {walletInfo && (
+                  <span className="hidden lg:block text-xs text-stone-400">
+                    {walletInfo.balanceEth} ETH
+                  </span>
+                )}
+                {!user.walletAddress && (
+                  <button onClick={connectWallet} className="hidden sm:block text-xs text-primary-600 hover:text-primary-700 font-medium">
+                    连接钱包
+                  </button>
+                )}
+
+                {/* User avatar + name */}
+                <button
+                  type="button"
+                  onClick={openProfileModal}
+                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-full hover:bg-stone-900/5 transition-colors">
+                  <div className="w-6 h-6 rounded-full bg-primary-600 flex items-center justify-center text-white text-[11px] font-semibold flex-shrink-0">
+                    {(user.nickname || user.phone || '?')[0].toUpperCase()}
+                  </div>
+                  <span className="hidden sm:block text-sm font-medium text-stone-700">
+                    {user.nickname || user.phone}
+                  </span>
+                </button>
+
+                {/* Logout */}
+                <button
+                  onClick={logout}
+                  title="退出登录"
+                  className="p-1.5 text-stone-400 hover:text-stone-700 hover:bg-stone-900/5 rounded-md transition-colors"
+                >
+                  <LogOutIcon className="w-4 h-4" />
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => openAuthModal('login')}
+                className="flex items-center gap-1.5 bg-stone-900 text-white text-sm font-medium px-4 py-2 rounded-full hover:bg-stone-800 transition-colors"
+              >
+                登录开始
+                <ArrowRightIcon className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            {/* Mobile hamburger */}
+            <button
+              onClick={() => setMobileOpen(!mobileOpen)}
+              className="md:hidden p-2 text-stone-600 hover:bg-stone-900/5 rounded-md transition-colors"
+            >
+              {mobileOpen ? <XIcon className="w-5 h-5" /> : <MenuIcon className="w-5 h-5" />}
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile dropdown */}
+        {mobileOpen && (
+          <div className="md:hidden border-t border-stone-200 bg-[#f5f0e8] px-4 py-3 space-y-0.5">
+            {navItems.map((item) => (
+              item.path === '/publish' ? (
+                <button
+                  key={item.path}
+                  type="button"
+                  onClick={openPublishModal}
+                  className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-stone-600 hover:bg-stone-900/5"
+                >
+                  <item.icon className="w-4 h-4" />
+                  {item.label}
+                </button>
+              ) : (
                 <Link
                   key={item.path}
                   to={item.path}
                   onClick={() => setMobileOpen(false)}
-                  className={`flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-medium ${isActive(item.path) ? 'bg-primary-100 text-primary-700' : 'text-gray-600'}`}
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium
+                    ${isActive(item.path) ? 'bg-primary-600/20 text-stone-900 shadow-[0_8px_24px_rgba(231,167,121,0.32)]' : 'text-stone-600 hover:bg-stone-900/5'}`}
                 >
-                  <item.icon className="w-5 h-5" /><span>{item.label}</span>
+                  <item.icon className="w-4 h-4" />
+                  {item.label}
                 </Link>
-              ))}
+              )
+            ))}
 
-              {user ? (
-                <div className="pt-3 border-t border-gray-200 space-y-2">
-                  <Link
-                    to="/profile"
-                    onClick={() => setMobileOpen(false)}
-                    className="flex items-center space-x-3 px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50"
+            {/* Mobile network + logout */}
+            {user && (
+              <div className="pt-2 border-t border-stone-200 mt-1 space-y-1">
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <span className={`w-1.5 h-1.5 rounded-full ${selectedBackendOk === false ? 'bg-red-500' : 'bg-emerald-500'}`} />
+                  <select
+                    className="bg-transparent outline-none text-sm text-stone-600 flex-1"
+                    value={preferredNetwork}
+                    onChange={(e) => updatePreferredNetwork(e.target.value)}
                   >
-                    <UserIcon className="w-5 h-5" /><span>{user.nickname || '个人中心'}</span>
-                  </Link>
-                  <button
-                    onClick={() => { logout(); setMobileOpen(false); }}
-                    className="flex items-center space-x-3 px-4 py-3 rounded-lg text-red-500 hover:bg-red-50 w-full"
-                  >
-                    <LogOutIcon className="w-5 h-5" /><span>退出登录</span>
-                  </button>
+                    <option value="sepolia">Sepolia</option>
+                    <option value="local">Local EVM</option>
+                  </select>
                 </div>
-              ) : (
-                <Link
-                  to="/login"
-                  onClick={() => setMobileOpen(false)}
-                  className="flex items-center space-x-3 px-4 py-3 rounded-lg text-primary-600 font-medium"
+                <button
+                  onClick={openProfileModal}
+                  className="flex items-center gap-3 px-3 py-2.5 text-stone-700 text-sm w-full rounded-md hover:bg-stone-900/5"
                 >
-                  <WalletIcon className="w-5 h-5" /><span>登录/注册</span>
-                </Link>
-              )}
-            </div>
+                  <WalletIcon className="w-4 h-4" />
+                  个人面板
+                </button>
+                <button
+                  onClick={() => { logout(); setMobileOpen(false); }}
+                  className="flex items-center gap-3 px-3 py-2.5 text-red-500 text-sm w-full rounded-md hover:bg-red-50"
+                >
+                  <LogOutIcon className="w-4 h-4" />
+                  退出登录
+                </button>
+              </div>
+            )}
+
+            {!user && (
+              <button
+                type="button"
+                onClick={() => openAuthModal('login')}
+                className="flex items-center gap-3 px-3 py-2.5 text-stone-700 text-sm font-medium"
+              >
+                <WalletIcon className="w-4 h-4" />
+                登录 / 注册
+              </button>
+            )}
           </div>
         )}
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      {/* ── Page content ── */}
+      <main className="flex-1 overflow-y-auto bg-gray-950 p-6">
         <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/listings" element={<ListingsPage />} />
+          <Route path="/"           element={<HomePage />} />
+          <Route path="/login"      element={<HomePage />} />
+          <Route path="/listings"   element={<ListingsPage />} />
           <Route path="/listing/:id" element={<ListingDetail />} />
-          <Route path="/publish" element={<PublishListing />} />
+          <Route path="/publish"    element={<HomePage />} />
           <Route path="/contract/:id" element={<ContractPage />} />
-          <Route path="/contracts" element={<MyContracts />} />
+          <Route path="/contracts"  element={<MyContracts />} />
           <Route path="/my-listings" element={<MyListings />} />
-          <Route path="/profile" element={<ProfilePage />} />
-          <Route path="/verify" element={<VerifyPage />} />
+          <Route path="/profile"    element={<HomePage />} />
+          <Route path="/verify"     element={<VerifyPage />} />
         </Routes>
       </main>
 
-      <footer className="bg-white border-t border-gray-200 mt-12 py-6 text-center text-sm text-gray-400">
-        信源链 · 基于区块链的租房平台 · 合同哈希上链存证
-      </footer>
+      {authModal && (
+        <LoginPage
+          initialMode={authModal}
+          onClose={() => setAuthModal(null)}
+        />
+      )}
+      {profileModalOpen && (
+        <ProfilePage onClose={closeProfileModal} />
+      )}
+      {publishModalOpen && (
+        <PublishListing onClose={closePublishModal} />
+      )}
     </div>
   );
 }
-
-
-
-
-

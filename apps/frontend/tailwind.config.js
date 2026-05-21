@@ -4,11 +4,29 @@ export default {
   theme: {
     extend: {
       colors: {
+        // Warm amber accent: rgb(231, 167, 121) = #E7A779 as primary-600
         primary: {
-          50: '#eff6ff', 100: '#dbeafe', 200: '#bfdbfe',
-          300: '#93c5fd', 400: '#60a5fa', 500: '#3b82f6',
-          600: '#2563eb', 700: '#1d4ed8', 800: '#1e40af', 900: '#1e3a8a',
+          50:  '#fff9f4',
+          100: '#feeee0',
+          200: '#fcd9ba',
+          300: '#f8be90',
+          400: '#f2a06a',
+          500: '#ec8d4c',
+          600: '#E7A779',   // user-specified warm amber
+          700: '#cc8a52',   // hover / darker
+          800: '#a86c3b',
+          900: '#87532d',
+          950: '#4e2e14',
         },
+      },
+      keyframes: {
+        'fade-in': {
+          '0%':   { opacity: '0', transform: 'translateY(8px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+      },
+      animation: {
+        'fade-in': 'fade-in 0.25s ease-out',
       },
     },
   },

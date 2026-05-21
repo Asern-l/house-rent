@@ -1,108 +1,149 @@
-﻿/**
- * 文件说明：ProfilePage.jsx
- * - 本文件已添加中文注释，便于后续维护与交接。
- * - 变更代码时请同步维护注释，保证逻辑与注释一致。
- */
-
 import React from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../app/providers/AuthContext';
 import toast from 'react-hot-toast';
-import { UserIcon, WalletIcon, LogOutIcon, FileTextIcon, HomeIcon, ShieldCheckIcon } from 'lucide-react';
+import {
+  ArrowRightIcon,
+  FileTextIcon,
+  HomeIcon,
+  LogOutIcon,
+  ShieldCheckIcon,
+  UserIcon,
+  WalletIcon,
+  XIcon,
+} from 'lucide-react';
 
-// 函数 1: 页面主组件。
-export default function ProfilePage() {
+export default function ProfilePage({ onClose }) {
   const { user, logout, connectWallet } = useAuth();
   const navigate = useNavigate();
 
-    // 函数 2: 执行退出登录。
   const handleLogout = () => {
     logout();
+    onClose?.();
     toast.success('已退出登录');
     navigate('/login');
   };
 
   if (!user) {
     return (
-      <div className="card p-8 text-center">
-        <UserIcon className="w-12 h-12 mx-auto text-gray-300 mb-3" />
-        <p className="text-gray-500">请先登录</p>
-        <Link to="/login" className="btn-primary mt-3 inline-block">去登录</Link>
+      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-950/55 px-4 py-6 backdrop-blur-sm">
+        <div className="relative w-full max-w-[385px] rounded-[1.5rem] border border-primary-600/20 bg-[#f5f0e8] p-8 text-center shadow-[0_22px_55px_rgba(27,23,18,0.28)]">
+          {onClose && <CloseButton onClose={onClose} />}
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#fbf7ef] text-stone-950 shadow-[0_12px_30px_rgba(36,31,26,0.18)]">
+            <UserIcon className="h-7 w-7" />
+          </div>
+          <h1 className="text-2xl font-bold text-stone-950">请先登录</h1>
+          <p className="mt-3 text-sm text-stone-500">登录后可以查看个人资料、钱包和快捷操作。</p>
+          <Link to="/login" onClick={onClose} className="mt-7 flex h-11 w-full items-center justify-center rounded-2xl bg-gradient-to-b from-slate-800 to-slate-950 text-base font-semibold text-[#f5f0e8] shadow-[0_6px_12px_rgba(15,23,42,0.32)]">
+            去登录
+          </Link>
+        </div>
       </div>
     );
   }
 
+  const displayName = user.nickname || `用户${user.phone?.slice(-4)}`;
+  const initial = String(displayName || user.phone || '?').slice(0, 1).toUpperCase();
+  const roleLabel = user.role === 'landlord' ? '房东' : '租客';
+  const quickActions = [
+    ...(user.role === 'landlord'
+      ? [
+          { to: '/my-listings', label: '我的房源', icon: HomeIcon },
+          { to: '/publish', label: '发布房源', icon: HomeIcon },
+        ]
+      : []),
+    { to: '/contracts', label: '我的合同', icon: FileTextIcon },
+    { to: '/listings', label: '浏览房源', icon: HomeIcon },
+    { to: '/verify', label: '链上验真', icon: ShieldCheckIcon },
+  ];
+
   return (
-    <div className="max-w-2xl mx-auto animate-fade-in">
-      <div className="card p-6 mb-4">
-        <div className="flex items-center space-x-4">
-          <div className="w-16 h-16 bg-primary-500 rounded-full flex items-center justify-center text-white text-2xl font-bold">
-            {user.nickname?.[0] || user.phone?.slice(-4)}
-          </div>
-          <div>
-            <h2 className="text-xl font-bold text-gray-800">{user.nickname || `用户${user.phone?.slice(-4)}`}</h2>
-            <p className="text-sm text-gray-500">{user.phone}</p>
-            <span className={user.role === 'landlord' ? 'badge-blue' : 'badge-green'}>
-              {user.role === 'landlord' ? '房东' : '租客'}
-            </span>
-          </div>
-        </div>
-      </div>
+    <div className="fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-stone-950/55 px-4 py-6 backdrop-blur-sm">
+      <div
+        className="relative w-full max-w-[460px] rounded-[1.5rem] border border-primary-600/20 p-8 shadow-[0_22px_55px_rgba(27,23,18,0.28)] animate-fade-in"
+        style={{
+          background:
+            'linear-gradient(180deg, rgba(245,240,232,0.98) 0%, rgba(242,236,226,0.98) 100%)',
+        }}
+      >
+        {onClose && <CloseButton onClose={onClose} />}
 
-      <div className="card p-4 mb-4">
-        <h3 className="font-semibold text-gray-700 mb-3">钱包</h3>
-        {user.walletAddress ? (
-          <div className="space-y-2">
-            <div className="bg-gray-50 rounded-lg p-3">
-              <p className="text-xs text-gray-500">已绑定钱包地址</p>
-              <p className="font-mono text-sm text-gray-700 break-all">{user.walletAddress}</p>
+        <div className="mb-7 text-center">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-600 text-2xl font-bold text-stone-950 shadow-[0_12px_30px_rgba(231,167,121,0.35)]">
+            {initial}
+          </div>
+          <h1 className="text-2xl font-bold text-stone-950">{displayName}</h1>
+          <p className="mt-2 text-sm text-stone-500">{user.email || user.phone}</p>
+          <span className="mt-3 inline-flex rounded-full border border-primary-600/40 bg-primary-600/20 px-3 py-1 text-xs font-semibold text-stone-800">
+            {roleLabel}
+          </span>
+        </div>
+
+        <section className="rounded-2xl border border-stone-300 bg-[#fbf7ef] p-4">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-stone-900">
+            <WalletIcon className="h-4 w-4 text-primary-700" />
+            钱包
+          </div>
+          {user.walletAddress ? (
+            <div className="space-y-3">
+              <div className="rounded-2xl border border-stone-200 bg-[#f5f0e8] px-3 py-3">
+                <p className="text-xs text-stone-500">已绑定钱包地址</p>
+                <p className="mt-1 break-all font-mono text-xs text-stone-700">{user.walletAddress}</p>
+              </div>
+              <button onClick={connectWallet} className="profile-secondary-button">
+                重连已绑定钱包
+              </button>
+              <p className="text-xs leading-5 text-stone-500">钱包地址绑定后不可更改，仅支持重连同一地址。</p>
             </div>
-            <button onClick={connectWallet} className="btn-secondary w-full">重连已绑定钱包</button>
-            <p className="text-xs text-amber-700">当前策略：钱包地址绑定后不可更改，仅支持重连同一地址。</p>
-          </div>
-        ) : (
-          <button onClick={connectWallet} className="btn-secondary w-full flex items-center justify-center space-x-2">
-            <WalletIcon className="w-4 h-4" /><span>连接 MetaMask 钱包</span>
-          </button>
-        )}
-      </div>
-
-      <div className="card p-4 mb-4">
-        <h3 className="font-semibold text-gray-700 mb-3">快捷操作</h3>
-        <div className="grid grid-cols-2 gap-2">
-          {user.role === 'landlord' && (
-            <>
-              <Link to="/my-listings" className="flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-50">
-                <HomeIcon className="w-5 h-5 text-primary-500" /><span className="text-sm">我的房源</span>
-              </Link>
-              <Link to="/publish" className="flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-50">
-                <HomeIcon className="w-5 h-5 text-green-500" /><span className="text-sm">发布房源</span>
-              </Link>
-            </>
+          ) : (
+            <button onClick={connectWallet} className="profile-secondary-button">
+              <WalletIcon className="h-4 w-4" />
+              <span>连接 MetaMask 钱包</span>
+            </button>
           )}
-          <Link to="/contracts" className="flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-50">
-            <FileTextIcon className="w-5 h-5 text-orange-500" /><span className="text-sm">我的合同</span>
-          </Link>
-          <Link to="/listings" className="flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-50">
-            <HomeIcon className="w-5 h-5 text-purple-500" /><span className="text-sm">浏览房源</span>
-          </Link>
-          <Link to="/verify" className="flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-50">
-            <ShieldCheckIcon className="w-5 h-5 text-blue-500" /><span className="text-sm">链上验真</span>
-          </Link>
-        </div>
-      </div>
+        </section>
 
-      <button onClick={handleLogout} className="btn-danger w-full flex items-center justify-center space-x-2">
-        <LogOutIcon className="w-4 h-4" /><span>退出登录</span>
-      </button>
+        <section className="mt-4 rounded-2xl border border-stone-300 bg-[#fbf7ef] p-4">
+          <div className="mb-3 text-sm font-semibold text-stone-900">快捷操作</div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {quickActions.map((item) => (
+              <Link
+                key={item.to}
+                to={item.to}
+                onClick={onClose}
+                className="group flex items-center justify-between rounded-2xl border border-transparent px-3 py-3 text-sm font-semibold text-stone-700 transition-all hover:border-primary-600/40 hover:bg-primary-600/15"
+              >
+                <span className="flex items-center gap-3">
+                  <item.icon className="h-4 w-4 text-primary-700" />
+                  {item.label}
+                </span>
+                <ArrowRightIcon className="h-3.5 w-3.5 text-stone-300 transition-colors group-hover:text-primary-700" />
+              </Link>
+            ))}
+          </div>
+        </section>
+
+        <button
+          onClick={handleLogout}
+          className="mt-5 flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50 text-sm font-semibold text-red-600 transition-colors hover:bg-red-100"
+        >
+          <LogOutIcon className="h-4 w-4" />
+          退出登录
+        </button>
+      </div>
     </div>
   );
 }
 
-
-
-
-
-
-
-
+function CloseButton({ onClose }) {
+  return (
+    <button
+      type="button"
+      onClick={onClose}
+      className="absolute right-4 top-4 rounded-full p-1.5 text-stone-400 transition-colors hover:bg-stone-900/5 hover:text-stone-700"
+      aria-label="关闭"
+    >
+      <XIcon className="h-4 w-4" />
+    </button>
+  );
+}

@@ -1,44 +1,56 @@
-﻿/*
-文件说明：index.css
-- 本文件已添加中文注释，便于后续维护与交接。
-- 变更样式时请同步维护注释，保证逻辑与注释一致。
-*/
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  @apply bg-gray-50;
+  @apply bg-gray-950 text-gray-100;
 }
 
 .btn-primary {
-  @apply bg-primary-600 text-white px-6 py-2.5 rounded-lg font-medium
+  @apply bg-primary-600 text-stone-900 px-6 py-2.5 rounded-lg font-medium
          hover:bg-primary-700 transition-all duration-200 shadow-sm
          disabled:opacity-50 disabled:cursor-not-allowed;
 }
 .btn-secondary {
-  @apply bg-white text-primary-600 border-2 border-primary-600 px-6 py-2.5 rounded-lg font-medium
-         hover:bg-primary-50 transition-all duration-200 disabled:opacity-50;
+  @apply bg-gray-800 text-gray-100 border border-gray-700 px-6 py-2.5 rounded-lg font-medium
+         hover:bg-gray-700 transition-all duration-200 disabled:opacity-50;
 }
 .btn-danger {
-  @apply bg-red-500 text-white px-4 py-2 rounded-lg font-medium hover:bg-red-600 transition-colors;
+  @apply bg-red-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-red-700 transition-colors;
 }
 .input-field {
-  @apply w-full px-4 py-2.5 border border-gray-300 rounded-lg
+  @apply w-full px-4 py-2.5 border border-gray-700 rounded-lg bg-gray-800 text-gray-100
+         placeholder:text-gray-500
          focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent
-         transition-all duration-200 bg-white;
+         transition-all duration-200;
+}
+.auth-input {
+  @apply min-w-0 flex-1 bg-transparent text-sm text-stone-800 outline-none placeholder:text-stone-400;
+}
+.profile-secondary-button {
+  @apply flex h-10 w-full items-center justify-center gap-2 rounded-2xl bg-stone-950 px-4 text-sm font-semibold text-[#f5f0e8]
+         transition-colors hover:bg-stone-800 disabled:opacity-60;
 }
 .card {
-  @apply bg-white rounded-xl shadow-md hover:shadow-lg transition-shadow duration-300 overflow-hidden;
+  @apply bg-gray-900 rounded-xl border border-gray-800 overflow-hidden;
 }
 .badge {
   @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
 }
-.badge-green { @apply badge bg-green-100 text-green-800; }
-.badge-blue { @apply badge bg-blue-100 text-blue-800; }
-.badge-yellow { @apply badge bg-yellow-100 text-yellow-800; }
-.badge-red { @apply badge bg-red-100 text-red-800; }
-.badge-gray { @apply badge bg-gray-100 text-gray-800; }
+.badge-green  { @apply badge bg-green-900/50  text-green-400  border border-green-800/50; }
+.badge-blue   { @apply badge bg-blue-900/50   text-blue-400   border border-blue-800/50; }
+.badge-yellow { @apply badge bg-yellow-900/50 text-yellow-400 border border-yellow-800/50; }
+.badge-red    { @apply badge bg-red-900/50    text-red-400    border border-red-800/50; }
+.badge-gray   { @apply badge bg-gray-800      text-gray-400   border border-gray-700; }
 
+/* ── Hero reveal animation (matches RelayEstate source) ── */
+@keyframes revealFlow {
+  0%   { opacity: 0; transform: translateY(34px) scale(0.985); filter: blur(10px); }
+  100% { opacity: 1; transform: translateY(0)    scale(1);     filter: blur(0); }
+}
+.reveal-item { opacity: 0; will-change: transform, opacity, filter; }
+.reveal-item.reveal-active { animation: revealFlow 1.1s cubic-bezier(0.2, 0.6, 0.2, 1) both; }
+.reveal-delay-100 { animation-delay: 100ms; }
+.reveal-delay-200 { animation-delay: 200ms; }
+.reveal-delay-300 { animation-delay: 300ms; }
