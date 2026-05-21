@@ -10,12 +10,15 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const { migrate, getDb, parseResult, saveDb, CHAIN_ENV, DB_PATH } = require('./db');
-const { getUserDb, USER_DB_PATH } = require('./user-db');
+const { getUserDb, saveUserDb, USER_DB_PATH } = require('./user-db');
 const { logApiError, logSystemError } = require('./logger');
+const contractRoutes = require('./routes/contracts');
+const listingRoutes = require('./routes/listings');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || '100mb');
+const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // 函数 1: 生成请求追踪ID，便于前后端日志关联。
 function createRequestId() {
@@ -70,8 +73,8 @@ function setupRequestId() {
 // 函数 5: 注册业务路由。
 function setupRoutes() {
   app.use('/api/auth', require('./routes/auth'));
-  app.use('/api/listings', require('./routes/listings'));
-  app.use('/api/contracts', require('./routes/contracts'));
+  app.use('/api/listings', listingRoutes);
+  app.use('/api/contracts', contractRoutes);
   app.use('/api/verify', require('./routes/verify'));
 
   app.get('/api/health', (req, res) => {
@@ -85,6 +88,29 @@ function setupRoutes() {
       dbFile: DB_PATH,
     });
   });
+
+  app.get('/api/console/status', asyncHandler(async (req, res) => {
+    const db = await getDb();
+    const counts = {
+      listings: parseResult(db.exec('SELECT COUNT(*) AS count FROM listings'))[0]?.count || 0,
+      contracts: parseResult(db.exec('SELECT COUNT(*) AS count FROM contracts'))[0]?.count || 0,
+      payments: parseResult(db.exec('SELECT COUNT(*) AS count FROM payments'))[0]?.count || 0,
+      pendingOnchainContracts: parseResult(db.exec("SELECT COUNT(*) AS count FROM contracts WHERE status = 'active_pending_onchain'"))[0]?.count || 0,
+      pendingOnchainListings: parseResult(db.exec("SELECT COUNT(*) AS count FROM listings WHERE tx_hash IS NULL AND onchain_status IN ('pending','failed')"))[0]?.count || 0,
+    };
+    res.json({
+      success: true,
+      data: {
+        chainEnv: CHAIN_ENV,
+        dbFile: DB_PATH,
+        authPort: Number(process.env.AUTH_PORT || 3005),
+        port: PORT,
+        rpcUrl: CHAIN_ENV === 'local' ? (process.env.LOCAL_RPC_URL || 'http://127.0.0.1:8545') : (process.env.SEPOLIA_RPC_URL || ''),
+        rentalChainAddress: process.env.RENTAL_CHAIN_ADDRESS || '',
+        counts,
+      },
+    });
+  }));
 }
 
 // 函数 5-1: 记录请求完成时的 4xx/5xx 响应日志（覆盖非异常分支）。
@@ -154,20 +180,36 @@ function setupErrorHandlers() {
 async function expirePendingPaymentContracts() {
   const db = await getDb();
   const timeoutContracts = parseResult(db.exec(
-    `SELECT id, listing_id
+    `SELECT id, listing_id, tenant_id
      FROM contracts
-     WHERE status = 'pending_payment'
+     WHERE status IN ('active_pending_onchain', 'pending_payment')
        AND landlord_signed_at IS NOT NULL
-       AND datetime(landlord_signed_at, '+2 hours') <= datetime('now', '+8 hours')`
+       AND (
+         datetime(landlord_signed_at, '+2 hours') <= datetime('now', '+8 hours')
+         OR (payment_deadline IS NOT NULL AND payment_deadline <> '' AND datetime(payment_deadline) <= datetime('now', '+8 hours'))
+       )`
   ));
   if (timeoutContracts.length === 0) return;
 
   timeoutContracts.forEach((item) => {
     db.run(
-      "UPDATE contracts SET status = 'cancelled' WHERE id = ? AND status = 'pending_payment'",
+      "UPDATE contracts SET status = 'cancelled' WHERE id = ? AND status IN ('active_pending_onchain', 'pending_payment')",
       [item.id]
     );
     if (db.getRowsModified() !== 1) return;
+
+    getUserDb().then((userDb) => {
+      userDb.run(
+        `UPDATE users
+         SET unpaid_default_count = COALESCE(unpaid_default_count, 0) + 1,
+             risk_blocked_until = datetime('now', '+8 hours', '+24 hours')
+         WHERE id = ?`,
+        [item.tenant_id]
+      );
+      saveUserDb();
+    }).catch((err) => {
+      console.error('未付款风控计数更新失败:', err);
+    });
 
     const sibling = parseResult(db.exec(
       `SELECT id
@@ -254,6 +296,12 @@ async function startServer() {
       });
       expireActiveContractsByEndDate().catch((err) => {
         console.error('租期到期任务失败:', err);
+      });
+      contractRoutes.retryPendingOnchainContracts().catch((err) => {
+        console.error('合同上链补偿任务失败:', err);
+      });
+      listingRoutes.retryPendingListingOnchain().catch((err) => {
+        console.error('房源上链补偿任务失败:', err);
       });
     }, 60 * 1000);
     const server = app.listen(PORT, () => {

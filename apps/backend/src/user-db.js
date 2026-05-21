@@ -47,6 +47,12 @@ function migrateUserDb(db) {
   if (!columns.includes('avatar_url')) {
     db.run("ALTER TABLE users ADD COLUMN avatar_url TEXT DEFAULT ''");
   }
+  if (!columns.includes('unpaid_default_count')) {
+    db.run('ALTER TABLE users ADD COLUMN unpaid_default_count INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!columns.includes('risk_blocked_until')) {
+    db.run("ALTER TABLE users ADD COLUMN risk_blocked_until TEXT DEFAULT ''");
+  }
 }
 
 // 函数 4: 获取共享用户数据库连接（惰性初始化）。

@@ -17,6 +17,9 @@ contract RentalChain {
     /** 押金状态枚举 */
     enum DepositStatus { None, Paid, Refunding, Refunded, PartiallyRefunded, Disputed }
 
+    /** 合同支付状态枚举 */
+    enum ContractPayStatus { None, PaymentPending, Active, Cancelled }
+
     // ============ 结构体 ============
 
     /** 房源存证记录（最小字段） */
@@ -35,6 +38,9 @@ contract RentalChain {
         address tenant;
         address landlord;
         uint256 createdAt;
+        uint256 paymentDeadline;
+        uint256 initialAmount;
+        ContractPayStatus payStatus;
         bool exists;
     }
 
@@ -54,6 +60,7 @@ contract RentalChain {
     // ============ 状态变量 ============
 
     address public owner;
+    address public paymentAuthorizer;
 
     // listingId => ListingRecord
     mapping(string => ListingRecord) public listings;
@@ -65,6 +72,9 @@ contract RentalChain {
 
     // contractId => DepositRecord
     mapping(string => DepositRecord) public deposits;
+
+    // nonce => used
+    mapping(bytes32 => bool) public usedPaymentNonces;
 
     // ============ 事件 ============
 
@@ -137,6 +147,8 @@ contract RentalChain {
         uint256 timestamp
     );
 
+    event PaymentAuthorizerChanged(address indexed oldAuthorizer, address indexed newAuthorizer);
+
     // ============ 修饰符 ============
 
     /** 仅合约拥有者可调用 */
@@ -149,6 +161,7 @@ contract RentalChain {
 
     constructor() {
         owner = msg.sender;
+        paymentAuthorizer = msg.sender;
     }
 
     // ============ 房源存证 ============
@@ -183,7 +196,37 @@ contract RentalChain {
         address _tenant,
         address _landlord
     ) external {
+        _storeContract(_contractId, _listingId, _contractHash, _tenant, _landlord, block.timestamp + 2 hours, 0);
+    }
+
+    /**
+     * 函数 2-1：存证合同哈希并固化首笔支付准入条件。
+     */
+    function storeContractWithPaymentTerms(
+        string calldata _contractId,
+        string calldata _listingId,
+        bytes32 _contractHash,
+        address _tenant,
+        address _landlord,
+        uint256 _paymentDeadline,
+        uint256 _initialAmount
+    ) external {
+        require(_paymentDeadline > block.timestamp, unicode"支付截止时间必须晚于当前时间");
+        require(_initialAmount > 0, unicode"首笔支付金额必须大于0");
+        _storeContract(_contractId, _listingId, _contractHash, _tenant, _landlord, _paymentDeadline, _initialAmount);
+    }
+
+    function _storeContract(
+        string calldata _contractId,
+        string calldata _listingId,
+        bytes32 _contractHash,
+        address _tenant,
+        address _landlord,
+        uint256 _paymentDeadline,
+        uint256 _initialAmount
+    ) internal {
         require(!contracts[_contractId].exists, unicode"合同ID已存在");
+        require(_tenant != address(0) && _landlord != address(0), unicode"签约地址不能为空");
 
         ContractRecord storage record = contracts[_contractId];
         record.contractId = _contractId;
@@ -192,6 +235,9 @@ contract RentalChain {
         record.tenant = _tenant;
         record.landlord = _landlord;
         record.createdAt = block.timestamp;
+        record.paymentDeadline = _paymentDeadline;
+        record.initialAmount = _initialAmount;
+        record.payStatus = ContractPayStatus.PaymentPending;
         record.exists = true;
 
         _allContractIds.push(_contractId);
@@ -342,12 +388,50 @@ contract RentalChain {
         uint256 _amount,
         string calldata _alipayOrderNo
     ) external payable {
+        revert(unicode"请使用后端授权签名支付函数");
+    }
+
+    /**
+     * 函数 10-1：基于后端一次性授权签名记录首笔租金支付。
+     */
+    function recordRentPaymentAuthorized(
+        string calldata _contractId,
+        address _tenant,
+        address _landlord,
+        uint256 _amount,
+        string calldata _alipayOrderNo,
+        uint256 _deadline,
+        bytes32 _nonce,
+        bytes calldata _signature
+    ) external payable {
         require(contracts[_contractId].exists, unicode"合同不存在");
         require(msg.sender == _tenant, unicode"仅租客可发起支付");
         require(_tenant == contracts[_contractId].tenant, unicode"租客地址不匹配");
         require(_landlord == contracts[_contractId].landlord, unicode"房东地址不匹配");
         require(_amount > 0, unicode"支付金额必须大于0");
         require(msg.value == _amount, unicode"转入金额与参数金额不一致");
+        require(contracts[_contractId].payStatus == ContractPayStatus.PaymentPending, unicode"合同当前状态不可支付");
+        require(block.timestamp <= contracts[_contractId].paymentDeadline, unicode"合同支付窗口已关闭");
+        require(_deadline >= block.timestamp, unicode"支付授权已过期");
+        require(!usedPaymentNonces[_nonce], unicode"支付授权已使用");
+
+        uint256 expectedAmount = contracts[_contractId].initialAmount;
+        require(expectedAmount == 0 || expectedAmount == _amount, unicode"支付金额与合同不一致");
+
+        bytes32 rawHash = keccak256(abi.encodePacked(
+            _contractId,
+            _tenant,
+            _amount,
+            _deadline,
+            _nonce,
+            block.chainid,
+            address(this)
+        ));
+        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", rawHash));
+        require(_recoverSigner(ethHash, _signature) == paymentAuthorizer, unicode"支付授权签名无效");
+
+        usedPaymentNonces[_nonce] = true;
+        contracts[_contractId].payStatus = ContractPayStatus.Active;
 
         payable(_landlord).transfer(msg.value);
         emit RentReceipt(_contractId, _tenant, _landlord, _amount, _alipayOrderNo, block.timestamp);
@@ -384,11 +468,14 @@ contract RentalChain {
             address tenant,
             address landlord,
             uint256 createdAt,
+            uint256 paymentDeadline,
+            uint256 initialAmount,
+            ContractPayStatus payStatus,
             bool exists
         )
     {
         ContractRecord storage c = contracts[_contractId];
-        return (c.listingId, c.contractHash, c.tenant, c.landlord, c.createdAt, c.exists);
+        return (c.listingId, c.contractHash, c.tenant, c.landlord, c.createdAt, c.paymentDeadline, c.initialAmount, c.payStatus, c.exists);
     }
 
     /** 函数 14：查询押金记录。 */
@@ -413,6 +500,30 @@ contract RentalChain {
     function transferOwnership(address _newOwner) external onlyOwner {
         require(_newOwner != address(0), unicode"新拥有者地址不能为空");
         owner = _newOwner;
+    }
+
+    /** 函数 16：设置后端支付授权签名地址。 */
+    function setPaymentAuthorizer(address _newAuthorizer) external onlyOwner {
+        require(_newAuthorizer != address(0), unicode"授权地址不能为空");
+        emit PaymentAuthorizerChanged(paymentAuthorizer, _newAuthorizer);
+        paymentAuthorizer = _newAuthorizer;
+    }
+
+    function _recoverSigner(bytes32 _hash, bytes memory _signature) internal pure returns (address) {
+        require(_signature.length == 65, unicode"签名长度不正确");
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            r := mload(add(_signature, 32))
+            s := mload(add(_signature, 64))
+            v := byte(0, mload(add(_signature, 96)))
+        }
+        if (v < 27) {
+            v += 27;
+        }
+        require(v == 27 || v == 28, unicode"签名v值不正确");
+        return ecrecover(_hash, v, r, s);
     }
 
     receive() external payable {}

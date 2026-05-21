@@ -45,8 +45,27 @@ function resolveInitialAmount(content) {
   return String((rent * months).toFixed(8).replace(/\.?0+$/, ''));
 }
 
+function createSignMessage({ contractId, contentHash, role, signerAddress, timestamp }) {
+  return [
+    'CCL Housing Contract Signature',
+    `contractId:${contractId}`,
+    `contentHash:${contentHash}`,
+    `role:${role}`,
+    `signer:${ethers.getAddress(signerAddress)}`,
+    `timestamp:${timestamp}`,
+  ].join('\n');
+}
+
+function toDeadlineEpoch(value) {
+  const raw = String(value || '').trim();
+  const d = new Date(raw.includes('T') ? raw : raw.replace(' ', 'T'));
+  if (Number.isNaN(d.getTime())) return Math.floor(Date.now() / 1000) + 2 * 60 * 60;
+  return Math.floor(d.getTime() / 1000);
+}
+
 const STATUS_MAP = {
   pending:         { label: '待签署',   color: 'badge-yellow' },
+  active_pending_onchain: { label: '上链处理中', color: 'badge-yellow' },
   tenant_signed:   { label: '租客已签', color: 'badge-blue'   },
   pending_payment: { label: '待支付',   color: 'badge-yellow' },
   landlord_signed: { label: '房东已签', color: 'badge-blue'   },
@@ -67,7 +86,13 @@ export default function ContractPage() {
   const [signing, setSigning] = useState(false);
   const [paying, setPaying] = useState(false);
   const [payments, setPayments] = useState([]);
+  const [versions, setVersions] = useState([]);
+  const [terminations, setTerminations] = useState([]);
   const [lastTxHash, setLastTxHash] = useState('');
+  const [proposalForm, setProposalForm] = useState({ startDate: '', leaseMonths: 1, rentAmount: '', changeNote: '' });
+  const [proposing, setProposing] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+  const [retryingOnchain, setRetryingOnchain] = useState(false);
 
   const initialAmount = resolveInitialAmount(content);
   const selectedNetwork = NETWORK_OPTIONS.find((x) => x.key === preferredNetwork) || NETWORK_OPTIONS[0];
@@ -78,11 +103,22 @@ export default function ContractPage() {
     setContract(d.data);
     try {
       setContent(typeof d.data.content_json === 'string' ? JSON.parse(d.data.content_json) : d.data.content_json);
+      const parsed = typeof d.data.content_json === 'string' ? JSON.parse(d.data.content_json) : d.data.content_json;
+      setProposalForm({
+        startDate: parsed?.terms?.startDate || '',
+        leaseMonths: Number(parsed?.terms?.leaseMonths || 1),
+        rentAmount: parsed?.rentAmount || '',
+        changeNote: '',
+      });
     } catch {
       setContent(d.data.content_json);
     }
     const paymentResp = await apiGet(`/contracts/${id}/payments`);
     setPayments(paymentResp?.data || []);
+    const versionResp = await apiGet(`/contracts/${id}/versions`);
+    setVersions(versionResp?.data || []);
+    const termResp = await apiGet(`/contracts/${id}/terminations`);
+    setTerminations(termResp?.data || []);
   };
 
   useEffect(() => {
@@ -140,30 +176,28 @@ export default function ContractPage() {
         return;
       }
 
-      const res = await apiPost(`/contracts/${id}/${type === 'tenant' ? 'sign-tenant' : 'sign-landlord'}`, { signerAddress }, { headers: { 'X-Request-Id': requestId } });
+      const signer = await provider.getSigner();
+      const timestamp = Date.now();
+      const message = createSignMessage({
+        contractId: id,
+        contentHash: contract?.content_hash || '',
+        role: type,
+        signerAddress,
+        timestamp,
+      });
+      const signature = await signer.signMessage(message);
 
-      if (type === 'landlord' && res.data?.contentHash) {
-        try {
-          if (!ethers.isAddress(contractAddr)) { toast.error(`VITE_CONTRACT_ADDRESS_${selected.key.toUpperCase()} 未配置或格式无效`); return; }
-          const network = await provider.getNetwork();
-          if (Number(network.chainId) !== selected.chainId) { toast.error(`请将 MetaMask 切换到 ${selected.label}`); return; }
-          if (!ethers.isAddress(res.data.tenantAddress) || !ethers.isAddress(res.data.landlordAddress)) {
-            toast.error('合同绑定钱包地址无效，请双方先在个人中心绑定钱包并重新发起合同');
-            return;
-          }
-          const signer = await provider.getSigner();
-          const rContract = new ethers.Contract(contractAddr, RentalChainABI, signer);
-          const tx = await rContract.storeContract(id, contract?.listing_id || '', res.data.contentHash, res.data.tenantAddress, res.data.landlordAddress);
-          await tx.wait();
-          await apiPost(`/contracts/${id}/onchain`, { txHash: tx.hash }, { headers: { 'X-Request-Id': requestId } });
-          setLastTxHash(tx.hash);
-          toast.success('合同哈希已上链存证');
-        } catch (err) {
-          await reportClientFailure({ type, preferredNetwork: selected.key, message: err?.message || 'onchain_failed', apiStatus: err.response?.status || null, apiError: err.response?.data || { reason: 'onchain_failed' }, walletAddress: signerAddress, chainId: String((await provider.getNetwork())?.chainId || ''), pageUrl: window.location.href });
-          if (err.code !== 'ACTION_REJECTED') {
-            toast.error(`上链失败：${err?.shortMessage || err?.reason || err?.response?.data?.error || err?.message || 'unknown error'}`);
-          }
-        }
+      const res = await apiPost(
+        `/contracts/${id}/${type === 'tenant' ? 'sign-tenant' : 'sign-landlord'}`,
+        { signerAddress, message, signature },
+        { headers: { 'X-Request-Id': requestId } }
+      );
+
+      if (type === 'landlord' && res.data?.txHash) {
+        setLastTxHash(res.data.txHash);
+        toast.success('合同哈希已由后端补偿任务上链');
+      } else if (type === 'landlord' && res.data?.onchainStatus === 'failed') {
+        toast.error(`自动上链暂未完成：${res.data.onchainError || '已进入补偿队列'}`);
       }
 
       toast.success(res.message || '签署成功');
@@ -226,9 +260,26 @@ export default function ContractPage() {
       const weiAmount = ethers.parseEther(String(initialAmount));
       const orderNo = `order_${Date.now()}`;
       const rContract = new ethers.Contract(contractAddr, RentalChainABI, signer);
-      const tx = await rContract.recordRentPayment(id, content?.tenant?.walletAddress || ethers.ZeroAddress, content?.landlord?.walletAddress || ethers.ZeroAddress, weiAmount, orderNo, { value: weiAmount });
+      const auth = await apiPost(`/contracts/${id}/payments/authorization`, {
+        payerAddress: signerAddress,
+        amount: String(initialAmount),
+        chainId: Number(network.chainId),
+        contractAddress: contractAddr,
+      });
+      const data = auth?.data || {};
+      const tx = await rContract.recordRentPaymentAuthorized(
+        id,
+        content?.tenant?.walletAddress || ethers.ZeroAddress,
+        content?.landlord?.walletAddress || ethers.ZeroAddress,
+        weiAmount,
+        orderNo,
+        Number(data.deadline),
+        data.nonce,
+        data.signature,
+        { value: weiAmount }
+      );
       await tx.wait();
-      await apiPost(`/contracts/${id}/payments/onchain`, { txHash: tx.hash, amount: String(initialAmount), payType: 'initial', period: 'initial' });
+      await apiPost(`/contracts/${id}/payments/onchain`, { txHash: tx.hash, amount: String(initialAmount), payType: 'initial', period: 'initial', nonce: data.nonce });
       setLastTxHash(tx.hash);
       toast.success('一次性支付成功，合同已生效');
       await loadContract();
@@ -236,6 +287,121 @@ export default function ContractPage() {
       toast.error(`支付失败：${err?.shortMessage || err?.response?.data?.error || err?.message || '支付失败'}`);
     } finally {
       setPaying(false);
+    }
+  };
+
+  const handleProposalSubmit = async () => {
+    setProposing(true);
+    try {
+      await apiPost(`/contracts/${id}/proposals`, proposalForm);
+      toast.success('修改提案已提交');
+      await loadContract();
+    } catch (err) {
+      toast.error(err.response?.data?.error || '提交提案失败');
+    } finally {
+      setProposing(false);
+    }
+  };
+
+  const handleAcceptProposal = async (proposalId) => {
+    try {
+      await apiPost(`/contracts/${id}/proposals/${proposalId}/accept`);
+      toast.success('已接受修改提案');
+      await loadContract();
+    } catch (err) {
+      toast.error(err.response?.data?.error || '接受提案失败');
+    }
+  };
+
+  const handleFinalize = async () => {
+    setFinalizing(true);
+    try {
+      await apiPost(`/contracts/${id}/finalize`);
+      toast.success('合同已定稿');
+      await loadContract();
+    } catch (err) {
+      toast.error(err.response?.data?.error || '定稿失败');
+    } finally {
+      setFinalizing(false);
+    }
+  };
+
+  const handleRetryOnchain = async () => {
+    setRetryingOnchain(true);
+    try {
+      const res = await apiPost(`/contracts/${id}/onchain/retry`);
+      setLastTxHash(res?.data?.txHash || '');
+      toast.success('上链重试成功');
+      await loadContract();
+    } catch (err) {
+      toast.error(err.response?.data?.error || '上链重试失败');
+    } finally {
+      setRetryingOnchain(false);
+    }
+  };
+
+  const handleDownloadPdf = async () => {
+    const token = localStorage.getItem(`token:${preferredNetwork}`) || localStorage.getItem('token') || '';
+    const res = await fetch(`/api/contracts/${id}/pdf`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) {
+      toast.error('PDF 下载失败');
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+  };
+
+  const handleRecordPayment = async (payType) => {
+    const amount = prompt(`${payType} 金额（ETH）`, initialAmount || content?.rentAmount || '');
+    if (!amount) return;
+    const period = prompt('支付周期/备注', payType);
+    try {
+      await apiPost(`/contracts/${id}/payments/record`, { payType, amount, period, note: 'web_record' });
+      toast.success('支付存证已记录');
+      await loadContract();
+    } catch (err) {
+      toast.error(err.response?.data?.error || '记录失败');
+    }
+  };
+
+  const handleCreateRevision = async () => {
+    const rentAmount = prompt('修订后的月租金（ETH）', content?.rentAmount || '');
+    if (!rentAmount) return;
+    const leaseMonths = Number(prompt('修订后的租期（月）', content?.terms?.leaseMonths || 1));
+    try {
+      const res = await apiPost(`/contracts/${id}/revisions`, {
+        rentAmount,
+        leaseMonths,
+        startDate: content?.terms?.startDate,
+        changeNote: 'web_revision',
+      });
+      toast.success('修订合同已创建');
+      navigate(`/contract/${res.data.contractId}`);
+    } catch (err) {
+      toast.error(err.response?.data?.error || '创建修订失败');
+    }
+  };
+
+  const handleTerminate = async () => {
+    const reason = prompt('提前解约原因', '双方协商一致提前解约');
+    if (!reason) return;
+    try {
+      await apiPost(`/contracts/${id}/terminations`, { reason, settlement: {} });
+      toast.success('提前解约申请已提交，等待对方确认');
+      await loadContract();
+    } catch (err) {
+      toast.error(err.response?.data?.error || '提交解约失败');
+    }
+  };
+
+  const handleAcceptTermination = async (terminationId) => {
+    try {
+      await apiPost(`/contracts/${id}/terminations/${terminationId}/accept`, {});
+      toast.success('已确认提前解约');
+      await loadContract();
+    } catch (err) {
+      toast.error(err.response?.data?.error || '确认解约失败');
     }
   };
 
@@ -250,6 +416,9 @@ export default function ContractPage() {
   const statusInfo = STATUS_MAP[contract.status] || { label: contract.status, color: 'badge-gray' };
   const isTenant = contract.tenant_id === user?.id;
   const isLandlord = contract.landlord_id === user?.id;
+  const canNegotiate = contract.status === 'pending' && contract.negotiation_status !== 'finalized' && (isTenant || isLandlord);
+  const openProposal = versions.find((item) => item.status === 'proposed');
+  const openTermination = terminations.find((item) => item.status === 'proposed');
 
   return (
     <div className="max-w-3xl mx-auto animate-fade-in">
@@ -269,6 +438,21 @@ export default function ContractPage() {
         <div className="mb-4 rounded-lg border border-gray-700 bg-gray-800/50 px-3 py-2 text-sm">
           <span className="text-gray-500">合同ID：</span>
           <span className="font-mono text-gray-200 break-all">{contract.id}</span>
+        </div>
+
+        <div className="mb-4 grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
+          <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-3">
+            <p className="text-gray-500">协商状态</p>
+            <p className="font-medium text-gray-200">{contract.negotiation_status === 'finalized' ? '已定稿' : contract.negotiation_status === 'proposed' ? '待确认提案' : '草稿协商中'}</p>
+          </div>
+          <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-3">
+            <p className="text-gray-500">合同版本</p>
+            <p className="font-medium text-gray-200">v{contract.version || 1}</p>
+          </div>
+          <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-3">
+            <p className="text-gray-500">上链状态</p>
+            <p className="font-medium text-gray-200">{contract.onchain_status === 'confirmed' ? '已确认' : contract.onchain_status === 'failed' ? '待重试' : contract.onchain_status === 'pending' ? '处理中' : '未开始'}</p>
+          </div>
         </div>
 
         {content && (
@@ -331,8 +515,78 @@ export default function ContractPage() {
           </div>
         )}
 
+        {canNegotiate && (
+          <div className="mb-6 rounded-lg border border-gray-700 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="font-medium text-gray-200">合同协商</p>
+              {!openProposal && (
+                <button type="button" onClick={handleFinalize} disabled={finalizing} className="btn-secondary px-3 py-2 text-sm">
+                  {finalizing ? '定稿中...' : '定稿'}
+                </button>
+              )}
+            </div>
+
+            {openProposal ? (
+              <div className="rounded-lg border border-yellow-800/50 bg-yellow-900/20 p-3 text-sm text-yellow-200">
+                <p className="font-medium">v{openProposal.version} 修改提案待确认</p>
+                <p className="mt-1 text-yellow-100/80">{openProposal.change_note || '未填写备注'}</p>
+                {openProposal.proposer_id !== user?.id ? (
+                  <button type="button" onClick={() => handleAcceptProposal(openProposal.id)} className="btn-primary mt-3 px-3 py-2 text-sm">接受提案</button>
+                ) : (
+                  <p className="mt-2 text-xs text-yellow-100/70">等待对方确认。</p>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">生效日期</label>
+                  <input className="input-field" type="date" value={proposalForm.startDate} onChange={(e) => setProposalForm((v) => ({ ...v, startDate: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">租期（月）</label>
+                  <input className="input-field" type="number" min="1" max="12" value={proposalForm.leaseMonths} onChange={(e) => setProposalForm((v) => ({ ...v, leaseMonths: Number(e.target.value) }))} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">月租金（ETH）</label>
+                  <input className="input-field" value={proposalForm.rentAmount} onChange={(e) => setProposalForm((v) => ({ ...v, rentAmount: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">修改备注</label>
+                  <input className="input-field" value={proposalForm.changeNote} onChange={(e) => setProposalForm((v) => ({ ...v, changeNote: e.target.value }))} />
+                </div>
+                <button type="button" onClick={handleProposalSubmit} disabled={proposing} className="btn-primary md:col-span-2">
+                  {proposing ? '提交中...' : '提交修改提案'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {contract.status === 'active_pending_onchain' && (
+          <div className="mb-6 rounded-lg border border-yellow-800/50 bg-yellow-900/20 p-4 text-sm text-yellow-100">
+            <p className="font-medium">合同正在等待链上存证确认</p>
+            {contract.onchain_error && <p className="mt-1 break-all text-yellow-100/80">{contract.onchain_error}</p>}
+            <button type="button" onClick={handleRetryOnchain} disabled={retryingOnchain} className="btn-secondary mt-3 px-3 py-2 text-sm">
+              {retryingOnchain ? '重试中...' : '重试上链'}
+            </button>
+          </div>
+        )}
+
+        {openTermination && (
+          <div className="mb-6 rounded-lg border border-yellow-800/50 bg-yellow-900/20 p-4 text-sm text-yellow-100">
+            <p className="font-medium">提前解约申请待确认</p>
+            <p className="mt-1">{openTermination.reason}</p>
+            {openTermination.proposer_id !== user?.id ? (
+              <button type="button" onClick={() => handleAcceptTermination(openTermination.id)} className="btn-primary mt-3 px-3 py-2 text-sm">确认解约</button>
+            ) : (
+              <p className="mt-2 text-xs text-yellow-100/70">等待对方确认。</p>
+            )}
+          </div>
+        )}
+
         <div className="space-y-3">
-          {contract.status === 'pending' && isTenant && (
+          <button onClick={handleDownloadPdf} className="btn-secondary w-full">下载合同 PDF</button>
+          {contract.status === 'pending' && contract.negotiation_status === 'finalized' && isTenant && (
             <button onClick={() => handleSign('tenant')} disabled={signing} className="btn-primary w-full flex items-center justify-center space-x-2">
               {signing ? <LoaderIcon className="w-5 h-5 animate-spin" /> : <CheckCircleIcon className="w-5 h-5" />}
               <span>{signing ? '签署中...' : '租客签署'}</span>
@@ -349,6 +603,19 @@ export default function ContractPage() {
               {paying ? <LoaderIcon className="w-5 h-5 animate-spin" /> : <CheckCircleIcon className="w-5 h-5" />}
               <span>{paying ? '支付中...' : `一次性支付 ${initialAmount || ''} ETH 并激活合同`}</span>
             </button>
+          )}
+          {contract.status === 'pending_payment' && isTenant && (
+            <button onClick={() => handleRecordPayment('prepay')} className="btn-secondary w-full">记录预付款存证</button>
+          )}
+          {contract.status === 'active' && isTenant && (
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+              <button onClick={() => handleRecordPayment('rent')} className="btn-secondary w-full">记录租金</button>
+              <button onClick={() => handleRecordPayment('renewal')} className="btn-secondary w-full">记录续租支付</button>
+              <button onClick={handleTerminate} className="btn-secondary w-full">申请提前解约</button>
+            </div>
+          )}
+          {contract.status === 'active' && (isTenant || isLandlord) && (
+            <button onClick={handleCreateRevision} className="btn-secondary w-full">创建修订合同</button>
           )}
           {['pending', 'tenant_signed'].includes(contract.status) && (isTenant || isLandlord) && (
             <button onClick={handleCancel} className="btn-secondary w-full">取消合同</button>

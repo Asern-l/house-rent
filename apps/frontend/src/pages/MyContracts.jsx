@@ -7,6 +7,7 @@ import { FileTextIcon, LoaderIcon, SearchIcon } from 'lucide-react';
 const STATUS_MAP = {
   pending:         { label: '待签署',   color: 'badge-yellow' },
   tenant_signed:   { label: '租客已签', color: 'badge-blue'   },
+  active_pending_onchain: { label: '上链处理中', color: 'badge-yellow' },
   pending_payment: { label: '待支付',   color: 'badge-yellow' },
   landlord_signed: { label: '房东已签', color: 'badge-blue'   },
   active:          { label: '已生效',   color: 'badge-green'  },

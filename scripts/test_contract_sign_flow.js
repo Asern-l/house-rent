@@ -7,16 +7,22 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { ethers } = require(path.resolve(__dirname, '..', 'blockchain', 'node_modules', 'ethers'));
 
 const rootDir = path.resolve(__dirname, '..');
 const backendDir = path.join(rootDir, 'apps', 'backend');
 const TEST_PORT = process.env.SIGN_FLOW_TEST_PORT || '3011';
 const apiBase = `http://127.0.0.1:${TEST_PORT}/api`;
 
-const TENANT_WALLET = '0x1111111111111111111111111111111111111111';
-const LANDLORD_WALLET = '0x2222222222222222222222222222222222222222';
+const TENANT_PRIVATE_KEY = '0x1000000000000000000000000000000000000000000000000000000000000001';
+const LANDLORD_PRIVATE_KEY = '0x2000000000000000000000000000000000000000000000000000000000000002';
+const tenantWallet = new ethers.Wallet(TENANT_PRIVATE_KEY);
+const landlordWallet = new ethers.Wallet(LANDLORD_PRIVATE_KEY);
+const TENANT_WALLET = tenantWallet.address;
+const LANDLORD_WALLET = landlordWallet.address;
 const TEST_TX_HASH = `0x${'a'.repeat(64)}`;
 const TEST_PAY_TX_HASH = `0x${'b'.repeat(64)}`;
+const TEST_CONTRACT_ADDRESS = '0x3333333333333333333333333333333333333333';
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -47,6 +53,37 @@ async function request(method, pathname, body, token) {
     throw new Error(`${method} ${pathname} failed: ${res.status} ${JSON.stringify(data)}`);
   }
   return data;
+}
+
+function createSignMessage({ contractId, contentHash, role, signerAddress, timestamp }) {
+  return [
+    'CCL Housing Contract Signature',
+    `contractId:${contractId}`,
+    `contentHash:${contentHash}`,
+    `role:${role}`,
+    `signer:${ethers.getAddress(signerAddress)}`,
+    `timestamp:${timestamp}`,
+  ].join('\n');
+}
+
+async function login(account, password) {
+  const cap = await request('GET', '/auth/captcha');
+  const m = /^(\d+)\s*\+\s*(\d+)/.exec(cap.data.question || '');
+  const answer = String(Number(m?.[1] || 0) + Number(m?.[2] || 0));
+  return request('POST', '/auth/login', {
+    phone: account,
+    password,
+    captchaId: cap.data.id,
+    captchaAnswer: answer,
+  });
+}
+
+async function signContractPayload({ contractId, contentHash, role, wallet }) {
+  const signerAddress = wallet.address;
+  const timestamp = Date.now();
+  const message = createSignMessage({ contractId, contentHash, role, signerAddress, timestamp });
+  const signature = await wallet.signMessage(message);
+  return { signerAddress, message, signature };
 }
 
 async function main() {
@@ -98,8 +135,8 @@ async function main() {
       walletAddress: TENANT_WALLET,
     });
 
-    const landlordLogin = await request('POST', '/auth/login', { phone: landlordPhone, password });
-    const tenantLogin = await request('POST', '/auth/login', { phone: tenantPhone, password });
+    const landlordLogin = await login(landlordPhone, password);
+    const tenantLogin = await login(tenantPhone, password);
     const landlordToken = landlordLogin.data.token;
     const tenantToken = tenantLogin.data.token;
 
@@ -118,25 +155,61 @@ async function main() {
     const created = await request('POST', '/contracts', { listingId }, tenantToken);
     const contractId = created.data.contractId;
 
-    await request('POST', `/contracts/${contractId}/sign-tenant`, { signerAddress: TENANT_WALLET }, tenantToken);
-    const signedByLandlord = await request('POST', `/contracts/${contractId}/sign-landlord`, { signerAddress: LANDLORD_WALLET }, landlordToken);
+    const proposal = await request('POST', `/contracts/${contractId}/proposals`, {
+      startDate: new Date().toISOString().slice(0, 10),
+      leaseMonths: 2,
+      rentAmount: '1.6',
+      changeNote: 'extend lease for negotiation regression',
+    }, tenantToken);
+    await request('POST', `/contracts/${contractId}/proposals/${proposal.data.proposalId}/accept`, {}, landlordToken);
+    await request('POST', `/contracts/${contractId}/finalize`, {}, tenantToken);
+    const finalizedDetail = await request('GET', `/contracts/${contractId}`, null, tenantToken);
+    const finalizedHash = finalizedDetail.data.content_hash;
+    const finalizedContent = typeof finalizedDetail.data.content_json === 'string'
+      ? JSON.parse(finalizedDetail.data.content_json)
+      : finalizedDetail.data.content_json;
+    if (finalizedDetail.data.version !== 2 || finalizedContent.oneTimeAmount !== '3.2') {
+      throw new Error(`Negotiation did not persist expected version/content: ${JSON.stringify(finalizedDetail.data)}`);
+    }
+    await request('POST', `/contracts/${contractId}/sign-tenant`, await signContractPayload({
+      contractId,
+      contentHash: finalizedHash,
+      role: 'tenant',
+      wallet: tenantWallet,
+    }), tenantToken);
+    const signedByLandlord = await request('POST', `/contracts/${contractId}/sign-landlord`, await signContractPayload({
+      contractId,
+      contentHash: finalizedHash,
+      role: 'landlord',
+      wallet: landlordWallet,
+    }), landlordToken);
     if (!signedByLandlord?.data?.contentHash) {
       throw new Error('Landlord sign response missing contentHash');
     }
 
-    await request('POST', `/contracts/${contractId}/onchain`, { txHash: TEST_TX_HASH }, landlordToken);
+    const onchainTxHash = signedByLandlord?.data?.txHash || TEST_TX_HASH;
+    if (!signedByLandlord?.data?.txHash) {
+      await request('POST', `/contracts/${contractId}/onchain`, { txHash: TEST_TX_HASH }, landlordToken);
+    }
+    const paymentAuth = await request('POST', `/contracts/${contractId}/payments/authorization`, {
+      payerAddress: TENANT_WALLET,
+      amount: '3.2',
+      chainId: 31337,
+      contractAddress: TEST_CONTRACT_ADDRESS,
+    }, tenantToken);
     await request('POST', `/contracts/${contractId}/payments/onchain`, {
       txHash: TEST_PAY_TX_HASH,
-      amount: '3',
+      amount: '3.2',
       payType: 'initial',
       period: 'initial',
+      nonce: paymentAuth.data.nonce,
     }, tenantToken);
 
     const contractDetail = await request('GET', `/contracts/${contractId}`, null, tenantToken);
     if (contractDetail.data.status !== 'active') {
       throw new Error(`Expected contract status active, got: ${contractDetail.data.status}`);
     }
-    if (contractDetail.data.tx_hash !== TEST_TX_HASH) {
+    if (contractDetail.data.tx_hash !== onchainTxHash) {
       throw new Error('Expected tx_hash to be persisted');
     }
 
@@ -159,4 +232,3 @@ main().catch((err) => {
   console.error(`FAIL: ${err.message}`);
   process.exit(1);
 });
-
