@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { AlertCircleIcon, ArrowLeftIcon, HomeIcon, LoaderIcon, MapPinIcon } from 'lucide-react';
@@ -32,6 +32,7 @@ export default function ListingDetail() {
   const [applying, setApplying] = useState(false);
   const [startDate, setStartDate] = useState('');
   const [leaseMonths, setLeaseMonths] = useState(1);
+  const [history, setHistory] = useState([]);
 
   useEffect(() => {
     let mounted = true;
@@ -39,8 +40,10 @@ export default function ListingDetail() {
       setLoading(true);
       try {
         const res = await apiGet(`/listings/${id}`);
+        const historyRes = await apiGet(`/listings/${id}/history`).catch(() => ({ data: { history: [] } }));
         if (mounted) {
           setListing(res?.data || null);
+          setHistory(Array.isArray(historyRes?.data?.history) ? historyRes.data.history : []);
           const minLease = Number(res?.data?.min_lease_months || 1);
           setLeaseMonths(minLease >= 1 && minLease <= 12 ? minLease : 1);
           const today = new Date();
@@ -68,7 +71,7 @@ export default function ListingDetail() {
       const res = await apiPost('/contracts', { listingId: id, startDate, leaseMonths });
       const contractId = res?.data?.contractId;
       toast.success('申请成功，请等待房东确认');
-      navigate(contractId ? `/contract/${contractId}` : '/my-contracts');
+      navigate(contractId ? `/contract/${contractId}` : '/contracts');
     } catch (error) {
       toast.error(error?.response?.data?.error || '申请失败，请稍后重试');
     } finally {
@@ -145,6 +148,16 @@ export default function ListingDetail() {
             <span>{listing.address}{listing.district ? `（${listing.district}）` : ''}</span>
           </div>
 
+          <div className="rounded-lg border border-gray-700 bg-gray-800/40 px-3 py-2 text-sm text-gray-300">
+            <span className="text-gray-500">房源ID：</span>
+            <span className="font-mono break-all">{listing.id || id}</span>
+          </div>
+
+          <div className="rounded-lg border border-gray-700 bg-gray-800/40 px-3 py-2 text-sm text-gray-300">
+            <span className="text-gray-500">房东邮箱：</span>
+            <span>{listing.landlord_email || '未提供'}</span>
+          </div>
+
           <div className="grid grid-cols-3 gap-3 text-center">
             <div className="rounded-lg bg-gray-800 p-3">
               <p className="text-lg font-bold text-gray-200">{listing.bedrooms || '-'}</p>
@@ -162,6 +175,36 @@ export default function ListingDetail() {
 
           <p className="leading-relaxed text-gray-300">{listing.description || '暂无描述'}</p>
 
+          <div className="rounded-lg border border-gray-700 bg-gray-800/40 p-3">
+            <p className="mb-2 text-sm font-medium text-gray-200">历史版本/操作记录</p>
+            {history.length === 0 ? (
+              <p className="text-xs text-gray-500">暂无历史记录</p>
+            ) : (
+              <div className="max-h-56 space-y-2 overflow-y-auto">
+                {history.slice(0, 20).map((item) => (
+                  <div key={item.id} className="rounded bg-gray-900/50 px-2 py-2 text-xs text-gray-300">
+                    <p className="font-medium text-gray-200">动作：{item.action}</p>
+                    <p>时间：{item.createdAt || '-'}</p>
+                    {(() => {
+                      const snap = item?.after?.snapshot || item?.after || null;
+                      if (!snap || typeof snap !== 'object') return null;
+                      return (
+                        <div className="mt-1 rounded border border-gray-700 bg-gray-800/50 p-2">
+                          <p>标题：{snap.title || '-'}</p>
+                          <p>地址：{snap.address || '-'}{snap.district ? `（${snap.district}）` : ''}</p>
+                          <p>租金：{snap.rentAmount || '-'} ETH/月</p>
+                          <p>最少租期：{snap.minLeaseMonths || '-'} 个月</p>
+                          <p>状态：{snap.status || '-'}</p>
+                          <p className="break-all">contentHash：{snap.contentHash || '-'}</p>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="rounded-lg border border-blue-800/50 bg-blue-900/20 p-3 text-sm text-blue-300">
             <p className="mb-1 font-medium">法律提示</p>
             <p>合同哈希可上链存证，链上记录一经确认不可篡改，请在签署前核对条款。</p>
@@ -170,6 +213,9 @@ export default function ListingDetail() {
           {isAvailable && user?.role === 'tenant' && (
             <div className="space-y-3 rounded-lg border border-gray-700 p-4">
               <p className="text-sm font-medium text-gray-200">签约前设置</p>
+              <p className="text-xs text-gray-400">
+                当前租客邮箱（提交申请后会展示给房东用于协商）：{user?.email || '未设置'}
+              </p>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-sm text-gray-400">生效日期（今天至未来3天）</label>

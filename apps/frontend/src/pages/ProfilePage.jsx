@@ -53,8 +53,8 @@ export default function ProfilePage({ onClose }) {
     );
   }
 
-  const displayName = nickname || user.nickname || `用户${user.phone?.slice(-4)}`;
-  const initial = String(displayName || user.phone || '?').slice(0, 1).toUpperCase();
+  const displayName = nickname || user.nickname || `用户${(user.email || '').slice(0, 6)}`;
+  const initial = String(displayName || user.email || '?').slice(0, 1).toUpperCase();
   const roleLabel = user.role === 'landlord' ? '房东' : '租客';
   const quickActions = [
     ...(user.role === 'landlord'
@@ -142,7 +142,7 @@ export default function ProfilePage({ onClose }) {
             placeholder={displayName}
             maxLength={32}
           />
-          <p className="mt-2 text-sm text-stone-500">{user.email || user.phone}</p>
+          <p className="mt-2 text-sm text-stone-500">{user.email}</p>
           <span className="mt-3 inline-flex rounded-full border border-primary-600/40 bg-primary-600/20 px-3 py-1 text-xs font-semibold text-stone-800">
             {roleLabel}
           </span>

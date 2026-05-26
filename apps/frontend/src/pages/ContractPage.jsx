@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../app/providers/AuthContext';
 import { apiGet, apiPost } from '../shared/api/api';
@@ -18,7 +18,7 @@ const NETWORK_OPTIONS = [
   {
     key: 'sepolia', label: 'Sepolia', chainId: 11155111, chainIdHex: '0xaa36a7',
     addParams: {
-      chainId: '0xaa36a7', chainName: 'Sepolia 测试网',
+      chainId: '0xaa36a7', chainName: 'Sepolia Testnet',
       nativeCurrency: { name: 'SepoliaETH', symbol: 'ETH', decimals: 18 },
       rpcUrls: ['https://ethereum-sepolia.publicnode.com'],
       blockExplorerUrls: ['https://sepolia.etherscan.io'],
@@ -64,16 +64,15 @@ function toDeadlineEpoch(value) {
 }
 
 const STATUS_MAP = {
-  pending:         { label: '待签署',   color: 'badge-yellow' },
-  active_pending_onchain: { label: '上链处理中', color: 'badge-yellow' },
-  tenant_signed:   { label: '租客已签', color: 'badge-blue'   },
-  pending_payment: { label: '待支付',   color: 'badge-yellow' },
-  landlord_signed: { label: '房东已签', color: 'badge-blue'   },
-  active:          { label: '已生效',   color: 'badge-green'  },
-  ended:           { label: '已结束',   color: 'badge-gray'   },
-  cancelled:       { label: '已取消',   color: 'badge-red'    },
-  expired:         { label: '已过期',   color: 'badge-gray'   },
-  disputed:        { label: '争议中',   color: 'badge-red'    },
+  pending:         { label: '待签署', color: 'badge-yellow' },
+  tenant_signed:   { label: '租客已签', color: 'badge-blue' },
+  pending_payment: { label: '待支付', color: 'badge-yellow' },
+  landlord_signed: { label: '房东已签', color: 'badge-blue' },
+  active:          { label: '已生效', color: 'badge-green' },
+  ended:           { label: '已结束', color: 'badge-gray' },
+  cancelled:       { label: '已取消', color: 'badge-red' },
+  expired:         { label: '已过期', color: 'badge-gray' },
+  disputed:        { label: '争议中', color: 'badge-red' },
 };
 
 export default function ContractPage() {
@@ -92,7 +91,6 @@ export default function ContractPage() {
   const [proposalForm, setProposalForm] = useState({ startDate: '', leaseMonths: 1, rentAmount: '', changeNote: '' });
   const [proposing, setProposing] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
-  const [retryingOnchain, setRetryingOnchain] = useState(false);
 
   const initialAmount = resolveInitialAmount(content);
   const selectedNetwork = NETWORK_OPTIONS.find((x) => x.key === preferredNetwork) || NETWORK_OPTIONS[0];
@@ -193,12 +191,7 @@ export default function ContractPage() {
         { headers: { 'X-Request-Id': requestId } }
       );
 
-      if (type === 'landlord' && res.data?.txHash) {
-        setLastTxHash(res.data.txHash);
-        toast.success('合同哈希已由后端补偿任务上链');
-      } else if (type === 'landlord' && res.data?.onchainStatus === 'failed') {
-        toast.error(`自动上链暂未完成：${res.data.onchainError || '已进入补偿队列'}`);
-      }
+      if (type === 'landlord' && res.data?.txHash) setLastTxHash(res.data.txHash);
 
       toast.success(res.message || '签署成功');
       await loadContract();
@@ -326,22 +319,9 @@ export default function ContractPage() {
     }
   };
 
-  const handleRetryOnchain = async () => {
-    setRetryingOnchain(true);
-    try {
-      const res = await apiPost(`/contracts/${id}/onchain/retry`);
-      setLastTxHash(res?.data?.txHash || '');
-      toast.success('上链重试成功');
-      await loadContract();
-    } catch (err) {
-      toast.error(err.response?.data?.error || '上链重试失败');
-    } finally {
-      setRetryingOnchain(false);
-    }
-  };
 
   const handleDownloadPdf = async () => {
-    const token = localStorage.getItem(`token:${preferredNetwork}`) || localStorage.getItem('token') || '';
+    const token = localStorage.getItem(`token:${preferredNetwork}`) || '';
     const res = await fetch(`/api/contracts/${id}/pdf`, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) {
       toast.error('PDF 下载失败');
@@ -350,19 +330,6 @@ export default function ContractPage() {
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     window.open(url, '_blank');
-  };
-
-  const handleRecordPayment = async (payType) => {
-    const amount = prompt(`${payType} 金额（ETH）`, initialAmount || content?.rentAmount || '');
-    if (!amount) return;
-    const period = prompt('支付周期/备注', payType);
-    try {
-      await apiPost(`/contracts/${id}/payments/record`, { payType, amount, period, note: 'web_record' });
-      toast.success('支付存证已记录');
-      await loadContract();
-    } catch (err) {
-      toast.error(err.response?.data?.error || '记录失败');
-    }
   };
 
   const handleCreateRevision = async () => {
@@ -439,6 +406,10 @@ export default function ContractPage() {
           <span className="text-gray-500">合同ID：</span>
           <span className="font-mono text-gray-200 break-all">{contract.id}</span>
         </div>
+        <div className="mb-4 rounded-lg border border-gray-700 bg-gray-800/50 px-3 py-2 text-sm">
+          <span className="text-gray-500">房源ID：</span>
+          <span className="font-mono text-gray-200 break-all">{contract.listing_id || content?.listingId || '-'}</span>
+        </div>
 
         <div className="mb-4 grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
           <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-3">
@@ -490,8 +461,8 @@ export default function ContractPage() {
             )}
 
             <div className="grid grid-cols-2 gap-4 text-sm">
-              <div><p className="text-gray-500">房东</p><p className="font-medium text-gray-200">{content.landlord?.nickname || content.landlord?.phone}</p></div>
-              <div><p className="text-gray-500">租客</p><p className="font-medium text-gray-200">{content.tenant?.nickname || content.tenant?.phone}</p></div>
+              <div><p className="text-gray-500">房东</p><p className="font-medium text-gray-200">{content.landlord?.nickname || content.landlord?.email}</p></div>
+              <div><p className="text-gray-500">租客</p><p className="font-medium text-gray-200">{content.tenant?.nickname || content.tenant?.email}</p></div>
               <div className="col-span-2"><p className="text-gray-500">地址</p><p className="font-medium text-gray-200">{content.address}</p></div>
               <div><p className="text-gray-500">租金</p><p className="font-medium text-gray-200">{content.rentAmount} ETH / 月</p></div>
               <div><p className="text-gray-500">一次性支付总额</p><p className="font-medium text-gray-200">{initialAmount || '-'} ETH</p></div>
@@ -505,13 +476,16 @@ export default function ContractPage() {
                 <div className="space-y-2">
                   {payments.map((item) => (
                     <div key={item.id} className="text-xs text-gray-400 rounded bg-gray-800 px-2 py-2">
-                      <p>类型：{item.pay_type} ｜ 金额：{item.amount} ETH</p>
+                      <p>类型：{item.pay_type} | 金额：{item.amount} ETH</p>
                       <p className="font-mono break-all">Tx: {item.tx_hash}</p>
                     </div>
                   ))}
                 </div>
               </div>
             )}
+            <div className="rounded-lg border border-gray-700 bg-gray-900/40 p-3 text-xs text-gray-400">
+              <p>哈希算法：SHA-256（用于计算合同 content_hash）</p>
+            </div>
           </div>
         )}
 
@@ -562,15 +536,6 @@ export default function ContractPage() {
           </div>
         )}
 
-        {contract.status === 'active_pending_onchain' && (
-          <div className="mb-6 rounded-lg border border-yellow-800/50 bg-yellow-900/20 p-4 text-sm text-yellow-100">
-            <p className="font-medium">合同正在等待链上存证确认</p>
-            {contract.onchain_error && <p className="mt-1 break-all text-yellow-100/80">{contract.onchain_error}</p>}
-            <button type="button" onClick={handleRetryOnchain} disabled={retryingOnchain} className="btn-secondary mt-3 px-3 py-2 text-sm">
-              {retryingOnchain ? '重试中...' : '重试上链'}
-            </button>
-          </div>
-        )}
 
         {openTermination && (
           <div className="mb-6 rounded-lg border border-yellow-800/50 bg-yellow-900/20 p-4 text-sm text-yellow-100">
@@ -604,13 +569,8 @@ export default function ContractPage() {
               <span>{paying ? '支付中...' : `一次性支付 ${initialAmount || ''} ETH 并激活合同`}</span>
             </button>
           )}
-          {contract.status === 'pending_payment' && isTenant && (
-            <button onClick={() => handleRecordPayment('prepay')} className="btn-secondary w-full">记录预付款存证</button>
-          )}
           {contract.status === 'active' && isTenant && (
             <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-              <button onClick={() => handleRecordPayment('rent')} className="btn-secondary w-full">记录租金</button>
-              <button onClick={() => handleRecordPayment('renewal')} className="btn-secondary w-full">记录续租支付</button>
               <button onClick={handleTerminate} className="btn-secondary w-full">申请提前解约</button>
             </div>
           )}

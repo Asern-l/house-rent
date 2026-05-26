@@ -25,15 +25,14 @@ export default function App() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [authModal, setAuthModal] = useState(location.pathname === '/login' ? 'login' : null);
   const [profileModalOpen, setProfileModalOpen] = useState(location.pathname === '/profile');
-  const [publishModalOpen, setPublishModalOpen] = useState(location.pathname === '/publish');
-  const [verifyModalOpen, setVerifyModalOpen] = useState(location.pathname === '/verify');
   const [backendHealth, setBackendHealth] = useState({ sepolia: null, local: null });
 
   const navItems = [
-    { path: '/', label: '首页', icon: HomeIcon },
-    { path: '/listings', label: '房源', icon: SearchIcon },
-    ...(user?.role === 'landlord' ? [{ path: '/publish', label: '发布房源', icon: PlusCircleIcon }] : []),
-    { path: '/contracts', label: '合同', icon: FileTextIcon },
+    { path: '/', label: '\u9996\u9875', icon: HomeIcon },
+    { path: '/listings', label: '\u623f\u6e90', icon: SearchIcon },
+    ...(user?.role === 'landlord' ? [{ path: '/publish', label: '\u53d1\u5e03\u623f\u6e90', icon: PlusCircleIcon }] : []),
+    { path: '/contracts', label: '\u5408\u540c', icon: FileTextIcon },
+    { path: '/verify', label: '\u94fe\u4e0a\u9a8c\u771f', icon: ShieldCheckIcon },
   ];
 
   const isActive = (p) => location.pathname === p;
@@ -61,15 +60,7 @@ export default function App() {
   useEffect(() => {
     if (location.pathname === '/login') setAuthModal('login');
     if (location.pathname === '/profile') setProfileModalOpen(true);
-    if (location.pathname === '/publish') setPublishModalOpen(true);
-    if (location.pathname === '/verify') setVerifyModalOpen(true);
   }, [location.pathname]);
-
-  useEffect(() => {
-    const handleOpenVerifyModal = () => setVerifyModalOpen(true);
-    window.addEventListener('open-verify-modal', handleOpenVerifyModal);
-    return () => window.removeEventListener('open-verify-modal', handleOpenVerifyModal);
-  }, []);
 
   useEffect(() => {
     const handleSessionExpired = () => {
@@ -95,26 +86,6 @@ export default function App() {
     if (location.pathname === '/profile') navigate('/');
   };
 
-  const openPublishModal = () => {
-    setPublishModalOpen(true);
-    setMobileOpen(false);
-  };
-
-  const closePublishModal = () => {
-    setPublishModalOpen(false);
-    if (location.pathname === '/publish') navigate('/');
-  };
-
-  const openVerifyModal = () => {
-    setVerifyModalOpen(true);
-    setMobileOpen(false);
-  };
-
-  const closeVerifyModal = () => {
-    setVerifyModalOpen(false);
-    if (location.pathname === '/verify') navigate('/');
-  };
-
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-gray-950 text-gray-100">
 
@@ -125,33 +96,22 @@ export default function App() {
 
           {/* Logo */}
           <Link to="/" className="absolute left-1/2 -translate-x-1/2 flex items-center flex-shrink-0">
-            <span className="font-bold text-stone-900 text-base tracking-wide">信源链</span>
+            <span className="font-bold text-stone-900 text-base tracking-wide">{'\u4fe1\u6e90\u94fe'}</span>
           </Link>
 
           {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-0.5 flex-1">
             {navItems.map((item) => (
-              item.path === '/publish' || item.path === '/verify' ? (
-                <button
-                  key={item.path}
-                  type="button"
-                  onClick={item.path === '/publish' ? openPublishModal : openVerifyModal}
-                  className="px-3 py-1.5 rounded-md text-sm font-medium text-stone-500 transition-colors hover:bg-stone-900/5 hover:text-stone-900"
-                >
-                  {item.label}
-                </button>
-              ) : (
-                <Link
-                  key={item.path}
-                  to={item.path}
-                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors
-                    ${isActive(item.path)
-                      ? 'bg-primary-600/20 text-stone-900 shadow-[0_8px_24px_rgba(231,167,121,0.38)]'
-                      : 'text-stone-500 hover:text-stone-900 hover:bg-stone-900/5'}`}
-                >
-                  {item.label}
-                </Link>
-              )
+              <Link
+                key={item.path}
+                to={item.path}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors
+                  ${isActive(item.path)
+                    ? 'bg-primary-600/20 text-stone-900 shadow-[0_8px_24px_rgba(231,167,121,0.38)]'
+                    : 'text-stone-500 hover:text-stone-900 hover:bg-stone-900/5'}`}
+              >
+                {item.label}
+              </Link>
             ))}
           </nav>
 
@@ -196,11 +156,11 @@ export default function App() {
                     {user.avatarUrl ? (
                       <img src={user.avatarUrl} alt="" className="h-full w-full rounded-full object-cover" />
                     ) : (
-                      (user.nickname || user.phone || '?')[0].toUpperCase()
+                      (user.nickname || user.email || '?')[0].toUpperCase()
                     )}
                   </div>
                   <span className="hidden sm:block text-sm font-medium text-stone-700">
-                    {user.nickname || user.phone}
+                    {user.nickname || user.email}
                   </span>
                 </button>
 
@@ -238,28 +198,16 @@ export default function App() {
         {mobileOpen && (
           <div className="md:hidden border-t border-stone-200 bg-[#f5f0e8] px-4 py-3 space-y-0.5">
             {navItems.map((item) => (
-              item.path === '/publish' || item.path === '/verify' ? (
-                <button
-                  key={item.path}
-                  type="button"
-                  onClick={item.path === '/publish' ? openPublishModal : openVerifyModal}
-                  className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-stone-600 hover:bg-stone-900/5"
-                >
-                  <item.icon className="w-4 h-4" />
-                  {item.label}
-                </button>
-              ) : (
-                <Link
-                  key={item.path}
-                  to={item.path}
-                  onClick={() => setMobileOpen(false)}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium
-                    ${isActive(item.path) ? 'bg-primary-600/20 text-stone-900 shadow-[0_8px_24px_rgba(231,167,121,0.32)]' : 'text-stone-600 hover:bg-stone-900/5'}`}
-                >
-                  <item.icon className="w-4 h-4" />
-                  {item.label}
-                </Link>
-              )
+              <Link
+                key={item.path}
+                to={item.path}
+                onClick={() => setMobileOpen(false)}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium
+                  ${isActive(item.path) ? 'bg-primary-600/20 text-stone-900 shadow-[0_8px_24px_rgba(231,167,121,0.32)]' : 'text-stone-600 hover:bg-stone-900/5'}`}
+              >
+                <item.icon className="w-4 h-4" />
+                {item.label}
+              </Link>
             ))}
 
             {/* Mobile network + logout */}
@@ -314,12 +262,12 @@ export default function App() {
           <Route path="/login"      element={<HomePage />} />
           <Route path="/listings"   element={<ListingsPage />} />
           <Route path="/listing/:id" element={<ListingDetail />} />
-          <Route path="/publish"    element={<HomePage />} />
+          <Route path="/publish"    element={<PublishListing />} />
           <Route path="/contract/:id" element={<ContractPage />} />
           <Route path="/contracts"  element={<MyContracts />} />
           <Route path="/my-listings" element={<MyListings />} />
           <Route path="/profile"    element={<HomePage />} />
-          <Route path="/verify"     element={<HomePage />} />
+          <Route path="/verify"     element={<VerifyPage />} />
         </Routes>
       </main>
 
@@ -331,12 +279,6 @@ export default function App() {
       )}
       {profileModalOpen && (
         <ProfilePage onClose={closeProfileModal} />
-      )}
-      {publishModalOpen && (
-        <PublishListing onClose={closePublishModal} />
-      )}
-      {verifyModalOpen && (
-        <VerifyPage onClose={closeVerifyModal} />
       )}
     </div>
   );

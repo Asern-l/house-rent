@@ -1,15 +1,27 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { apiGet, apiPost, apiPut } from '../shared/api/api';
+import { apiGet, apiPost } from '../shared/api/api';
+import { ethers } from 'ethers';
+import RentalChainABI from '../shared/blockchain/RentalChainABI.json';
 import { HomeIcon, LoaderIcon } from 'lucide-react';
 
 const LISTING_STATUS_MAP = {
-  available: { label: '可租',     badge: 'badge-green'  },
-  offline:   { label: '已下架',   badge: 'badge-gray'   },
-  locked:    { label: '签约锁定中', badge: 'badge-yellow' },
-  rented:    { label: '已出租',   badge: 'badge-blue'   },
-  closed:    { label: '已关闭',   badge: 'badge-gray'   },
+  available: { label: '可租', badge: 'badge-green' },
+  offline: { label: '已下架', badge: 'badge-gray' },
+  locked: { label: '签约锁定中', badge: 'badge-yellow' },
+  rented: { label: '已出租', badge: 'badge-blue' },
+  closed: { label: '已关闭', badge: 'badge-gray' },
+};
+
+const CONTRACT_ADDR_MAP = {
+  sepolia: import.meta.env.VITE_CONTRACT_ADDRESS_SEPOLIA || '',
+  local: import.meta.env.VITE_CONTRACT_ADDRESS_LOCAL || '',
+};
+
+const NETWORK_OPTIONS = {
+  sepolia: { chainId: 11155111, chainIdHex: '0xaa36a7' },
+  local: { chainId: 31337, chainIdHex: '0x7a69' },
 };
 
 function getFirstImageUrl(item) {
@@ -17,7 +29,9 @@ function getFirstImageUrl(item) {
     const raw = item?.image_urls;
     const arr = Array.isArray(raw) ? raw : JSON.parse(raw || '[]');
     return Array.isArray(arr) && arr.length > 0 ? String(arr[0] || '') : '';
-  } catch { return ''; }
+  } catch {
+    return '';
+  }
 }
 
 function resolveImageUrl(url) {
@@ -26,6 +40,18 @@ function resolveImageUrl(url) {
     return String(url).replace('/uploads/', '/uploads-local/');
   }
   return String(url || '');
+}
+
+function getPreferredNetwork() {
+  const key = String(localStorage.getItem('preferredNetwork') || 'sepolia').toLowerCase();
+  return NETWORK_OPTIONS[key] ? key : 'sepolia';
+}
+
+async function ensureWalletNetwork(provider, networkKey) {
+  const target = NETWORK_OPTIONS[networkKey];
+  const net = await provider.getNetwork();
+  if (Number(net.chainId) === target.chainId) return;
+  await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: target.chainIdHex }] });
 }
 
 export default function MyListings() {
@@ -48,25 +74,102 @@ export default function MyListings() {
     return () => { mounted = false; };
   }, []);
 
-  const updateStatus = async (id, status) => {
+  const getContractAndState = async (listingId) => {
+    const networkKey = getPreferredNetwork();
+    const contractAddress = String(CONTRACT_ADDR_MAP[networkKey] || '').trim();
+    if (!ethers.isAddress(contractAddress)) {
+      throw new Error(`未配置合约地址: VITE_CONTRACT_ADDRESS_${networkKey.toUpperCase()}`);
+    }
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    await ensureWalletNetwork(provider, networkKey);
+    await provider.send('eth_requestAccounts', []);
+    const signer = await provider.getSigner();
+    const contract = new ethers.Contract(contractAddress, RentalChainABI, signer);
+    const chainState = await contract.getListing(listingId);
+    return { contract, chainState };
+  };
+
+  const updateStatusOnchain = async (id, status) => {
+    if (!window.ethereum) {
+      toast.error('请先安装 MetaMask 钱包');
+      return;
+    }
     try {
-      await apiPut(`/listings/${id}/status`, { status });
-      toast.success(status === 'available' ? '房源已重新上架' : '房源已下架');
+      const prepare = await apiPost(`/listings/${id}/status/prepare`, { status });
+      const prepared = prepare?.data;
+      const { contract, chainState } = await getContractAndState(id);
+      const expectedVersion = chainState[7];
+      const expectedNonce = chainState[8];
+      const tx = await contract.setListingStatus(id, Number(prepared.toStatusEnum), expectedVersion, expectedNonce);
+      await tx.wait();
+      await apiPost(`/listings/${id}/status/commit`, { status, txHash: tx.hash });
       setListings((prev) => prev.map((item) => (item.id === id ? { ...item, status } : item)));
+      toast.success(status === 'closed' ? '房源已销毁' : '状态更新成功');
     } catch (error) {
-      toast.error(error?.response?.data?.error || '操作失败');
+      toast.error(error?.response?.data?.error || error?.message || '状态更新失败');
     }
   };
 
-  const updatePrice = async (item) => {
-    const rentAmount = prompt('请输入新的月租金（ETH）', item.rent_amount || '');
+  const updateTermsOnchain = async (item) => {
+    if (!window.ethereum) {
+      toast.error('请先安装 MetaMask 钱包');
+      return;
+    }
+    const rentAmount = prompt('请输入新的月租金（ETH）', String(item.rent_amount || ''));
     if (!rentAmount) return;
+    const minLeaseMonths = prompt('请输入新的最少租期（月）', String(item.min_lease_months || 1));
+    if (!minLeaseMonths) return;
+
     try {
-      const res = await apiPut(`/listings/${item.id}/price`, { rentAmount, reason: 'landlord_update' });
-      toast.success('改价成功');
-      setListings((prev) => prev.map((x) => (x.id === item.id ? { ...x, rent_amount: res.data.rentAmount } : x)));
+      const parsedImageUrls = (() => {
+        try {
+          const arr = Array.isArray(item.image_urls) ? item.image_urls : JSON.parse(item.image_urls || '[]');
+          return Array.isArray(arr) ? arr : [];
+        } catch {
+          return [];
+        }
+      })();
+
+      const prepare = await apiPost(`/listings/${item.id}/terms/prepare`, {
+        rentAmount,
+        minLeaseMonths: Number(minLeaseMonths),
+        imageUrls: parsedImageUrls,
+      });
+      const prepared = prepare?.data;
+      const chainAnchor = prepared?.chainAnchor;
+      const { contract, chainState } = await getContractAndState(item.id);
+      const expectedVersion = chainState[7];
+      const expectedNonce = chainState[8];
+
+      const tx = await contract.updateListingTerms(
+        item.id,
+        chainAnchor.contentHash,
+        chainAnchor.rentAmountWei,
+        Number(chainAnchor.minLeaseMonths),
+        chainAnchor.imageRootHash,
+        expectedVersion,
+        expectedNonce
+      );
+      await tx.wait();
+
+      const commit = await apiPost(`/listings/${item.id}/terms/commit`, {
+        rentAmount: prepared.rentAmount,
+        minLeaseMonths: prepared.minLeaseMonths,
+        imageUrls: prepared.imageUrls,
+        chainAnchor,
+        txHash: tx.hash,
+      });
+
+      const next = commit?.data || {};
+      setListings((prev) => prev.map((x) => (x.id === item.id ? {
+        ...x,
+        rent_amount: next.rentAmount ?? x.rent_amount,
+        min_lease_months: next.minLeaseMonths ?? x.min_lease_months,
+        image_urls: JSON.stringify(next.imageUrls ?? parsedImageUrls),
+      } : x)));
+      toast.success('条款链上更新成功');
     } catch (error) {
-      toast.error(error?.response?.data?.error || '改价失败');
+      toast.error(error?.response?.data?.error || error?.message || '条款更新失败');
     }
   };
 
@@ -77,16 +180,6 @@ export default function MyListings() {
       setListings((prev) => prev.map((x) => (x.id === id ? { ...x, ai_score: res.data.score, ai_risk_tags: res.data.riskTags } : x)));
     } catch (error) {
       toast.error(error?.response?.data?.error || '评分失败');
-    }
-  };
-
-  const retryOnchain = async (id) => {
-    try {
-      const res = await apiPost(`/listings/${id}/onchain/retry`, {});
-      toast.success('房源上链成功');
-      setListings((prev) => prev.map((x) => (x.id === id ? { ...x, tx_hash: res.data.txHash, onchain_status: 'confirmed' } : x)));
-    } catch (error) {
-      toast.error(error?.response?.data?.error || '房源上链失败');
     }
   };
 
@@ -127,28 +220,36 @@ export default function MyListings() {
                     <h3 className="text-base font-semibold text-gray-100">{item.title || '未命名房源'}</h3>
                     <p className="mt-1 text-sm text-gray-400">{item.address || '-'}</p>
                     <p className="mt-2 text-primary-400 font-medium">{item.rent_amount} ETH/月</p>
-                    <p className="mt-1 text-xs text-gray-500">AI评分: {item.ai_score ?? '-'} ｜ 上链: {item.tx_hash ? '已上链' : (item.onchain_status || '未上链')}</p>
+                    <p className="mt-1 text-xs text-gray-500">AI评分: {item.ai_score ?? '-'}</p>
                   </div>
                 </div>
                 <div className="text-right flex-shrink-0">
                   <span className={(LISTING_STATUS_MAP[item.status] || LISTING_STATUS_MAP.offline).badge}>
                     {(LISTING_STATUS_MAP[item.status] || LISTING_STATUS_MAP.offline).label}
                   </span>
-                  <div className="mt-2">
-                    {item.status === 'available' ? (
-                      <div className="flex flex-col gap-2">
-                        <button className="btn-secondary text-sm px-3 py-1.5" onClick={() => updateStatus(item.id, 'offline')}>下架</button>
-                        <button className="btn-secondary text-sm px-3 py-1.5" onClick={() => updatePrice(item)}>改价</button>
-                      </div>
-                    ) : item.status === 'offline' ? (
-                      <button className="btn-secondary text-sm px-3 py-1.5" onClick={() => updateStatus(item.id, 'available')}>重新上架</button>
-                    ) : (
+                  <div className="mt-2 flex flex-col gap-2">
+                    {item.status === 'available' && (
+                      <>
+                        <button className="btn-secondary text-sm px-3 py-1.5" onClick={() => updateStatusOnchain(item.id, 'offline')}>下架（钱包签名）</button>
+                        <button className="btn-secondary text-sm px-3 py-1.5" onClick={() => updateTermsOnchain(item)}>修改条款（钱包签名）</button>
+                        <button className="btn-secondary text-sm px-3 py-1.5" onClick={() => {
+                          if (confirm('确认销毁该房源吗？销毁后不可恢复。')) updateStatusOnchain(item.id, 'closed');
+                        }}>销毁（钱包签名）</button>
+                      </>
+                    )}
+                    {item.status === 'offline' && (
+                      <>
+                        <button className="btn-secondary text-sm px-3 py-1.5" onClick={() => updateStatusOnchain(item.id, 'available')}>重新上架（钱包签名）</button>
+                        <button className="btn-secondary text-sm px-3 py-1.5" onClick={() => updateTermsOnchain(item)}>修改条款（钱包签名）</button>
+                        <button className="btn-secondary text-sm px-3 py-1.5" onClick={() => {
+                          if (confirm('确认销毁该房源吗？销毁后不可恢复。')) updateStatusOnchain(item.id, 'closed');
+                        }}>销毁（钱包签名）</button>
+                      </>
+                    )}
+                    {!['available', 'offline'].includes(item.status) && (
                       <span className="text-xs text-gray-500">流程中不可操作</span>
                     )}
-                    <div className="mt-2 flex flex-col gap-2">
-                      <button className="btn-secondary text-sm px-3 py-1.5" onClick={() => rescore(item.id)}>重新评分</button>
-                      {!item.tx_hash && <button className="btn-secondary text-sm px-3 py-1.5" onClick={() => retryOnchain(item.id)}>重试上链</button>}
-                    </div>
+                    <button className="btn-secondary text-sm px-3 py-1.5" onClick={() => rescore(item.id)}>重新评分</button>
                   </div>
                 </div>
               </div>

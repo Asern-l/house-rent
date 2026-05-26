@@ -9,20 +9,34 @@ const path = require('path');
 const { ethers } = require('ethers');
 const PDFDocument = require('pdfkit');
 const { getDb, saveDb, parseResult, CHAIN_ENV } = require('../db');
-const { getUserDb, parseResult: parseUserResult } = require('../user-db');
+const { getUserDb, saveUserDb, parseResult: parseUserResult } = require('../user-db');
 const { authMiddleware, requireRole } = require('../auth');
-const { logSignFlow } = require('../logger');
+const { logSignFlow, logRiskEvent } = require('../logger');
 
 const router = express.Router();
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const SIGN_TIME_SKEW_MS = 10 * 60 * 1000;
 const PAYMENT_AUTH_TTL_SECONDS = 10 * 60;
 const PAYMENT_WINDOW_MS = 2 * 60 * 60 * 1000;
+const SAME_LISTING_WINDOW_HOURS = 24;
+const SAME_LISTING_MAX_APPLY = 10;
+const GLOBAL_WINDOW_MINUTES = 60;
+const GLOBAL_MAX_APPLY = 20;
+const GLOBAL_COOLDOWN_HOURS = 6;
+const SAME_LISTING_COOLDOWN_HOURS = 24;
 const ADDR_RE = /^0x[a-fA-F0-9]{40}$/;
 
 const LOCAL_DEV_PAYMENT_PRIVATE_KEY = '0xe4a2d851548a27b70a5befe096b9f222d00b7ad529951bb2536cd4df767571c8';
-const RENTAL_ABI_PATH = path.join(__dirname, '..', '..', '..', 'frontend', 'src', 'shared', 'blockchain', 'RentalChainABI.json');
-const DEPLOYMENT_PATH = path.join(__dirname, '..', '..', '..', '..', 'blockchain', `deployments-rental-${CHAIN_ENV === 'local' ? 'localhost' : 'sepolia'}.json`);
+const PDF_FONT_CANDIDATES = [
+  path.join(__dirname, '..', 'assets', 'fonts', 'NotoSansSC-Regular.ttf'),
+  path.join(__dirname, '..', '..', '..', 'docs', 'assets', 'fonts', 'NotoSansSC-Regular.ttf'),
+  'C:\\Windows\\Fonts\\NotoSansSC-VF.ttf',
+  'C:\\Windows\\Fonts\\simhei.ttf',
+  'C:\\Windows\\Fonts\\simsunb.ttf',
+  'C:\\Windows\\Fonts\\simfang.ttf',
+  'C:\\Windows\\Fonts\\STSONG.TTF',
+  'C:\\Windows\\Fonts\\STFANGSO.TTF',
+];
 
 // 函数 1: 将金额规范化为字符串，避免精度展示异常。
 function normalizeAmount(value) {
@@ -42,34 +56,6 @@ function isTerminalStatus(status) {
 
 function contractHash(content) {
   return `0x${crypto.createHash('sha256').update(JSON.stringify(content, null, 2)).digest('hex')}`;
-}
-
-function getRentalChainAddress() {
-  const fromEnv = String(
-    process.env.RENTAL_CHAIN_ADDRESS
-    || process.env[`RENTAL_CHAIN_ADDRESS_${CHAIN_ENV.toUpperCase()}`]
-    || process.env[`VITE_CONTRACT_ADDRESS_${CHAIN_ENV.toUpperCase()}`]
-    || ''
-  ).trim();
-  if (ADDR_RE.test(fromEnv)) return ethers.getAddress(fromEnv);
-  if (fs.existsSync(DEPLOYMENT_PATH)) {
-    try {
-      const deployment = JSON.parse(fs.readFileSync(DEPLOYMENT_PATH, 'utf8'));
-      if (ADDR_RE.test(deployment.address)) return ethers.getAddress(deployment.address);
-    } catch {
-      return '';
-    }
-  }
-  return '';
-}
-
-function getChainRpcUrl() {
-  if (CHAIN_ENV === 'local') return process.env.LOCAL_RPC_URL || 'http://127.0.0.1:8545';
-  return process.env.SEPOLIA_RPC_URL || '';
-}
-
-function getRentalChainAbi() {
-  return JSON.parse(fs.readFileSync(RENTAL_ABI_PATH, 'utf8'));
 }
 
 // 函数 4: 规范化日期字符串（YYYY-MM-DD）。
@@ -125,6 +111,20 @@ function normalizeWalletAddress(value) {
 
 function getClientIp(req) {
   return String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+}
+
+// 函数 2-1: 对租客写入风控冷却时间（仅延长，不缩短已有冷却）。
+function setTenantRiskCooldown(userDb, userId, hours) {
+  userDb.run(
+    `UPDATE users
+     SET risk_blocked_until = CASE
+       WHEN risk_blocked_until <> '' AND datetime(risk_blocked_until) > datetime('now', '+8 hours', ?)
+       THEN risk_blocked_until
+       ELSE datetime('now', '+8 hours', ?)
+     END
+     WHERE id = ?`,
+    [`+${hours} hours`, `+${hours} hours`, userId]
+  );
 }
 
 function createSignMessage({ contractId, contentHash, role, signerAddress, timestamp }) {
@@ -200,115 +200,17 @@ function createPseudoTxHash(prefix = 'offchain') {
   return `${prefix}_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
 }
 
-async function attemptOnchainStore(contractId, requestId = '') {
-  const db = await getDb();
-  const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [contractId]));
-  if (!rows.length) return { ok: false, code: 'CONTRACT_NOT_FOUND', message: '合同不存在' };
-  const contract = rows[0];
-  if (contract.tx_hash) return { ok: true, txHash: contract.tx_hash, alreadyConfirmed: true };
-  if (!['active_pending_onchain', 'pending_payment'].includes(contract.status)) {
-    return { ok: false, code: 'ONCHAIN_STATUS_INVALID', message: '当前状态不需要上链补偿' };
-  }
-
-  const privateKey = getPaymentPrivateKey();
-  const rpcUrl = getChainRpcUrl();
-  const contractAddress = getRentalChainAddress();
-  if (!privateKey || !rpcUrl || !contractAddress) {
-    const msg = '链上补偿配置缺失，请配置 RENTAL_CHAIN_ADDRESS、RPC 与 PRIVATE_KEY';
-    db.run(
-      `UPDATE contracts
-       SET onchain_status = 'failed',
-           onchain_attempts = onchain_attempts + 1,
-           onchain_error = ?,
-           onchain_last_attempt_at = datetime('now', '+8 hours'),
-           onchain_next_retry_at = datetime('now', '+8 hours', '+5 minutes')
-       WHERE id = ?`,
-      [msg, contractId]
-    );
-    saveDb();
-    return { ok: false, code: 'ONCHAIN_CONFIG_MISSING', message: msg };
-  }
-
-  db.run(
-    `UPDATE contracts
-     SET onchain_status = 'pending',
-         onchain_attempts = onchain_attempts + 1,
-         onchain_error = '',
-         onchain_last_attempt_at = datetime('now', '+8 hours')
-     WHERE id = ?`,
-    [contractId]
-  );
-  saveDb();
-
-  try {
-    const content = contract.content_json;
-    const tenantAddress = normalizeWalletAddress(content?.tenant?.walletAddress);
-    const landlordAddress = normalizeWalletAddress(content?.landlord?.walletAddress);
-    const paymentDeadline = parseCnDateTime(contract.payment_deadline || contract.expires_at);
-    const initialAmount = normalizeAmount(content?.oneTimeAmount);
-    if (!tenantAddress || !landlordAddress || !paymentDeadline || !initialAmount) {
-      throw new Error('合同上链参数不完整');
+// 函数 2-2: 为 PDF 选择可用中文字体，避免导出乱码。
+function resolvePdfChineseFontPath() {
+  return PDF_FONT_CANDIDATES.find((fontPath) => {
+    try {
+      return fs.existsSync(fontPath);
+    } catch {
+      return false;
     }
-
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
-    const wallet = new ethers.Wallet(privateKey, provider);
-    const rental = new ethers.Contract(contractAddress, getRentalChainAbi(), wallet);
-    const tx = await rental.storeContractWithPaymentTerms(
-      contract.id,
-      contract.listing_id,
-      contract.content_hash,
-      tenantAddress,
-      landlordAddress,
-      Math.floor(paymentDeadline.getTime() / 1000),
-      ethers.parseEther(initialAmount)
-    );
-    const receipt = await tx.wait();
-    const txHash = receipt?.hash || tx.hash;
-    db.run(
-      `UPDATE contracts
-       SET tx_hash = ?,
-           onchain_status = 'confirmed',
-           onchain_error = '',
-           onchain_next_retry_at = '',
-           status = CASE WHEN status = 'active_pending_onchain' THEN 'pending_payment' ELSE status END
-       WHERE id = ? AND tx_hash IS NULL`,
-      [txHash, contractId]
-    );
-    saveDb();
-    logSignFlow('onchain.relay.success', { contractId, txHash, requestId });
-    return { ok: true, txHash };
-  } catch (err) {
-    const msg = err?.shortMessage || err?.reason || err?.message || 'onchain_failed';
-    db.run(
-      `UPDATE contracts
-       SET onchain_status = 'failed',
-           onchain_error = ?,
-           onchain_next_retry_at = datetime('now', '+8 hours', '+5 minutes')
-       WHERE id = ? AND tx_hash IS NULL`,
-      [msg, contractId]
-    );
-    saveDb();
-    logSignFlow('onchain.relay.failed', { contractId, message: msg, requestId });
-    return { ok: false, code: 'ONCHAIN_RELAY_FAILED', message: msg };
-  }
+  }) || '';
 }
 
-async function retryPendingOnchainContracts() {
-  const db = await getDb();
-  const rows = parseResult(db.exec(
-    `SELECT id
-     FROM contracts
-     WHERE status = 'active_pending_onchain'
-       AND tx_hash IS NULL
-       AND onchain_status IN ('pending','failed')
-       AND (onchain_next_retry_at = '' OR datetime(onchain_next_retry_at) <= datetime('now', '+8 hours'))
-     ORDER BY onchain_last_attempt_at ASC
-     LIMIT 3`
-  ));
-  for (const item of rows) {
-    await attemptOnchainStore(item.id, 'background');
-  }
-}
 
 // 函数 3: 创建合同接口（租客发起）。
 router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req, res) => {
@@ -357,35 +259,67 @@ router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req,
   }
   const blockedUntil = parseCnDateTime(tenant.risk_blocked_until);
   if (blockedUntil && blockedUntil > new Date()) {
-    return res.status(429).json(error('TENANT_RISK_COOLDOWN', '因存在签后未付款记录，当前账号暂不能发起新签约', {
+    logRiskEvent('contract.apply.blocked.active-cooldown', {
+      requestId: req.requestId || '',
+      userId: req.user.id,
+      listingId,
+      blockedUntil: tenant.risk_blocked_until,
+      unpaidDefaultCount: tenant.unpaid_default_count || 0,
+      preferredNetwork: CHAIN_ENV,
+    });
+    return res.status(429).json(error('TENANT_RISK_COOLDOWN', '当前账号处于风控冷却期，暂不能发起新签约', {
       blockedUntil: tenant.risk_blocked_until,
       unpaidDefaultCount: tenant.unpaid_default_count || 0,
     }));
   }
 
   const recentTenantApplications = parseResult(db.exec(
-    `SELECT id
+    `SELECT COUNT(*) AS count
      FROM contracts
      WHERE tenant_id = ?
-       AND created_at >= datetime('now', '+8 hours', '-10 minutes')
-     LIMIT 3`,
+       AND created_at >= datetime('now', '+8 hours', '-60 minutes')`,
     [req.user.id]
   ));
-  if (recentTenantApplications.length >= 3) {
-    return res.status(429).json(error('CONTRACT_APPLY_RATE_LIMITED', '申请签约过于频繁，请稍后再试'));
+  const recentTenantCount = Number(recentTenantApplications[0]?.count || 0);
+  if (recentTenantCount >= GLOBAL_MAX_APPLY) {
+    setTenantRiskCooldown(userDb, req.user.id, GLOBAL_COOLDOWN_HOURS);
+    saveUserDb();
+    logRiskEvent('contract.apply.blocked.global-rate', {
+      requestId: req.requestId || '',
+      userId: req.user.id,
+      listingId,
+      windowMinutes: GLOBAL_WINDOW_MINUTES,
+      maxApply: GLOBAL_MAX_APPLY,
+      hitCount: recentTenantCount,
+      cooldownHours: GLOBAL_COOLDOWN_HOURS,
+      preferredNetwork: CHAIN_ENV,
+    });
+    return res.status(429).json(error('CONTRACT_APPLY_RATE_LIMITED', `申请签约过于频繁，已触发 ${GLOBAL_COOLDOWN_HOURS} 小时冷却`));
   }
 
   const recentSameListing = parseResult(db.exec(
-    `SELECT id
+    `SELECT COUNT(*) AS count
      FROM contracts
      WHERE tenant_id = ?
        AND listing_id = ?
-       AND created_at >= datetime('now', '+8 hours', '-24 hours')
-     LIMIT 1`,
+       AND created_at >= datetime('now', '+8 hours', '-24 hours')`,
     [req.user.id, listingId]
   ));
-  if (recentSameListing.length > 0) {
-    return res.status(429).json(error('CONTRACT_APPLY_DUPLICATE_COOLDOWN', '同一租客 24 小时内不可重复申请同一房源'));
+  const recentSameListingCount = Number(recentSameListing[0]?.count || 0);
+  if (recentSameListingCount >= SAME_LISTING_MAX_APPLY) {
+    setTenantRiskCooldown(userDb, req.user.id, SAME_LISTING_COOLDOWN_HOURS);
+    saveUserDb();
+    logRiskEvent('contract.apply.blocked.same-listing', {
+      requestId: req.requestId || '',
+      userId: req.user.id,
+      listingId,
+      windowHours: SAME_LISTING_WINDOW_HOURS,
+      maxApply: SAME_LISTING_MAX_APPLY,
+      hitCount: recentSameListingCount,
+      cooldownHours: SAME_LISTING_COOLDOWN_HOURS,
+      preferredNetwork: CHAIN_ENV,
+    });
+    return res.status(429).json(error('CONTRACT_APPLY_DUPLICATE_COOLDOWN', `同一房源 24 小时内最多申请 ${SAME_LISTING_MAX_APPLY} 次，已触发 ${SAME_LISTING_COOLDOWN_HOURS} 小时冷却`));
   }
 
   const rentAmount = normalizeAmount(listing.rent_amount);
@@ -405,8 +339,8 @@ router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req,
     address: listing.address,
     rentAmount,
     oneTimeAmount,
-    tenant: { id: tenant.id, nickname: tenant.nickname, walletAddress: tenant.wallet_address },
-    landlord: { id: landlord.id, nickname: landlord.nickname, walletAddress: landlord.wallet_address },
+    tenant: { id: tenant.id, nickname: tenant.nickname, email: tenant.email, walletAddress: tenant.wallet_address },
+    landlord: { id: landlord.id, nickname: landlord.nickname, email: landlord.email, walletAddress: landlord.wallet_address },
     terms: {
       paymentMethod: 'one_time',
       startDate: startDateOnly,
@@ -419,7 +353,7 @@ router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req,
 
   const contentJson = JSON.stringify(content, null, 2);
   const contentHash = contractHash(content);
-  const expiresAt = getCnDateTime(new Date(Date.now() + 48 * 60 * 60 * 1000));
+  const expiresAt = getCnDateTime(new Date(Date.now() + 24 * 60 * 60 * 1000));
 
   db.run('UPDATE listings SET status = \'locked\', updated_at = datetime(\'now\', \'+8 hours\') WHERE id = ? AND status = \'available\'', [listingId]);
   if (db.getRowsModified() !== 1) {
@@ -689,7 +623,7 @@ router.post('/:id/sign-landlord', authMiddleware, asyncHandler(async (req, res) 
     const paymentDeadline = getCnDateTime(new Date(Date.now() + PAYMENT_WINDOW_MS));
     db.run(
       `UPDATE contracts
-       SET status = 'active_pending_onchain',
+       SET status = 'pending_payment',
            landlord_signed_at = datetime('now', '+8 hours'),
            landlord_signer_address = ?,
            landlord_signature = ?,
@@ -698,9 +632,8 @@ router.post('/:id/sign-landlord', authMiddleware, asyncHandler(async (req, res) 
            landlord_sign_user_agent = ?,
            landlord_sign_request_id = ?,
            payment_deadline = ?,
-           active_pending_onchain_at = datetime('now', '+8 hours'),
            onchain_status = 'pending',
-           onchain_next_retry_at = datetime('now', '+8 hours')
+           onchain_next_retry_at = ''
        WHERE id = ? AND status = 'tenant_signed'`,
       [
         submittedAddress,
@@ -718,20 +651,19 @@ router.post('/:id/sign-landlord', authMiddleware, asyncHandler(async (req, res) 
     }
 
     saveDb();
-    const relayResult = await attemptOnchainStore(req.params.id, req.requestId);
 
     res.json({
       success: true,
-      message: relayResult.ok ? '房东签署成功，合同哈希已自动上链，请租客完成首笔支付' : '房东签署成功，合同已进入上链补偿队列',
+      message: '房东签署成功，请手动完成合同上链并回写交易哈希后再支付',
       data: {
         contentHash: contract.content_hash,
         tenantAddress: normalizedTenantAddress,
         landlordAddress: normalizedLandlordAddress,
         initialAmount: content?.oneTimeAmount || '',
         paymentDeadline,
-        onchainStatus: relayResult.ok ? 'confirmed' : 'failed',
-        txHash: relayResult.txHash || '',
-        onchainError: relayResult.ok ? '' : relayResult.message,
+        onchainStatus: 'pending',
+        txHash: '',
+        onchainError: '',
       },
     });
   } catch (error) {
@@ -755,7 +687,7 @@ router.post('/:id/onchain', authMiddleware, asyncHandler(async (req, res) => {
   if (![contract.tenant_id, contract.landlord_id].includes(req.user.id)) {
     return res.status(403).json({ error: '无权限操作该合同' });
   }
-  if (!['active_pending_onchain', 'pending_payment', 'active'].includes(contract.status)) {
+  if (!['pending_payment', 'active'].includes(contract.status)) {
     return res.status(400).json({ error: '当前状态不允许回写上链交易' });
   }
 
@@ -765,8 +697,8 @@ router.post('/:id/onchain', authMiddleware, asyncHandler(async (req, res) => {
          onchain_status = 'confirmed',
          onchain_error = '',
          onchain_next_retry_at = '',
-         status = CASE WHEN status = 'active_pending_onchain' THEN 'pending_payment' ELSE status END
-     WHERE id = ? AND tx_hash IS NULL`,
+         status = status
+      WHERE id = ? AND tx_hash IS NULL`,
     [txHash, req.params.id]
   );
   if (db.getRowsModified() !== 1) {
@@ -774,22 +706,6 @@ router.post('/:id/onchain', authMiddleware, asyncHandler(async (req, res) => {
   }
   saveDb();
   res.json({ success: true, message: '链上交易回写成功' });
-}));
-
-// 函数 6-1: 手动触发上链失败补偿重试。
-router.post('/:id/onchain/retry', authMiddleware, asyncHandler(async (req, res) => {
-  const db = await getDb();
-  const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
-  if (!rows.length) return res.status(404).json({ error: '合同不存在' });
-  const contract = rows[0];
-  if (![contract.tenant_id, contract.landlord_id].includes(req.user.id)) {
-    return res.status(403).json({ error: '无权限重试该合同上链' });
-  }
-  const result = await attemptOnchainStore(req.params.id, req.requestId);
-  if (!result.ok) {
-    return res.status(503).json(error(result.code || 'ONCHAIN_RETRY_FAILED', result.message || '上链重试失败'));
-  }
-  res.json({ success: true, message: '上链重试成功', data: { txHash: result.txHash } });
 }));
 
 // 函数 7: 支付前签发一次性链上准入授权。
@@ -1051,45 +967,6 @@ router.get('/:id/payments', authMiddleware, asyncHandler(async (req, res) => {
   res.json({ success: true, data: payments });
 }));
 
-// 函数 8-1: 录入预付款、续租或租金支付存证。
-router.post('/:id/payments/record', authMiddleware, asyncHandler(async (req, res) => {
-  const { payType = 'rent', amount, period = '', txHash = '', note = '' } = req.body || {};
-  if (!['prepay', 'rent', 'renewal'].includes(payType)) {
-    return res.status(400).json({ error: 'payType 仅支持 prepay/rent/renewal' });
-  }
-  const normalizedAmount = normalizeAmount(amount);
-  if (!normalizedAmount) return res.status(400).json({ error: 'amount 必须大于 0' });
-
-  const db = await getDb();
-  const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
-  if (!rows.length) return res.status(404).json({ error: '合同不存在' });
-  const contract = rows[0];
-  if (contract.tenant_id !== req.user.id) return res.status(403).json({ error: '仅租客可录入支付存证' });
-  if (payType === 'prepay' && !['pending_payment', 'active'].includes(contract.status)) {
-    return res.status(400).json({ error: '预付款仅支持待支付或履约中合同' });
-  }
-  if (['rent', 'renewal'].includes(payType) && contract.status !== 'active') {
-    return res.status(400).json({ error: '租金/续租支付仅支持已生效合同' });
-  }
-
-  const finalTxHash = String(txHash || '').trim() || createPseudoTxHash(payType);
-  const existed = parseResult(db.exec('SELECT id FROM payments WHERE tx_hash = ?', [finalTxHash]));
-  if (existed.length > 0) return res.status(409).json({ error: '该支付凭证已存在' });
-
-  const paymentId = `pay_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-  db.run(
-    `INSERT INTO payments (id, contract_id, payer_id, pay_type, amount, period, tx_hash, status, paid_at, audit_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', datetime('now', '+8 hours'), ?)`,
-    [paymentId, req.params.id, req.user.id, payType, normalizedAmount, String(period || ''), finalTxHash, JSON.stringify({
-      note: String(note || ''),
-      requestId: req.requestId || '',
-      source: 'manual_record',
-    })]
-  );
-  saveDb();
-  res.json({ success: true, message: '支付存证已记录', data: { paymentId, txHash: finalTxHash } });
-}));
-
 // 函数 8-2: 下载合同 PDF。
 router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getDb();
@@ -1112,31 +989,45 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="${contract.id}.pdf"`);
   const doc = new PDFDocument({ margin: 48 });
   doc.pipe(res);
-  doc.fontSize(18).text('CCL Housing Rental Contract', { align: 'center' });
+  const cnFontPath = resolvePdfChineseFontPath();
+  if (cnFontPath) {
+    try {
+      doc.registerFont('cn', cnFontPath);
+      doc.font('cn');
+    } catch (error) {
+      logSignFlow('contract.pdf.font-fallback', {
+        contractId: req.params.id,
+        requestId: req.requestId || '',
+        message: error?.message || 'pdf_font_load_failed',
+        fontPath: cnFontPath,
+      });
+    }
+  }
+  doc.fontSize(18).text('CCL 房屋租赁合同', { align: 'center' });
   doc.moveDown();
-  doc.fontSize(10).text(`Contract ID: ${contract.id}`);
-  doc.text(`Status: ${contract.status}`);
-  doc.text(`Version: v${contract.version || 1}`);
-  doc.text(`Content Hash: ${contract.content_hash}`);
-  doc.text(`Onchain Tx: ${contract.tx_hash || '-'}`);
+  doc.fontSize(10).text(`合同编号：${contract.id}`);
+  doc.text(`合同状态：${contract.status}`);
+  doc.text(`合同版本：v${contract.version || 1}`);
+  doc.text(`合同哈希：${contract.content_hash}`);
+  doc.text(`链上交易哈希：${contract.tx_hash || '-'}`);
   doc.moveDown();
-  doc.fontSize(13).text('Parties');
-  doc.fontSize(10).text(`Tenant: ${content?.tenant?.nickname || content?.tenant?.id || '-'} (${content?.tenant?.walletAddress || '-'})`);
-  doc.text(`Landlord: ${content?.landlord?.nickname || content?.landlord?.id || '-'} (${content?.landlord?.walletAddress || '-'})`);
+  doc.fontSize(13).text('合同主体');
+  doc.fontSize(10).text(`租客：${content?.tenant?.nickname || content?.tenant?.id || '-'}（${content?.tenant?.walletAddress || '-'}）`);
+  doc.text(`房东：${content?.landlord?.nickname || content?.landlord?.id || '-'}（${content?.landlord?.walletAddress || '-'}）`);
   doc.moveDown();
-  doc.fontSize(13).text('Terms');
-  doc.fontSize(10).text(`Listing: ${content?.title || '-'} / ${content?.address || '-'}`);
-  doc.text(`Rent: ${content?.rentAmount || '-'} ETH / month`);
-  doc.text(`Initial Amount: ${content?.oneTimeAmount || '-'} ETH`);
-  doc.text(`Lease: ${content?.terms?.startDate || '-'} to ${content?.terms?.endDate || '-'}`);
+  doc.fontSize(13).text('合同条款');
+  doc.fontSize(10).text(`房源：${content?.title || '-'} / ${content?.address || '-'}`);
+  doc.text(`月租：${content?.rentAmount || '-'} ETH / 月`);
+  doc.text(`首笔支付金额：${content?.oneTimeAmount || '-'} ETH`);
+  doc.text(`租期：${content?.terms?.startDate || '-'} 至 ${content?.terms?.endDate || '-'}`);
   doc.moveDown();
-  doc.fontSize(13).text('Signatures');
-  doc.fontSize(10).text(`Tenant signed at: ${contract.tenant_signed_at || '-'}`);
-  doc.text(`Tenant signer: ${contract.tenant_signer_address || '-'}`);
-  doc.text(`Landlord signed at: ${contract.landlord_signed_at || '-'}`);
-  doc.text(`Landlord signer: ${contract.landlord_signer_address || '-'}`);
+  doc.fontSize(13).text('签署信息');
+  doc.fontSize(10).text(`租客签署时间：${contract.tenant_signed_at || '-'}`);
+  doc.text(`租客签署地址：${contract.tenant_signer_address || '-'}`);
+  doc.text(`房东签署时间：${contract.landlord_signed_at || '-'}`);
+  doc.text(`房东签署地址：${contract.landlord_signer_address || '-'}`);
   doc.moveDown();
-  doc.fontSize(13).text('Payments');
+  doc.fontSize(13).text('支付记录');
   if (payments.length === 0) {
     doc.fontSize(10).text('-');
   } else {
@@ -1145,7 +1036,8 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
     });
   }
   doc.moveDown();
-  doc.fontSize(8).fillColor('gray').text(`Generated at ${getCnDateTime(new Date())}`);
+  doc.fontSize(8).fillColor('gray').text('哈希算法：SHA-256（用于计算合同 content_hash）');
+  doc.fontSize(8).fillColor('gray').text(`生成时间：${getCnDateTime(new Date())}`);
   doc.end();
 }));
 
@@ -1197,7 +1089,7 @@ router.post('/:id/revisions', authMiddleware, asyncHandler(async (req, res) => {
   };
   const contentJson = JSON.stringify(content, null, 2);
   const contentHash = makeContractContentHash(content);
-  const expiresAt = getCnDateTime(new Date(Date.now() + 48 * 60 * 60 * 1000));
+  const expiresAt = getCnDateTime(new Date(Date.now() + 24 * 60 * 60 * 1000));
   const nextVersion = Number(parent.version || 1) + 1;
   db.run(
     `INSERT INTO contracts (
@@ -1308,6 +1200,5 @@ router.get('/:id', asyncHandler(async (req, res) => {
   res.json({ success: true, data: rows[0] });
 }));
 
-router.retryPendingOnchainContracts = retryPendingOnchainContracts;
-
 module.exports = router;
+

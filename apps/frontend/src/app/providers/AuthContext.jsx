@@ -155,13 +155,10 @@ export function AuthProvider({ children }) {
   }, [refreshWalletInfo]);
 
     // 函数 6: 用户登录并写入当前网络会话。
-  const login = async (email, password, captcha = {}) => {
+  const login = async (email, password) => {
     const res = await axios.post(`${AUTH_API_BASE}/auth/login`, {
       email,
-      phone: email,
       password,
-      captchaId: captcha.id,
-      captchaAnswer: captcha.answer,
     });
     const { token, user: userData } = res.data.data;
     const keys = storageKeys(preferredNetwork);
@@ -173,9 +170,9 @@ export function AuthProvider({ children }) {
   };
 
     // 函数 7: 用户注册并写入当前网络会话。
-  const register = async (email, password, role, nickname, walletAddress, emailCode) => {
+  const register = async (email, password, role, nickname, walletAddress) => {
     const res = await axios.post(`${AUTH_API_BASE}/auth/register`, {
-      email, phone: email, password, role, nickname, walletAddress, emailCode,
+      email, password, role, nickname, walletAddress,
     });
     const { token, user: userData } = res.data.data;
     const keys = storageKeys(preferredNetwork);
@@ -186,26 +183,10 @@ export function AuthProvider({ children }) {
     return userData;
   };
 
-  const getCaptcha = async () => {
-    const res = await axios.get(`${AUTH_API_BASE}/auth/captcha`);
-    return res.data?.data || {};
-  };
-
-  const sendEmailCode = async (email, captcha = {}) => {
-    const res = await axios.post(`${AUTH_API_BASE}/auth/email-code`, {
-      email,
-      captchaId: captcha.id,
-      captchaAnswer: captcha.answer,
-    });
-    return res.data?.data || {};
-  };
-
-  const resetPassword = async (email, password, emailCode) => {
+  const resetPassword = async (email, password) => {
     const res = await axios.post(`${AUTH_API_BASE}/auth/reset-password`, {
       email,
-      phone: email,
       password,
-      emailCode,
     });
     return res.data;
   };
@@ -326,8 +307,6 @@ export function AuthProvider({ children }) {
       loading,
       login,
       register,
-      getCaptcha,
-      sendEmailCode,
       resetPassword,
       updateProfile,
       logout,

@@ -6,10 +6,9 @@ const fs = require('fs');
 const path = require('path');
 
 const LOG_DIR = path.join(__dirname, '..', '..', '..', 'logs');
-const SIGN_LOG_FILE = path.join(LOG_DIR, 'sign-flow-error.log');
-const LISTING_LOG_FILE = path.join(LOG_DIR, 'listing-error.log');
-const API_LOG_FILE = path.join(LOG_DIR, 'api-error.log');
-const SYSTEM_LOG_FILE = path.join(LOG_DIR, 'system-error.log');
+const NETWORK_LOG_DIR = path.join(LOG_DIR, 'networks');
+const COMMON_LOG_DIR = path.join(LOG_DIR, 'common');
+const USER_LOG_FILE = path.join(COMMON_LOG_DIR, 'user-event.log');
 
 // 函数 0: 解析网络键（sepolia/local）。
 function resolveNetworkKey(detail = {}) {
@@ -24,22 +23,30 @@ function resolveNetworkKey(detail = {}) {
   return envChain === 'local' ? 'local' : 'sepolia';
 }
 
-// 函数 0-1: 构建按网络拆分的日志文件路径。
-function getEnvLogFile(baseName, networkKey) {
-  return path.join(LOG_DIR, `${baseName}.${networkKey}.log`);
+// 函数 0-1: 构建按网络目录拆分的日志文件路径。
+function getNetworkLogFile(baseName, networkKey) {
+  return path.join(NETWORK_LOG_DIR, networkKey, `${baseName}.log`);
 }
 
 // 函数 1: 确保日志目录存在。
-function ensureLogDir() {
-  if (!fs.existsSync(LOG_DIR)) {
-    fs.mkdirSync(LOG_DIR, { recursive: true });
+function ensureDir(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
   }
 }
 
 // 函数 2: 以 JSON 行格式写入日志文件。
 function writeJsonLine(filePath, payload) {
-  ensureLogDir();
-  fs.appendFileSync(filePath, `${JSON.stringify(payload)}\n`, 'utf8');
+  try {
+    ensureDir(path.dirname(filePath));
+    fs.appendFileSync(filePath, `${JSON.stringify(payload)}\n`, 'utf8');
+  } catch (error) {
+    // 日志写入失败时降级到 stderr，避免因日志权限问题导致主流程崩溃。
+    console.error('[logger-fallback]', {
+      filePath,
+      message: error?.message || 'write log failed',
+    });
+  }
 }
 
 // 函数 3: 生成北京时间字符串（用于展示）。
@@ -68,8 +75,7 @@ function logSignFlow(stage, detail = {}) {
     ...detail,
   };
   console.error('[sign-flow]', payload);
-  writeJsonLine(SIGN_LOG_FILE, payload);
-  writeJsonLine(getEnvLogFile('sign-flow-error', networkKey), payload);
+  writeJsonLine(getNetworkLogFile('sign-flow-error', networkKey), payload);
 }
 
 // 函数 5: 记录房源相关错误日志。
@@ -84,8 +90,7 @@ function logListingError(stage, detail = {}) {
     ...detail,
   };
   console.error('[listing]', payload);
-  writeJsonLine(LISTING_LOG_FILE, payload);
-  writeJsonLine(getEnvLogFile('listing-error', networkKey), payload);
+  writeJsonLine(getNetworkLogFile('listing-error', networkKey), payload);
 }
 
 // 函数 6: 记录通用 API 错误日志（覆盖 4xx/5xx 与路由兜底）。
@@ -100,8 +105,7 @@ function logApiError(stage, detail = {}) {
     ...detail,
   };
   console.error('[api-error]', payload);
-  writeJsonLine(API_LOG_FILE, payload);
-  writeJsonLine(getEnvLogFile('api-error', networkKey), payload);
+  writeJsonLine(getNetworkLogFile('api-error', networkKey), payload);
 }
 
 // 函数 7: 记录进程级系统错误日志（未捕获异常/Promise 拒绝等）。
@@ -116,8 +120,35 @@ function logSystemError(stage, detail = {}) {
     ...detail,
   };
   console.error('[system-error]', payload);
-  writeJsonLine(SYSTEM_LOG_FILE, payload);
-  writeJsonLine(getEnvLogFile('system-error', networkKey), payload);
+  writeJsonLine(getNetworkLogFile('system-error', networkKey), payload);
+}
+
+// 函数 8: 记录签约风控事件日志。
+function logRiskEvent(stage, detail = {}) {
+  const now = new Date();
+  const networkKey = resolveNetworkKey(detail);
+  const payload = {
+    at: now.toISOString(),
+    cnAt: formatCnTime(now),
+    network: networkKey,
+    stage,
+    ...detail,
+  };
+  console.error('[risk-event]', payload);
+  writeJsonLine(getNetworkLogFile('risk-event', networkKey), payload);
+}
+
+// 函数 9: 记录共享账号相关用户事件（公共目录）。
+function logUserEvent(stage, detail = {}) {
+  const now = new Date();
+  const payload = {
+    at: now.toISOString(),
+    cnAt: formatCnTime(now),
+    stage,
+    ...detail,
+  };
+  console.error('[user-event]', payload);
+  writeJsonLine(USER_LOG_FILE, payload);
 }
 
 module.exports = {
@@ -125,8 +156,7 @@ module.exports = {
   logListingError,
   logApiError,
   logSystemError,
-  SIGN_LOG_FILE,
-  LISTING_LOG_FILE,
-  API_LOG_FILE,
-  SYSTEM_LOG_FILE,
+  logRiskEvent,
+  logUserEvent,
+  USER_LOG_FILE,
 };

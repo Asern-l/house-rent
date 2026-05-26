@@ -1,7 +1,7 @@
 {
   "network": "sepolia",
   "contract": "RentalChain",
-  "address": "0x48CA3dcD3815bD5ab8a2bC607f54B4D8257E3DEC",
+  "address": "0xbd4a528Ba2b88cC5060a9DfB2D3CD52b52290899",
   "deployer": "0x5cB0dd9E539232EA6906bbC5A1C84Fb724Ec70E4",
-  "timestamp": "2026-05-15T11:24:36.148Z"
+  "timestamp": "2026-05-26T12:27:01.213Z"
 }

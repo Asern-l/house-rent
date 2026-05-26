@@ -26,7 +26,7 @@ function getApiBase() {
 // 函数 3: 获取当前网络 token。
 function getToken() {
   const network = getCurrentNetwork();
-  return localStorage.getItem(`token:${network}`) || localStorage.getItem('token') || '';
+  return localStorage.getItem(`token:${network}`) || '';
 }
 
 // 函数 3-1: 业务后端返回 401 时清理当前网络的过期会话。
@@ -34,7 +34,6 @@ function clearExpiredSession() {
   const network = getCurrentNetwork();
   localStorage.removeItem(`token:${network}`);
   localStorage.removeItem(`user:${network}`);
-  localStorage.removeItem('token');
   window.dispatchEvent(new CustomEvent('auth-session-expired', { detail: { network } }));
 }
 

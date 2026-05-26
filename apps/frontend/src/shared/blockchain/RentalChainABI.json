@@ -1,18 +1,7 @@
 [
   {
-    "inputs": [],
-    "stateMutability": "nonpayable",
-    "type": "constructor"
-  },
-  {
     "anonymous": false,
     "inputs": [
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
       {
         "indexed": true,
         "internalType": "string",
@@ -22,172 +11,53 @@
       {
         "indexed": false,
         "internalType": "bytes32",
-        "name": "contractHash",
+        "name": "newContentHash",
         "type": "bytes32"
       },
       {
-        "indexed": true,
-        "internalType": "address",
-        "name": "tenant",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "address",
-        "name": "landlord",
-        "type": "address"
-      },
-      {
         "indexed": false,
         "internalType": "uint256",
-        "name": "timestamp",
-        "type": "uint256"
-      }
-    ],
-    "name": "ContractStored",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "tenantAmount",
+        "name": "newRentAmountWei",
         "type": "uint256"
       },
       {
         "indexed": false,
-        "internalType": "uint256",
-        "name": "landlordAmount",
-        "type": "uint256"
+        "internalType": "uint16",
+        "name": "newMinLeaseMonths",
+        "type": "uint16"
       },
       {
         "indexed": false,
-        "internalType": "uint256",
-        "name": "timestamp",
-        "type": "uint256"
-      }
-    ],
-    "name": "DeductionAccepted",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
+        "internalType": "bytes32",
+        "name": "newImageRootHash",
+        "type": "bytes32"
       },
       {
         "indexed": false,
-        "internalType": "uint256",
-        "name": "amount",
-        "type": "uint256"
+        "internalType": "uint64",
+        "name": "version",
+        "type": "uint64"
       },
       {
         "indexed": false,
-        "internalType": "string",
-        "name": "reason",
-        "type": "string"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "timestamp",
-        "type": "uint256"
-      }
-    ],
-    "name": "DeductionProposed",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
+        "internalType": "uint64",
+        "name": "nonce",
+        "type": "uint64"
       },
       {
         "indexed": true,
         "internalType": "address",
-        "name": "initiator",
+        "name": "operator",
         "type": "address"
       },
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "timestamp",
+        "name": "blockTime",
         "type": "uint256"
       }
     ],
-    "name": "DepositDisputed",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "tenant",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "amount",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "timestamp",
-        "type": "uint256"
-      }
-    ],
-    "name": "DepositPaid",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
-      {
-        "indexed": false,
-        "internalType": "bool",
-        "name": "toTenant",
-        "type": "bool"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "timestamp",
-        "type": "uint256"
-      }
-    ],
-    "name": "DepositResolved",
+    "name": "ListingContentUpdated",
     "type": "event"
   },
   {
@@ -207,56 +77,48 @@
       },
       {
         "indexed": false,
-        "internalType": "uint256",
-        "name": "timestamp",
-        "type": "uint256"
-      }
-    ],
-    "name": "ListingStored",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "oldAuthorizer",
-        "type": "address"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "newAuthorizer",
-        "type": "address"
-      }
-    ],
-    "name": "PaymentAuthorizerChanged",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
+        "internalType": "bytes32",
+        "name": "contentHash",
+        "type": "bytes32"
       },
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "amount",
+        "name": "rentAmountWei",
         "type": "uint256"
       },
       {
         "indexed": false,
+        "internalType": "uint16",
+        "name": "minLeaseMonths",
+        "type": "uint16"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "imageRootHash",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "version",
+        "type": "uint64"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "nonce",
+        "type": "uint64"
+      },
+      {
+        "indexed": false,
         "internalType": "uint256",
-        "name": "timestamp",
+        "name": "blockTime",
         "type": "uint256"
       }
     ],
-    "name": "RefundConfirmed",
+    "name": "ListingCreated",
     "type": "event"
   },
   {
@@ -265,109 +127,51 @@
       {
         "indexed": true,
         "internalType": "string",
-        "name": "contractId",
+        "name": "listingId",
         "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint8",
+        "name": "oldStatus",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint8",
+        "name": "newStatus",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "version",
+        "type": "uint64"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "nonce",
+        "type": "uint64"
       },
       {
         "indexed": true,
         "internalType": "address",
-        "name": "tenant",
+        "name": "operator",
         "type": "address"
       },
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "timestamp",
+        "name": "blockTime",
         "type": "uint256"
       }
     ],
-    "name": "RefundRequested",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "tenant",
-        "type": "address"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "landlord",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "amount",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "string",
-        "name": "alipayOrderNo",
-        "type": "string"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "timestamp",
-        "type": "uint256"
-      }
-    ],
-    "name": "RentReceipt",
+    "name": "ListingStatusChanged",
     "type": "event"
   },
   {
     "inputs": [
-      {
-        "internalType": "string",
-        "name": "_contractId",
-        "type": "string"
-      }
-    ],
-    "name": "acceptDeduction",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "_contractId",
-        "type": "string"
-      }
-    ],
-    "name": "confirmRefund",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "",
-        "type": "string"
-      }
-    ],
-    "name": "contracts",
-    "outputs": [
-      {
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
       {
         "internalType": "string",
         "name": "listingId",
@@ -375,116 +179,26 @@
       },
       {
         "internalType": "bytes32",
-        "name": "contractHash",
+        "name": "contentHash",
         "type": "bytes32"
       },
       {
-        "internalType": "address",
-        "name": "tenant",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "landlord",
-        "type": "address"
-      },
-      {
         "internalType": "uint256",
-        "name": "createdAt",
+        "name": "rentAmountWei",
         "type": "uint256"
       },
       {
-        "internalType": "uint256",
-        "name": "paymentDeadline",
-        "type": "uint256"
+        "internalType": "uint16",
+        "name": "minLeaseMonths",
+        "type": "uint16"
       },
       {
-        "internalType": "uint256",
-        "name": "initialAmount",
-        "type": "uint256"
-      },
-      {
-        "internalType": "enum RentalChain.ContractPayStatus",
-        "name": "payStatus",
-        "type": "uint8"
-      },
-      {
-        "internalType": "bool",
-        "name": "exists",
-        "type": "bool"
+        "internalType": "bytes32",
+        "name": "imageRootHash",
+        "type": "bytes32"
       }
     ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "",
-        "type": "string"
-      }
-    ],
-    "name": "deposits",
-    "outputs": [
-      {
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
-      {
-        "internalType": "address",
-        "name": "tenant",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "landlord",
-        "type": "address"
-      },
-      {
-        "internalType": "uint256",
-        "name": "amount",
-        "type": "uint256"
-      },
-      {
-        "internalType": "enum RentalChain.DepositStatus",
-        "name": "status",
-        "type": "uint8"
-      },
-      {
-        "internalType": "uint256",
-        "name": "paidAt",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "deductionAmount",
-        "type": "uint256"
-      },
-      {
-        "internalType": "string",
-        "name": "deductionReason",
-        "type": "string"
-      },
-      {
-        "internalType": "bool",
-        "name": "exists",
-        "type": "bool"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "_contractId",
-        "type": "string"
-      }
-    ],
-    "name": "disputeDeposit",
+    "name": "createListing",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -493,118 +207,65 @@
     "inputs": [
       {
         "internalType": "string",
-        "name": "_contractId",
-        "type": "string"
-      }
-    ],
-    "name": "getContract",
-    "outputs": [
-      {
-        "internalType": "string",
         "name": "listingId",
-        "type": "string"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "contractHash",
-        "type": "bytes32"
-      },
-      {
-        "internalType": "address",
-        "name": "tenant",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "landlord",
-        "type": "address"
-      },
-      {
-        "internalType": "uint256",
-        "name": "createdAt",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "paymentDeadline",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "initialAmount",
-        "type": "uint256"
-      },
-      {
-        "internalType": "enum RentalChain.ContractPayStatus",
-        "name": "payStatus",
-        "type": "uint8"
-      },
-      {
-        "internalType": "bool",
-        "name": "exists",
-        "type": "bool"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "_contractId",
-        "type": "string"
-      }
-    ],
-    "name": "getDeposit",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "amount",
-        "type": "uint256"
-      },
-      {
-        "internalType": "enum RentalChain.DepositStatus",
-        "name": "status",
-        "type": "uint8"
-      },
-      {
-        "internalType": "uint256",
-        "name": "paidAt",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "deductionAmount",
-        "type": "uint256"
-      },
-      {
-        "internalType": "string",
-        "name": "deductionReason",
-        "type": "string"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "_listingId",
         "type": "string"
       }
     ],
     "name": "getListing",
     "outputs": [
       {
+        "internalType": "string",
+        "name": "outListingId",
+        "type": "string"
+      },
+      {
         "internalType": "address",
         "name": "landlord",
         "type": "address"
       },
       {
+        "internalType": "bytes32",
+        "name": "contentHash",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint256",
+        "name": "rentAmountWei",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint16",
+        "name": "minLeaseMonths",
+        "type": "uint16"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "imageRootHash",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint8",
+        "name": "status",
+        "type": "uint8"
+      },
+      {
+        "internalType": "uint64",
+        "name": "version",
+        "type": "uint64"
+      },
+      {
+        "internalType": "uint64",
+        "name": "nonce",
+        "type": "uint64"
+      },
+      {
         "internalType": "uint256",
         "name": "createdAt",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "updatedAt",
         "type": "uint256"
       },
       {
@@ -633,94 +294,26 @@
     "inputs": [
       {
         "internalType": "string",
-        "name": "",
-        "type": "string"
-      }
-    ],
-    "name": "listings",
-    "outputs": [
-      {
-        "internalType": "string",
         "name": "listingId",
         "type": "string"
       },
       {
-        "internalType": "address",
-        "name": "landlord",
-        "type": "address"
+        "internalType": "enum RentalChain.ListingStatus",
+        "name": "newStatus",
+        "type": "uint8"
       },
       {
-        "internalType": "uint256",
-        "name": "createdAt",
-        "type": "uint256"
+        "internalType": "uint64",
+        "name": "expectedVersion",
+        "type": "uint64"
       },
       {
-        "internalType": "bool",
-        "name": "exists",
-        "type": "bool"
+        "internalType": "uint64",
+        "name": "expectedNonce",
+        "type": "uint64"
       }
     ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "owner",
-    "outputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "_contractId",
-        "type": "string"
-      }
-    ],
-    "name": "payDeposit",
-    "outputs": [],
-    "stateMutability": "payable",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "paymentAuthorizer",
-    "outputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "_contractId",
-        "type": "string"
-      },
-      {
-        "internalType": "uint256",
-        "name": "_amount",
-        "type": "uint256"
-      },
-      {
-        "internalType": "string",
-        "name": "_reason",
-        "type": "string"
-      }
-    ],
-    "name": "proposeDeduction",
+    "name": "setListingStatus",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -729,208 +322,7 @@
     "inputs": [
       {
         "internalType": "string",
-        "name": "_contractId",
-        "type": "string"
-      },
-      {
-        "internalType": "address",
-        "name": "_tenant",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "_landlord",
-        "type": "address"
-      },
-      {
-        "internalType": "uint256",
-        "name": "_amount",
-        "type": "uint256"
-      },
-      {
-        "internalType": "string",
-        "name": "_alipayOrderNo",
-        "type": "string"
-      }
-    ],
-    "name": "recordRentPayment",
-    "outputs": [],
-    "stateMutability": "payable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "_contractId",
-        "type": "string"
-      },
-      {
-        "internalType": "address",
-        "name": "_tenant",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "_landlord",
-        "type": "address"
-      },
-      {
-        "internalType": "uint256",
-        "name": "_amount",
-        "type": "uint256"
-      },
-      {
-        "internalType": "string",
-        "name": "_alipayOrderNo",
-        "type": "string"
-      },
-      {
-        "internalType": "uint256",
-        "name": "_deadline",
-        "type": "uint256"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "_nonce",
-        "type": "bytes32"
-      },
-      {
-        "internalType": "bytes",
-        "name": "_signature",
-        "type": "bytes"
-      }
-    ],
-    "name": "recordRentPaymentAuthorized",
-    "outputs": [],
-    "stateMutability": "payable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "_contractId",
-        "type": "string"
-      }
-    ],
-    "name": "requestRefund",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "_contractId",
-        "type": "string"
-      },
-      {
-        "internalType": "bool",
-        "name": "_toTenant",
-        "type": "bool"
-      }
-    ],
-    "name": "resolveDeposit",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "_newAuthorizer",
-        "type": "address"
-      }
-    ],
-    "name": "setPaymentAuthorizer",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "_contractId",
-        "type": "string"
-      },
-      {
-        "internalType": "string",
-        "name": "_listingId",
-        "type": "string"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "_contractHash",
-        "type": "bytes32"
-      },
-      {
-        "internalType": "address",
-        "name": "_tenant",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "_landlord",
-        "type": "address"
-      }
-    ],
-    "name": "storeContract",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "_contractId",
-        "type": "string"
-      },
-      {
-        "internalType": "string",
-        "name": "_listingId",
-        "type": "string"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "_contractHash",
-        "type": "bytes32"
-      },
-      {
-        "internalType": "address",
-        "name": "_tenant",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "_landlord",
-        "type": "address"
-      },
-      {
-        "internalType": "uint256",
-        "name": "_paymentDeadline",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "_initialAmount",
-        "type": "uint256"
-      }
-    ],
-    "name": "storeContractWithPaymentTerms",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "_listingId",
+        "name": "listingId",
         "type": "string"
       }
     ],
@@ -942,37 +334,44 @@
   {
     "inputs": [
       {
-        "internalType": "address",
-        "name": "_newOwner",
-        "type": "address"
+        "internalType": "string",
+        "name": "listingId",
+        "type": "string"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "newContentHash",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint256",
+        "name": "newRentAmountWei",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint16",
+        "name": "newMinLeaseMonths",
+        "type": "uint16"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "newImageRootHash",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint64",
+        "name": "expectedVersion",
+        "type": "uint64"
+      },
+      {
+        "internalType": "uint64",
+        "name": "expectedNonce",
+        "type": "uint64"
       }
     ],
-    "name": "transferOwnership",
+    "name": "updateListingTerms",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "bytes32",
-        "name": "",
-        "type": "bytes32"
-      }
-    ],
-    "name": "usedPaymentNonces",
-    "outputs": [
-      {
-        "internalType": "bool",
-        "name": "",
-        "type": "bool"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "stateMutability": "payable",
-    "type": "receive"
   }
 ]

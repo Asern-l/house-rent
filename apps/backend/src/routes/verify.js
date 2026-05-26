@@ -22,6 +22,7 @@ router.get('/listing/:id', asyncHandler(async (req, res) => {
     data: {
       exists: true,
       id: listing.id,
+      listingId: listing.id,
       txHash: listing.tx_hash || '未上链',
       createdAt: listing.created_at,
     },
@@ -57,6 +58,7 @@ router.get('/contract/:id', asyncHandler(async (req, res) => {
     data: {
       exists: true,
       contractId: contract.id,
+      listingId: contract.listing_id || '',
       status: contract.status,
       storedHash: contract.content_hash,
       currentHash,

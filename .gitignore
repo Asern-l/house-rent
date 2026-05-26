@@ -12,9 +12,10 @@ coverage/
 # Runtime data
 apps/backend/data/
 apps/backend/uploads/
-logs/*.log
+logs/
 blockchain/.ganache-db/
 blockchain/deployments-rental-localhost.json
+old-docs/
 
 # Environment files
 .env

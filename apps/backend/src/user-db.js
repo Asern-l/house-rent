@@ -8,6 +8,7 @@ const path = require('path');
 
 const USER_DB_PATH = path.join(__dirname, '..', 'data', 'users.shared.sqlite');
 let userDb;
+let userDbMtimeMs = 0;
 
 // 函数 1: 确保用户数据库目录存在。
 function ensureUserDataDir() {
@@ -30,43 +31,48 @@ function parseResult(result) {
   });
 }
 
-// 函数 3: 执行共享用户库迁移。
-function migrateUserDb(db) {
-  db.run(`CREATE TABLE IF NOT EXISTS users (
+// 函数 3: 初始化共享用户表（仅邮箱，不做旧结构兼容）。
+function initUserDb(db) {
+  db.run('DROP TABLE IF EXISTS users');
+  db.run(`CREATE TABLE users (
     id TEXT PRIMARY KEY,
-    phone TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL CHECK(role IN ('landlord','tenant','admin')),
     wallet_address TEXT DEFAULT '',
     nickname TEXT DEFAULT '',
     avatar_url TEXT DEFAULT '',
+    unpaid_default_count INTEGER NOT NULL DEFAULT 0,
+    risk_blocked_until TEXT DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
   )`);
+}
 
+function ensureStrictEmailSchema(db) {
   const columns = parseResult(db.exec('PRAGMA table_info(users)')).map((item) => item.name);
-  if (!columns.includes('avatar_url')) {
-    db.run("ALTER TABLE users ADD COLUMN avatar_url TEXT DEFAULT ''");
-  }
-  if (!columns.includes('unpaid_default_count')) {
-    db.run('ALTER TABLE users ADD COLUMN unpaid_default_count INTEGER NOT NULL DEFAULT 0');
-  }
-  if (!columns.includes('risk_blocked_until')) {
-    db.run("ALTER TABLE users ADD COLUMN risk_blocked_until TEXT DEFAULT ''");
+  if (!columns.includes('email') || columns.includes('phone')) {
+    throw new Error('users.shared.sqlite 仍是旧结构。请删除 apps/backend/data/users.shared.sqlite 后重启服务。');
   }
 }
 
 // 函数 4: 获取共享用户数据库连接（惰性初始化）。
 async function getUserDb() {
-  if (userDb) return userDb;
+  const fileExists = fs.existsSync(USER_DB_PATH);
+  const diskMtimeMs = fileExists ? fs.statSync(USER_DB_PATH).mtimeMs : 0;
+  if (userDb && diskMtimeMs <= userDbMtimeMs) return userDb;
+
   ensureUserDataDir();
   const SQL = await initSqlJs();
-  if (fs.existsSync(USER_DB_PATH)) {
+  if (fileExists) {
     userDb = new SQL.Database(fs.readFileSync(USER_DB_PATH));
   } else {
     userDb = new SQL.Database();
+    initUserDb(userDb);
+    fs.writeFileSync(USER_DB_PATH, Buffer.from(userDb.export()));
   }
   userDb.run('PRAGMA foreign_keys = ON');
-  migrateUserDb(userDb);
+  ensureStrictEmailSchema(userDb);
+  userDbMtimeMs = fs.statSync(USER_DB_PATH).mtimeMs;
   return userDb;
 }
 
@@ -75,6 +81,7 @@ function saveUserDb() {
   if (!userDb) return;
   ensureUserDataDir();
   fs.writeFileSync(USER_DB_PATH, Buffer.from(userDb.export()));
+  userDbMtimeMs = fs.statSync(USER_DB_PATH).mtimeMs;
 }
 
 module.exports = {
@@ -82,4 +89,5 @@ module.exports = {
   saveUserDb,
   parseResult,
   USER_DB_PATH,
+  initUserDb,
 };

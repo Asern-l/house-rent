@@ -11,12 +11,13 @@ const rateLimit = require('express-rate-limit');
 const path = require('path');
 const { migrate, getDb, parseResult, saveDb, CHAIN_ENV, DB_PATH } = require('./db');
 const { getUserDb, saveUserDb, USER_DB_PATH } = require('./user-db');
-const { logApiError, logSystemError } = require('./logger');
+const { logApiError, logSystemError, logRiskEvent } = require('./logger');
 const contractRoutes = require('./routes/contracts');
 const listingRoutes = require('./routes/listings');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
+const HOST = String(process.env.HOST || '127.0.0.1');
 const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || '100mb');
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -57,7 +58,7 @@ function setupMiddlewares() {
     legacyHeaders: false,
     message: { error: '请求过于频繁，请稍后重试' },
   }));
-  app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+  app.use('/uploads', express.static(path.join(__dirname, '..', 'data', 'uploads')));
 }
 
 // 函数 4: 安装请求ID中间件。
@@ -95,7 +96,7 @@ function setupRoutes() {
       listings: parseResult(db.exec('SELECT COUNT(*) AS count FROM listings'))[0]?.count || 0,
       contracts: parseResult(db.exec('SELECT COUNT(*) AS count FROM contracts'))[0]?.count || 0,
       payments: parseResult(db.exec('SELECT COUNT(*) AS count FROM payments'))[0]?.count || 0,
-      pendingOnchainContracts: parseResult(db.exec("SELECT COUNT(*) AS count FROM contracts WHERE status = 'active_pending_onchain'"))[0]?.count || 0,
+      pendingOnchainContracts: parseResult(db.exec("SELECT COUNT(*) AS count FROM contracts WHERE status = 'pending_payment' AND tx_hash IS NULL"))[0]?.count || 0,
       pendingOnchainListings: parseResult(db.exec("SELECT COUNT(*) AS count FROM listings WHERE tx_hash IS NULL AND onchain_status IN ('pending','failed')"))[0]?.count || 0,
     };
     res.json({
@@ -182,7 +183,7 @@ async function expirePendingPaymentContracts() {
   const timeoutContracts = parseResult(db.exec(
     `SELECT id, listing_id, tenant_id
      FROM contracts
-     WHERE status IN ('active_pending_onchain', 'pending_payment')
+     WHERE status = 'pending_payment'
        AND landlord_signed_at IS NOT NULL
        AND (
          datetime(landlord_signed_at, '+2 hours') <= datetime('now', '+8 hours')
@@ -193,7 +194,7 @@ async function expirePendingPaymentContracts() {
 
   timeoutContracts.forEach((item) => {
     db.run(
-      "UPDATE contracts SET status = 'cancelled' WHERE id = ? AND status IN ('active_pending_onchain', 'pending_payment')",
+      "UPDATE contracts SET status = 'cancelled' WHERE id = ? AND status = 'pending_payment'",
       [item.id]
     );
     if (db.getRowsModified() !== 1) return;
@@ -224,6 +225,51 @@ async function expirePendingPaymentContracts() {
         [item.listing_id]
       );
     }
+  });
+
+  saveDb();
+}
+
+// 函数 7-1: 处理签约前超时合同（pending/tenant_signed 到 expires_at 自动过期并释放房源）。
+async function expireUnsignedContractsByExpiresAt() {
+  const db = await getDb();
+  const timeoutContracts = parseResult(db.exec(
+    `SELECT id, listing_id, tenant_id, status, expires_at
+     FROM contracts
+     WHERE status IN ('pending', 'tenant_signed')
+       AND datetime(expires_at) <= datetime('now', '+8 hours')`
+  ));
+  if (timeoutContracts.length === 0) return;
+
+  timeoutContracts.forEach((item) => {
+    db.run(
+      "UPDATE contracts SET status = 'expired' WHERE id = ? AND status IN ('pending', 'tenant_signed')",
+      [item.id]
+    );
+    if (db.getRowsModified() !== 1) return;
+
+    const sibling = parseResult(db.exec(
+      `SELECT id
+       FROM contracts
+       WHERE listing_id = ?
+         AND status NOT IN ('cancelled', 'expired', 'ended')`,
+      [item.listing_id]
+    ));
+    if (sibling.length === 0) {
+      db.run(
+        "UPDATE listings SET status = 'available', updated_at = datetime('now', '+8 hours') WHERE id = ? AND status = 'locked'",
+        [item.listing_id]
+      );
+    }
+
+    logRiskEvent('contract.auto-expire.release', {
+      contractId: item.id,
+      listingId: item.listing_id,
+      userId: item.tenant_id,
+      fromStatus: item.status,
+      expiresAt: item.expires_at,
+      preferredNetwork: CHAIN_ENV,
+    });
   });
 
   saveDb();
@@ -291,21 +337,18 @@ async function startServer() {
     await getUserDb();
     await migrate();
     setInterval(() => {
+      expireUnsignedContractsByExpiresAt().catch((err) => {
+        console.error('签约前超时自动过期任务失败:', err);
+      });
       expirePendingPaymentContracts().catch((err) => {
         console.error('超时取消任务失败:', err);
       });
       expireActiveContractsByEndDate().catch((err) => {
         console.error('租期到期任务失败:', err);
       });
-      contractRoutes.retryPendingOnchainContracts().catch((err) => {
-        console.error('合同上链补偿任务失败:', err);
-      });
-      listingRoutes.retryPendingListingOnchain().catch((err) => {
-        console.error('房源上链补偿任务失败:', err);
-      });
     }, 60 * 1000);
-    const server = app.listen(PORT, () => {
-      console.log(`后端启动成功: http://localhost:${PORT} (CHAIN_ENV=${CHAIN_ENV})`);
+    const server = app.listen(PORT, HOST, () => {
+      console.log(`后端启动成功: http://${HOST}:${PORT} (CHAIN_ENV=${CHAIN_ENV})`);
       console.log(`共享账号库: ${USER_DB_PATH}`);
       console.log(`JSON_BODY_LIMIT=${JSON_BODY_LIMIT}`);
     });
