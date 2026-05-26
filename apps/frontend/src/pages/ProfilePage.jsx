@@ -20,12 +20,17 @@ export default function ProfilePage({ onClose }) {
   const navigate = useNavigate();
   const [nickname, setNickname] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
+  // avatarChanged tracks whether the user selected a new file or cleared the avatar.
+  // We only send avatarUrl to the backend when it has actually changed, to avoid
+  // sending an old https:// URL that would fail backend validation.
+  const [avatarChanged, setAvatarChanged] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!user) return;
     setNickname(user.nickname || '');
     setAvatarUrl(user.avatarUrl || '');
+    setAvatarChanged(false);
   }, [user]);
 
   const handleLogout = () => {
@@ -86,24 +91,36 @@ export default function ProfilePage({ onClose }) {
       toast.error('头像仅支持 jpeg/png/webp');
       return;
     }
-    if (file.size > 700 * 1024) {
-      toast.error('头像不能超过 700KB');
+    if (file.size > 1.5 * 1024 * 1024) {
+      toast.error('头像不能超过 1.5MB');
       return;
     }
 
     const reader = new FileReader();
-    reader.onload = () => setAvatarUrl(String(reader.result || ''));
+    reader.onload = () => {
+      setAvatarUrl(String(reader.result || ''));
+      setAvatarChanged(true);
+    };
     reader.onerror = () => toast.error('头像读取失败');
     reader.readAsDataURL(file);
+  };
+
+  const handleClearAvatar = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setAvatarUrl('');
+    setAvatarChanged(true);
   };
 
   const handleSaveProfile = async () => {
     setSaving(true);
     try {
-      await updateProfile({
-        nickname: nickname.trim(),
-        avatarUrl,
-      });
+      // Only include avatarUrl in the payload when the user has actively changed it.
+      // This prevents sending a stale https:// URL that would be rejected by the backend.
+      const updates = { nickname: nickname.trim() };
+      if (avatarChanged) updates.avatarUrl = avatarUrl;
+      await updateProfile(updates);
+      setAvatarChanged(false);
       toast.success('个人资料已更新');
     } catch (error) {
       toast.error(error.response?.data?.error || '保存失败');
@@ -124,21 +141,34 @@ export default function ProfilePage({ onClose }) {
         {onClose && <CloseButton onClose={onClose} />}
 
         <div className="mb-7 text-center">
-          <label className="group relative mx-auto mb-4 flex h-20 w-20 cursor-pointer items-center justify-center overflow-hidden rounded-2xl bg-primary-600 text-2xl font-bold text-stone-950 shadow-[0_12px_30px_rgba(231,167,121,0.35)]">
-            {avatarUrl ? (
-              <img src={avatarUrl} alt="头像" className="h-full w-full object-cover" />
-            ) : (
-              initial
+          <div className="relative mx-auto mb-4 h-20 w-20">
+            <label className="group relative flex h-20 w-20 cursor-pointer items-center justify-center overflow-hidden rounded-2xl bg-primary-600 text-2xl font-bold text-stone-950 shadow-[0_12px_30px_rgba(231,167,121,0.35)]">
+              {avatarUrl ? (
+                <img src={avatarUrl} alt="头像" className="h-full w-full object-cover" />
+              ) : (
+                initial
+              )}
+              <span className="absolute inset-0 flex items-center justify-center bg-stone-950/45 text-[#f5f0e8] opacity-0 transition-opacity group-hover:opacity-100">
+                <CameraIcon className="h-5 w-5" />
+              </span>
+              <input type="file" className="hidden" accept="image/jpeg,image/png,image/webp" onChange={handleAvatarChange} />
+            </label>
+            {/* Clear avatar button — only show when there's an avatar to remove */}
+            {avatarUrl && (
+              <button
+                type="button"
+                onClick={handleClearAvatar}
+                title="移除头像"
+                className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-stone-700 text-white shadow hover:bg-red-600 transition-colors"
+              >
+                <XIcon className="h-3 w-3" />
+              </button>
             )}
-            <span className="absolute inset-0 flex items-center justify-center bg-stone-950/45 text-[#f5f0e8] opacity-0 transition-opacity group-hover:opacity-100">
-              <CameraIcon className="h-5 w-5" />
-            </span>
-            <input type="file" className="hidden" accept="image/jpeg,image/png,image/webp" onChange={handleAvatarChange} />
-          </label>
+          </div>
           <input
             className="mx-auto block w-full max-w-[260px] rounded-2xl border border-stone-300 bg-[#fbf7ef] px-4 py-2 text-center text-2xl font-bold text-stone-950 outline-none transition-colors focus:border-primary-600/80"
             value={nickname}
-            onChange={(event) => setNickname(event.target.value)}
+            onChange={(event) => setNickname(event.target.value.replace(/[\x00<>"']/g, ''))}
             placeholder={displayName}
             maxLength={32}
           />

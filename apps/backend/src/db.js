@@ -414,6 +414,15 @@ async function migrate() {
     rebuildPaymentsTable(d, paymentCols);
   }
 
+  // 迁移：给合同表加软删除列（每方独立删除，不影响对方记录）
+  const contractCols = parseResult(d.exec('PRAGMA table_info(contracts)')).map((c) => c.name);
+  if (!contractCols.includes('tenant_dismissed_at')) {
+    d.run('ALTER TABLE contracts ADD COLUMN tenant_dismissed_at TEXT');
+  }
+  if (!contractCols.includes('landlord_dismissed_at')) {
+    d.run('ALTER TABLE contracts ADD COLUMN landlord_dismissed_at TEXT');
+  }
+
   saveDb();
   console.log(`数据库迁移完成（CHAIN_ENV=${CHAIN_ENV}，DB=${DB_PATH}）`);
 }

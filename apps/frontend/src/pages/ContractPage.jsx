@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../app/providers/AuthContext';
-import { apiGet, apiPost } from '../shared/api/api';
+import { apiGet, apiPost, apiDelete } from '../shared/api/api';
 import { ethers } from 'ethers';
 import RentalChainABI from '../shared/blockchain/RentalChainABI.json';
 import toast from 'react-hot-toast';
-import { FileTextIcon, CheckCircleIcon, LoaderIcon, ArrowLeftIcon } from 'lucide-react';
+import { FileTextIcon, CheckCircleIcon, LoaderIcon, ArrowLeftIcon, Trash2Icon, DownloadIcon } from 'lucide-react';
 
 const CONTRACT_ADDR_MAP = {
   sepolia: import.meta.env.VITE_CONTRACT_ADDRESS_SEPOLIA || '',
@@ -85,6 +85,7 @@ export default function ContractPage() {
   const [loading, setLoading] = useState(true);
   const [signing, setSigning] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [payments, setPayments] = useState([]);
   const [versions, setVersions] = useState([]);
   const [terminations, setTerminations] = useState([]);
@@ -130,8 +131,56 @@ export default function ContractPage() {
     return (addr || '').trim().toLowerCase();
   };
 
+  // DEV 模式：跳过 MetaMask，直接走 API + 生成假 txHash
+  const handleMockSign = async (type) => {
+    setSigning(true);
+    try {
+      const signerAddress = type === 'tenant'
+        ? '0xde00000000000000000000000000000000000001'
+        : '0xde00000000000000000000000000000000000002';
+      const res = await apiPost(
+        `/contracts/${id}/${type === 'tenant' ? 'sign-tenant' : 'sign-landlord'}`,
+        { signerAddress }
+      );
+      // 房东签署后还要写入假 txHash，否则合同停在 pending_payment 而没有链上记录
+      if (type === 'landlord') {
+        const fakeTx = '0xde' + 'ad'.repeat(31);   // 0x + 64 hex chars
+        await apiPost(`/contracts/${id}/onchain`, { txHash: fakeTx }).catch(() => {});
+        setLastTxHash(fakeTx);
+        toast.success('[DEV] 合同已上链 (mock tx)');
+      }
+      toast.success(res.message || '签署成功');
+      await loadContract();
+    } catch (err) {
+      toast.error(err.response?.data?.error || '签署失败');
+    } finally {
+      setSigning(false);
+    }
+  };
+
+  const handleMockPayment = async () => {
+    setPaying(true);
+    try {
+      const fakeTx = '0xde' + 'ef'.repeat(31);
+      await apiPost(`/contracts/${id}/payments/onchain`, {
+        txHash: fakeTx,
+        amount: initialAmount || '0',
+        payType: 'initial',
+      });
+      toast.success('[DEV] 首笔支付已记录 (mock tx)');
+      await loadContract();
+    } catch (err) {
+      toast.error(err.response?.data?.error || '支付失败');
+    } finally {
+      setPaying(false);
+    }
+  };
+
   const handleSign = async (type) => {
-    if (!window.ethereum) { toast.error('请先安装 MetaMask 钱包'); return; }
+    if (!window.ethereum) {
+      if (import.meta.env.DEV) { await handleMockSign(type); return; }
+      toast.error('请先安装 MetaMask 钱包'); return;
+    }
     const requestId = genRequestId();
     const selected = NETWORK_OPTIONS.find((x) => x.key === preferredNetwork) || NETWORK_OPTIONS[0];
     const contractAddr = String(CONTRACT_ADDR_MAP[selected.key] || '').trim();
@@ -240,8 +289,138 @@ export default function ContractPage() {
     }
   };
 
+  const handleDownload = () => {
+    if (!contract || !content) return;
+    const fmt = (v) => v || '-';
+    const now = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+    const payMethod = content.terms?.paymentMethod === 'one_time' ? '一次性支付' : '按月支付';
+    const payRows = payments.length
+      ? payments.map((p) => `
+          <tr>
+            <td>${p.pay_type === 'initial' ? '首笔支付' : p.pay_type}</td>
+            <td>${fmt(p.amount)} ETH</td>
+            <td style="font-family:monospace;font-size:11px;word-break:break-all">${fmt(p.tx_hash)}</td>
+            <td>${fmt(p.paid_at)}</td>
+          </tr>`).join('')
+      : '<tr><td colspan="4" style="color:#888;text-align:center">暂无支付记录</td></tr>';
+
+    const html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"/>
+  <title>租赁合同 ${contract.id}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:"PingFang SC","Helvetica Neue",Arial,sans-serif;font-size:13px;color:#111;background:#fff;padding:40px 48px}
+    h1{font-size:22px;font-weight:700;text-align:center;margin-bottom:4px}
+    .subtitle{text-align:center;color:#555;font-size:12px;margin-bottom:28px}
+    .section{margin-bottom:20px}
+    .section-title{font-size:13px;font-weight:700;color:#333;border-bottom:1.5px solid #000;padding-bottom:4px;margin-bottom:12px;text-transform:uppercase;letter-spacing:.5px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 24px}
+    .field label{font-size:11px;color:#888;display:block;margin-bottom:2px}
+    .field span{font-size:13px;color:#111;font-weight:500}
+    .mono{font-family:monospace;font-size:11px;word-break:break-all;color:#333}
+    .chain-box{background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:10px 12px;font-size:12px;color:#166534}
+    table{width:100%;border-collapse:collapse;font-size:12px}
+    th{background:#f5f5f5;font-weight:600;text-align:left;padding:6px 8px;border:1px solid #ddd}
+    td{padding:6px 8px;border:1px solid #ddd;vertical-align:top}
+    .status-badge{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;background:#fee2e2;color:#991b1b}
+    .status-badge.active{background:#dcfce7;color:#166534}
+    .status-badge.pending{background:#fef9c3;color:#854d0e}
+    .footer{margin-top:32px;text-align:center;font-size:11px;color:#aaa;border-top:1px solid #eee;padding-top:12px}
+    @media print{body{padding:20px 28px}@page{margin:1.5cm}}
+  </style>
+</head>
+<body>
+  <h1>信源链 · 租赁合同</h1>
+  <div class="subtitle">合同 ID：${contract.id} &nbsp;|&nbsp; 生成时间：${now}</div>
+
+  <div class="section">
+    <div class="section-title">合同状态</div>
+    <span class="status-badge ${contract.status === 'active' ? 'active' : contract.status === 'pending' || contract.status === 'tenant_signed' || contract.status === 'pending_payment' ? 'pending' : ''}">
+      ${STATUS_MAP[contract.status]?.label || contract.status}
+    </span>
+  </div>
+
+  <div class="section">
+    <div class="section-title">合同双方</div>
+    <div class="grid">
+      <div class="field"><label>房东</label><span>${fmt(content.landlord?.nickname || content.landlord?.phone)}</span></div>
+      <div class="field"><label>租客</label><span>${fmt(content.tenant?.nickname || content.tenant?.phone)}</span></div>
+      <div class="field"><label>房东钱包地址</label><span class="mono">${fmt(content.landlord?.walletAddress)}</span></div>
+      <div class="field"><label>租客钱包地址</label><span class="mono">${fmt(content.tenant?.walletAddress)}</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">房源信息</div>
+    <div class="grid">
+      <div class="field col-span-2"><label>房源地址</label><span>${fmt(content.address)}</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">租约条款</div>
+    <div class="grid">
+      <div class="field"><label>月租金</label><span>${fmt(content.rentAmount)} ETH / 月</span></div>
+      <div class="field"><label>支付方式</label><span>${payMethod}</span></div>
+      <div class="field"><label>租期开始</label><span>${fmt(content.terms?.startDate)}</span></div>
+      <div class="field"><label>租期结束</label><span>${fmt(content.terms?.endDate)}</span></div>
+      <div class="field"><label>一次性支付总额</label><span>${fmt(initialAmount)} ETH</span></div>
+    </div>
+  </div>
+
+  ${contract.tx_hash ? `
+  <div class="section">
+    <div class="section-title">链上存证</div>
+    <div class="chain-box">
+      ✅ 合同哈希已上链存证<br/>
+      <span class="mono">TxHash: ${contract.tx_hash}</span>
+    </div>
+  </div>` : ''}
+
+  <div class="section">
+    <div class="section-title">支付记录</div>
+    <table>
+      <thead><tr><th>类型</th><th>金额</th><th>交易哈希</th><th>时间</th></tr></thead>
+      <tbody>${payRows}</tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    本文档由信源链 (XinYuanLian) 区块链租房平台生成，仅供参考，请以链上存证为准。
+  </div>
+</body>
+</html>`;
+
+    const win = window.open('', '_blank', 'width=800,height=900');
+    if (!win) { toast.error('请允许弹出窗口以下载合同'); return; }
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    // 短暂延迟确保样式渲染完成再触发打印
+    setTimeout(() => win.print(), 400);
+  };
+
+  const handleDismiss = async () => {
+    if (!confirm('确认删除该合同记录？删除后在你的合同列表中将不再显示，但不影响对方的记录。')) return;
+    setDeleting(true);
+    try {
+      await apiDelete(`/contracts/${id}`);
+      toast.success('合同记录已删除');
+      navigate('/contracts');
+    } catch (err) {
+      toast.error(err.response?.data?.error || '删除失败');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const handleInitialPayment = async () => {
-    if (!window.ethereum) { toast.error('请先安装 MetaMask 钱包'); return; }
+    if (!window.ethereum) {
+      if (import.meta.env.DEV) { await handleMockPayment(); return; }
+      toast.error('请先安装 MetaMask 钱包'); return;
+    }
     if (!initialAmount || Number(initialAmount) <= 0) { toast.error('合同首笔支付金额无效'); return; }
     const selected = NETWORK_OPTIONS.find((x) => x.key === preferredNetwork) || NETWORK_OPTIONS[0];
     const contractAddr = String(CONTRACT_ADDR_MAP[selected.key] || '').trim();
@@ -432,7 +611,17 @@ export default function ContractPage() {
             <FileTextIcon className="w-6 h-6 text-primary-400" />
             <h1 className="text-xl font-bold text-gray-100">租赁合同</h1>
           </div>
-          <span className={`${statusInfo.color} text-sm`}>{statusInfo.label}</span>
+          <div className="flex items-center gap-3">
+            <span className={`${statusInfo.color} text-sm`}>{statusInfo.label}</span>
+            <button
+              onClick={handleDownload}
+              title="下载合同"
+              className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+            >
+              <DownloadIcon className="w-3.5 h-3.5" />
+              下载
+            </button>
+          </div>
         </div>
 
         <div className="mb-4 rounded-lg border border-gray-700 bg-gray-800/50 px-3 py-2 text-sm">
@@ -619,6 +808,16 @@ export default function ContractPage() {
           )}
           {['pending', 'tenant_signed'].includes(contract.status) && (isTenant || isLandlord) && (
             <button onClick={handleCancel} className="btn-secondary w-full">取消合同</button>
+          )}
+          {['cancelled', 'expired', 'ended'].includes(contract.status) && (isTenant || isLandlord) && (
+            <button
+              onClick={handleDismiss}
+              disabled={deleting}
+              className="w-full flex items-center justify-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/20 disabled:opacity-50"
+            >
+              {deleting ? <LoaderIcon className="w-4 h-4 animate-spin" /> : <Trash2Icon className="w-4 h-4" />}
+              <span>{deleting ? '删除中...' : '删除记录'}</span>
+            </button>
           )}
         </div>
       </div>

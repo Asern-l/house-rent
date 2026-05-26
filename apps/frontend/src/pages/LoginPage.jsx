@@ -51,8 +51,23 @@ export default function LoginPage({ initialMode = 'login', onClose }) {
     loadCaptcha();
   }, [loadCaptcha, mode]);
 
+  // Per-field sanitizers to guard against injection and malformed input.
+  // SQL injection is already blocked by parameterized queries on the backend;
+  // these rules strip null bytes / control chars and HTML-special chars from
+  // fields where they have no legitimate use.
+  const FIELD_SANITIZERS = {
+    email:           (s) => s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F<>"]/g, ''),
+    password:        (s) => s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ''),
+    confirmPassword: (s) => s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ''),
+    nickname:        (s) => s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F<>"]/g, ''),
+    emailCode:       (s) => s.replace(/\D/g, '').slice(0, 6),
+    captchaAnswer:   (s) => s.replace(/\D/g, '').slice(0, 2),
+    role:            (s) => s,
+  };
+
   const updateForm = (key, value) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    const sanitize = FIELD_SANITIZERS[key] ?? ((s) => s);
+    setForm((prev) => ({ ...prev, [key]: sanitize(value) }));
   };
 
   const handleSendCode = async () => {
@@ -177,6 +192,8 @@ export default function LoginPage({ initialMode = 'login', onClose }) {
               value={form.email}
               onChange={(e) => updateForm('email', e.target.value)}
               required
+              maxLength={254}
+              autoComplete="email"
             />
           </Field>
 
@@ -189,6 +206,8 @@ export default function LoginPage({ initialMode = 'login', onClose }) {
               onChange={(e) => updateForm('password', e.target.value)}
               required
               minLength={6}
+              maxLength={128}
+              autoComplete={isRegister ? 'new-password' : 'current-password'}
             />
           </Field>
 
@@ -203,6 +222,8 @@ export default function LoginPage({ initialMode = 'login', onClose }) {
                   onChange={(e) => updateForm('confirmPassword', e.target.value)}
                   required
                   minLength={6}
+                  maxLength={128}
+                  autoComplete="new-password"
                 />
               </Field>
 
@@ -215,6 +236,7 @@ export default function LoginPage({ initialMode = 'login', onClose }) {
                       placeholder="Nickname"
                       value={form.nickname}
                       onChange={(e) => updateForm('nickname', e.target.value)}
+                      maxLength={32}
                     />
                   </Field>
 
@@ -314,7 +336,7 @@ export default function LoginPage({ initialMode = 'login', onClose }) {
             onClick={() => setMode(isRegister || isReset ? 'login' : 'register')}
             className="font-medium text-stone-500 transition-colors hover:text-stone-900"
           >
-            {isRegister || isReset ? 'log in' : 'log in'}
+            {isRegister || isReset ? '已有账号？登录' : '新用户注册'}
           </button>
           <span className="h-px flex-1 border-t border-dashed border-stone-300" />
         </div>
@@ -345,6 +367,7 @@ function HumanCheck({ captcha, value, onChange, onRefresh }) {
         placeholder="Answer"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        maxLength={2}
       />
       <button type="button" onClick={onRefresh} className="text-xs font-semibold text-primary-700">
         换题

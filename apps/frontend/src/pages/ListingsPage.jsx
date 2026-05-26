@@ -59,7 +59,7 @@ export default function ListingsPage() {
       </div>
 
       <div className="card mb-4 p-3">
-        <div className="flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2">
+        <div className="flex items-center gap-2 rounded-lg border border-white/15 bg-black/30 px-3 py-2">
           <SearchIcon className="h-4 w-4 text-gray-500" />
           <input
             value={keyword}
@@ -95,7 +95,7 @@ export default function ListingsPage() {
                   className="mb-3 h-36 w-full rounded-lg object-cover"
                 />
               ) : (
-                <div className="mb-3 flex h-36 items-center justify-center rounded-lg bg-gradient-to-br from-primary-900/30 to-blue-900/30">
+                <div className="mb-3 flex h-36 items-center justify-center rounded-lg bg-black/20 border border-white/5">
                   <HomeIcon className="h-12 w-12 text-primary-600" />
                 </div>
               )}

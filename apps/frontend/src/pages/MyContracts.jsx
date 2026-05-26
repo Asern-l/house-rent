@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../app/providers/AuthContext';
-import { apiGet } from '../shared/api/api';
-import { FileTextIcon, LoaderIcon, SearchIcon } from 'lucide-react';
+import { apiGet, apiDelete } from '../shared/api/api';
+import { FileTextIcon, LoaderIcon, SearchIcon, Trash2Icon } from 'lucide-react';
+
+const TERMINAL_STATUSES = ['cancelled', 'expired', 'ended'];
 
 const STATUS_MAP = {
   pending:         { label: '待签署',   color: 'badge-yellow' },
@@ -33,6 +35,7 @@ export default function MyContracts() {
   const { user } = useAuth();
   const [contracts, setContracts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState(null);
 
   useEffect(() => {
     let mounted = true;
@@ -50,6 +53,21 @@ export default function MyContracts() {
     loadContracts();
     return () => { mounted = false; };
   }, [user]);
+
+  const handleDismiss = async (e, contractId) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm('删除后该记录将从你的列表中移除，不影响对方。确认删除？')) return;
+    setDeletingId(contractId);
+    try {
+      await apiDelete(`/contracts/${contractId}`);
+      setContracts((prev) => prev.filter((c) => c.id !== contractId));
+    } catch (err) {
+      import('react-hot-toast').then(({ default: toast }) => toast.error(err.response?.data?.error || '删除失败'));
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   if (!user) {
     return (
@@ -93,14 +111,27 @@ export default function MyContracts() {
                 className="card block p-4 transition-all hover:border-gray-700 hover:-translate-y-0.5"
               >
                 <div className="flex items-start justify-between gap-3">
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <h3 className="font-semibold text-gray-100">{contract.listing_title || '房源'}</h3>
                     <p className="mt-1 text-sm text-gray-400">{contract.listing_address || '-'}</p>
                     <p className="mt-1 text-xs text-gray-500">合同ID: {contract.id}</p>
                   </div>
-                  <div className="text-right">
+                  <div className="flex flex-col items-end gap-2">
                     <span className={status.color}>{status.label}</span>
-                    <p className="mt-1 text-xs text-gray-500">{formatCnDateTime(contract.created_at)}</p>
+                    <p className="text-xs text-gray-500">{formatCnDateTime(contract.created_at)}</p>
+                    {TERMINAL_STATUSES.includes(contract.status) && (
+                      <button
+                        onClick={(e) => handleDismiss(e, contract.id)}
+                        disabled={deletingId === contract.id}
+                        title="删除记录"
+                        className="mt-1 flex items-center gap-1 rounded-md px-2 py-1 text-xs text-red-400/70 transition-colors hover:bg-red-500/15 hover:text-red-400 disabled:opacity-40"
+                      >
+                        {deletingId === contract.id
+                          ? <LoaderIcon className="h-3 w-3 animate-spin" />
+                          : <Trash2Icon className="h-3 w-3" />}
+                        删除
+                      </button>
+                    )}
                   </div>
                 </div>
               </Link>

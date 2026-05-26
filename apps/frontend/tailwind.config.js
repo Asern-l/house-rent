@@ -12,8 +12,8 @@ export default {
           300: '#f8be90',
           400: '#f2a06a',
           500: '#ec8d4c',
-          600: '#E7A779',   // user-specified warm amber
-          700: '#cc8a52',   // hover / darker
+          600: '#E7A779',   // warm amber
+          700: '#cc8a52',
           800: '#a86c3b',
           900: '#87532d',
           950: '#4e2e14',

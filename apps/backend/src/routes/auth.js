@@ -23,7 +23,8 @@ function isValidWalletAddress(walletAddress) {
 function normalizeAvatarUrl(input) {
   const avatarUrl = String(input || '').trim();
   if (!avatarUrl) return '';
-  if (avatarUrl.length > 700 * 1024) return null;
+  // 1.5MB 原始文件经 base64 编码后约 2MB 字符串（× 4/3），与前端限制保持一致。
+  if (avatarUrl.length > 2 * 1024 * 1024) return null;
   if (!/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(avatarUrl)) return null;
   return avatarUrl;
 }
@@ -79,6 +80,58 @@ function verifyEmailCode(email, emailCode) {
   }
   return '';
 }
+
+// 函数 0: 开发用快捷登录（仅非生产环境可用，自动创建或复用 dev 账号）。
+router.post('/dev-login', asyncHandler(async (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  const role = String(req.body.role || '').trim();
+  if (!['tenant', 'landlord'].includes(role)) {
+    return res.status(400).json({ error: 'role must be tenant or landlord' });
+  }
+  const email = role === 'tenant' ? 'dev_tenant@dev.test' : 'dev_landlord@dev.test';
+  const nickname = role === 'tenant' ? '开发租客' : '开发房东';
+  // 开发用固定钱包地址（合法 hex 格式，方便前端跳过"连接钱包"提示和链上校验）
+  const devWallet = role === 'tenant'
+    ? '0xde00000000000000000000000000000000000001'
+    : '0xde00000000000000000000000000000000000002';
+  const db = await getUserDb();
+  let users = parseResult(db.exec('SELECT * FROM users WHERE phone = ?', [email]));
+  if (!users.length) {
+    const userId = `dev_${role}_${Date.now()}`;
+    const hash = await bcrypt.hash('devpass123', 10);
+    db.run(
+      'INSERT INTO users (id, phone, password_hash, role, wallet_address, nickname) VALUES (?, ?, ?, ?, ?, ?)',
+      [userId, email, hash, role, devWallet, nickname]
+    );
+    saveUserDb();
+    users = [{ id: userId, phone: email, role, wallet_address: devWallet, nickname, avatar_url: '' }];
+  }
+  let user = users[0];
+  // 若已有账号但钱包地址为空，自动补上 dev 钱包地址
+  if (!user.wallet_address) {
+    db.run('UPDATE users SET wallet_address = ? WHERE phone = ?', [devWallet, email]);
+    saveUserDb();
+    user = { ...user, wallet_address: devWallet };
+  }
+  const token = jwt.sign({ id: user.id, phone: user.phone, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+  res.json({
+    success: true,
+    data: {
+      token,
+      user: {
+        id: user.id,
+        phone: user.phone,
+        email: user.phone,
+        role: user.role,
+        walletAddress: user.wallet_address || devWallet,
+        nickname: user.nickname || nickname,
+        avatarUrl: user.avatar_url || '',
+      },
+    },
+  });
+}));
 
 // 函数 2: 生成人机验证题目。
 router.get('/captcha', asyncHandler(async (req, res) => {
@@ -254,7 +307,7 @@ router.put('/me', authMiddleware, asyncHandler(async (req, res) => {
   if (avatarUrl !== undefined) {
     const nextAvatarUrl = normalizeAvatarUrl(avatarUrl);
     if (nextAvatarUrl === null) {
-      return res.status(400).json({ error: '头像格式不正确，仅支持 700KB 内的 jpeg/png/webp 图片' });
+      return res.status(400).json({ error: '头像格式不正确，仅支持 1.5MB 以内的 jpeg/png/webp 图片' });
     }
     db.run('UPDATE users SET avatar_url = ? WHERE id = ?', [nextAvatarUrl, req.user.id]);
   }

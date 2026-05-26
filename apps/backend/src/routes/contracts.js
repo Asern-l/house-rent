@@ -1293,10 +1293,37 @@ router.post('/:id/sign-client-report', authMiddleware, asyncHandler(async (req, 
 // 函数 10: 获取我的合同列表接口。
 router.get('/', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getDb();
-  const rows = parseResult(db.exec(`SELECT c.*, l.title AS listing_title, l.address AS listing_address
+  // 按角色过滤：租客看不到自己已删除的，房东看不到自己已删除的，互不影响
+  const rows = parseResult(db.exec(`
+    SELECT c.*, l.title AS listing_title, l.address AS listing_address
     FROM contracts c JOIN listings l ON c.listing_id = l.id
-    WHERE c.tenant_id = ? OR c.landlord_id = ? ORDER BY c.created_at DESC`, [req.user.id, req.user.id]));
+    WHERE (c.tenant_id = ? AND c.tenant_dismissed_at IS NULL)
+       OR (c.landlord_id = ? AND c.landlord_dismissed_at IS NULL)
+    ORDER BY c.created_at DESC`,
+    [req.user.id, req.user.id]
+  ));
   res.json({ success: true, data: rows });
+}));
+
+// 函数: 软删除合同记录（仅对当前用户隐藏，对方不受影响；仅限终态合同）
+router.delete('/:id', authMiddleware, asyncHandler(async (req, res) => {
+  const db = await getDb();
+  const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
+  if (!rows.length) return res.status(404).json({ error: '合同不存在' });
+  const contract = rows[0];
+
+  const isTenant   = contract.tenant_id   === req.user.id;
+  const isLandlord = contract.landlord_id === req.user.id;
+  if (!isTenant && !isLandlord) return res.status(403).json({ error: '无权限删除该合同记录' });
+
+  if (!['cancelled', 'expired', 'ended'].includes(contract.status)) {
+    return res.status(400).json({ error: '只能删除已取消、已过期或已结束的合同记录' });
+  }
+
+  const col = isTenant ? 'tenant_dismissed_at' : 'landlord_dismissed_at';
+  db.run(`UPDATE contracts SET ${col} = datetime('now', '+8 hours') WHERE id = ?`, [req.params.id]);
+  saveDb();
+  res.json({ success: true, message: '合同记录已删除' });
 }));
 
 // 函数 11: 获取合同详情接口。

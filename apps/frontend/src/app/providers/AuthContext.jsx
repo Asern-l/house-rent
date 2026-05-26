@@ -186,6 +186,18 @@ export function AuthProvider({ children }) {
     return userData;
   };
 
+  // 函数 6-1: 开发用快捷登录，跳过验证码，按角色自动切换账号。
+  const devLogin = async (role) => {
+    const res = await axios.post(`${AUTH_API_BASE}/auth/dev-login`, { role });
+    const { token, user: userData } = res.data.data;
+    const keys = storageKeys(preferredNetwork);
+    localStorage.setItem(keys.token, token);
+    localStorage.setItem(keys.user, JSON.stringify(userData));
+    axios.defaults.headers.common.Authorization = `Bearer ${token}`;
+    setUser(userData);
+    return userData;
+  };
+
   const getCaptcha = async () => {
     const res = await axios.get(`${AUTH_API_BASE}/auth/captcha`);
     return res.data?.data || {};
@@ -213,7 +225,12 @@ export function AuthProvider({ children }) {
   const updateProfile = async ({ nickname, avatarUrl }) => {
     const keys = storageKeys(preferredNetwork);
     const token = localStorage.getItem(keys.token) || '';
-    const res = await axios.put(`${AUTH_API_BASE}/auth/me`, { nickname, avatarUrl }, {
+    // Only include fields that are explicitly passed; omitting avatarUrl prevents
+    // sending a stale https:// URL that would be rejected by normalizeAvatarUrl.
+    const payload = {};
+    if (nickname !== undefined) payload.nickname = nickname;
+    if (avatarUrl !== undefined) payload.avatarUrl = avatarUrl;
+    const res = await axios.put(`${AUTH_API_BASE}/auth/me`, payload, {
       headers: { Authorization: `Bearer ${token}` },
     });
     const nextUser = res.data?.data?.user || {
@@ -325,6 +342,7 @@ export function AuthProvider({ children }) {
       user,
       loading,
       login,
+      devLogin,
       register,
       getCaptcha,
       sendEmailCode,

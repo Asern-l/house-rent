@@ -88,6 +88,21 @@ export async function apiPut(url, data, options = {}) {
   }
 }
 
+// 函数 7: 发送 DELETE 请求并自动附带登录令牌。
+export async function apiDelete(url, options = {}) {
+  try {
+    const res = await axios.delete(`${getApiBase()}${url}`, {
+      headers: {
+        Authorization: `Bearer ${getToken()}`,
+        ...(options.headers || {}),
+      }
+    });
+    return res.data;
+  } catch (error) {
+    handleApiError(error);
+  }
+}
+
 
 
 
