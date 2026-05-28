@@ -1,19 +1,48 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { FileTextIcon, LoaderIcon, SearchIcon } from 'lucide-react';
 import { useAuth } from '../app/providers/AuthContext';
 import { apiGet } from '../shared/api/api';
-import { FileTextIcon, LoaderIcon, SearchIcon } from 'lucide-react';
 
 const STATUS_MAP = {
-  pending:         { label: '待签署',   color: 'badge-yellow' },
-  tenant_signed:   { label: '租客已签', color: 'badge-blue'   },
-  pending_payment: { label: '待支付',   color: 'badge-yellow' },
-  landlord_signed: { label: '房东已签', color: 'badge-blue'   },
-  active:          { label: '已生效',   color: 'badge-green'  },
-  ended:           { label: '已到期',   color: 'badge-gray'   },
-  cancelled:       { label: '已取消',   color: 'badge-red'    },
-  expired:         { label: '已过期',   color: 'badge-gray'   },
+  pending: { label: '待签署', color: 'badge-yellow' },
+  tenant_signed: { label: '租客已签', color: 'badge-blue' },
+  pending_payment: { label: '待支付', color: 'badge-yellow' },
+  active: { label: '已生效', color: 'badge-green' },
+  ended: { label: '已结束', color: 'badge-gray' },
+  cancelled: { label: '已取消', color: 'badge-red' },
+  expired: { label: '已过期', color: 'badge-gray' },
 };
+
+function parseContent(contract) {
+  try {
+    if (typeof contract?.content_json === 'string') return JSON.parse(contract.content_json || '{}');
+    return contract?.content_json && typeof contract.content_json === 'object' ? contract.content_json : {};
+  } catch {
+    return {};
+  }
+}
+
+function resolveContractStartAtMs(contract) {
+  const content = parseContent(contract);
+  const exactStartAtMs = Number(content?.renewal?.startAtMs || 0);
+  if (Number.isFinite(exactStartAtMs) && exactStartAtMs > 0) return exactStartAtMs;
+  const startDate = String(content?.terms?.startDate || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) return 0;
+  const d = new Date(`${startDate}T00:00:00+08:00`);
+  return Number.isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+function resolveStatusMeta(contract) {
+  const status = String(contract?.status || '').trim();
+  if (status === 'active') {
+    const startAtMs = resolveContractStartAtMs(contract);
+    if (String(contract?.parent_contract_id || '').trim() && startAtMs > Date.now()) {
+      return { label: '已支付待接续', color: 'badge-blue' };
+    }
+  }
+  return STATUS_MAP[status] || { label: status || '未知状态', color: 'badge-gray' };
+}
 
 function formatCnDateTime(value) {
   if (!value) return '-';
@@ -22,8 +51,12 @@ function formatCnDateTime(value) {
   if (Number.isNaN(date.getTime())) return String(value);
   return new Intl.DateTimeFormat('zh-CN', {
     timeZone: 'Asia/Shanghai',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
     hour12: false,
   }).format(date);
 }
@@ -36,7 +69,10 @@ export default function MyContracts() {
   useEffect(() => {
     let mounted = true;
     const loadContracts = async () => {
-      if (!user) { setLoading(false); return; }
+      if (!user) {
+        setLoading(false);
+        return;
+      }
       try {
         const res = await apiGet('/contracts');
         if (mounted) setContracts(res?.data || []);
@@ -84,18 +120,23 @@ export default function MyContracts() {
       ) : (
         <div className="space-y-3">
           {contracts.map((contract) => {
-            const status = STATUS_MAP[contract.status] || { label: contract.status || '未知状态', color: 'badge-gray' };
+            const status = resolveStatusMeta(contract);
+            const isRenewal = !!String(contract.parent_contract_id || '').trim();
             return (
               <Link
                 key={contract.id}
                 to={`/contract/${contract.id}`}
-                className="card block p-4 transition-all hover:border-gray-700 hover:-translate-y-0.5"
+                className="card block p-4 transition-all hover:-translate-y-0.5 hover:border-gray-700"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h3 className="font-semibold text-gray-100">{contract.listing_title || '房源'}</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold text-gray-100">{contract.listing_title || '房源合同'}</h3>
+                      {isRenewal && <span className="badge-blue">续约合同</span>}
+                    </div>
                     <p className="mt-1 text-sm text-gray-400">{contract.listing_address || '-'}</p>
-                    <p className="mt-1 text-xs text-gray-500">合同ID: {contract.id}</p>
+                    <p className="mt-1 text-xs text-gray-500">合同ID：{contract.id}</p>
+                    {isRenewal && <p className="mt-1 text-xs text-gray-500">父合同ID：{contract.parent_contract_id}</p>}
                   </div>
                   <div className="text-right">
                     <span className={status.color}>{status.label}</span>

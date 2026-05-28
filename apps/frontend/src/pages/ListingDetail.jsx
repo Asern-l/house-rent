@@ -22,6 +22,46 @@ function resolveImageUrl(url) {
   return String(url || '');
 }
 
+function getListingStatusMeta(listing) {
+  const status = String(listing?.public_status || listing?.status || '').trim().toLowerCase();
+  if (status === 'signing') return { key: 'signing', label: '签署中', className: 'badge-yellow' };
+  if (status === 'rented') return { key: 'rented', label: '已租出', className: 'badge-gray' };
+  if (status === 'offline') return { key: 'offline', label: '已下架', className: 'badge-gray' };
+  if (status === 'closed') return { key: 'closed', label: '已关闭', className: 'badge-red' };
+  return { key: 'available', label: '可租', className: 'badge-green' };
+}
+
+function normalizeHistorySnapshot(item) {
+  const raw = item?.after?.snapshot || item?.after || null;
+  if (!raw || typeof raw !== 'object') return null;
+  const urls = Array.isArray(raw.imageUrls) ? raw.imageUrls.filter(Boolean).map((x) => String(x)) : [];
+  return {
+    title: raw.title || '',
+    description: raw.description || '',
+    address: raw.address || '',
+    district: raw.district || '',
+    rentAmount: raw.rentAmount || '',
+    minLeaseMonths: raw.minLeaseMonths || '',
+    status: raw.status || '',
+    contentHash: raw.contentHash || '',
+    imageUrls: urls,
+  };
+}
+
+function normalizeHistoryBinding(item) {
+  const binding = item?.binding || item?.after?.binding || null;
+  if (!binding || typeof binding !== 'object') return null;
+  return {
+    snapshotHash: binding.snapshotHash || '',
+    chainVersion: binding.chainVersion || 0,
+    chainNonce: binding.chainNonce || 0,
+    txHash: binding.txHash || '',
+    eventName: binding.eventName || '',
+    blockNumber: binding.blockNumber || 0,
+    blockTime: binding.blockTime || 0,
+  };
+}
+
 export default function ListingDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -33,6 +73,7 @@ export default function ListingDetail() {
   const [startDate, setStartDate] = useState('');
   const [leaseMonths, setLeaseMonths] = useState(1);
   const [history, setHistory] = useState([]);
+  const [selectedHistoryId, setSelectedHistoryId] = useState('');
 
   useEffect(() => {
     let mounted = true;
@@ -44,6 +85,8 @@ export default function ListingDetail() {
         if (mounted) {
           setListing(res?.data || null);
           setHistory(Array.isArray(historyRes?.data?.history) ? historyRes.data.history : []);
+          const firstHistory = Array.isArray(historyRes?.data?.history) ? historyRes.data.history[0] : null;
+          setSelectedHistoryId(firstHistory?.id || '');
           const minLease = Number(res?.data?.min_lease_months || 1);
           setLeaseMonths(minLease >= 1 && minLease <= 12 ? minLease : 1);
           const today = new Date();
@@ -89,7 +132,8 @@ export default function ListingDetail() {
 
   if (!listing) return null;
 
-  const isAvailable = listing.status === 'available';
+  const statusMeta = getListingStatusMeta(listing);
+  const isAvailable = statusMeta.key === 'available';
   const isOwner = user && listing.landlord_id === user.id;
   const minLeaseMonths = Number(listing.min_lease_months || 1);
   const imageUrls = parseImageUrls(listing.image_urls);
@@ -99,6 +143,10 @@ export default function ListingDetail() {
   const maxDateObj = new Date(today);
   maxDateObj.setDate(maxDateObj.getDate() + 3);
   const maxDate = `${maxDateObj.getFullYear()}-${String(maxDateObj.getMonth() + 1).padStart(2, '0')}-${String(maxDateObj.getDate()).padStart(2, '0')}`;
+  const selectedHistory = history.find((item) => item.id === selectedHistoryId) || null;
+  const selectedSnapshot = normalizeHistorySnapshot(selectedHistory);
+  const selectedBinding = normalizeHistoryBinding(selectedHistory);
+  const selectedImages = selectedSnapshot?.imageUrls || [];
 
   return (
     <div className="mx-auto max-w-4xl animate-fade-in">
@@ -133,8 +181,8 @@ export default function ListingDetail() {
 
         <div className="space-y-4">
           <div>
-            <span className={`${isAvailable ? 'badge-green' : 'badge-gray'} mb-2 inline-block`}>
-              {isAvailable ? '可租' : '已出租'}
+            <span className={`${statusMeta.className} mb-2 inline-block`}>
+              {statusMeta.label}
             </span>
             <h1 className="mt-2 text-2xl font-bold text-gray-100">{listing.title}</h1>
           </div>
@@ -154,8 +202,11 @@ export default function ListingDetail() {
           </div>
 
           <div className="rounded-lg border border-gray-700 bg-gray-800/40 px-3 py-2 text-sm text-gray-300">
-            <span className="text-gray-500">房东邮箱：</span>
-            <span>{listing.landlord_email || '未提供'}</span>
+            <span className="text-gray-500">房东：</span>
+            <span>{listing.landlord_name || '未提供'}</span>
+            {listing.landlord_phone && (
+              <span className="ml-3 text-gray-500">📞 {listing.landlord_phone}</span>
+            )}
           </div>
 
           <div className="grid grid-cols-3 gap-3 text-center">
@@ -176,31 +227,87 @@ export default function ListingDetail() {
           <p className="leading-relaxed text-gray-300">{listing.description || '暂无描述'}</p>
 
           <div className="rounded-lg border border-gray-700 bg-gray-800/40 p-3">
-            <p className="mb-2 text-sm font-medium text-gray-200">历史版本/操作记录</p>
+            <p className="mb-2 text-sm font-medium text-gray-200">历史版本</p>
             {history.length === 0 ? (
               <p className="text-xs text-gray-500">暂无历史记录</p>
             ) : (
-              <div className="max-h-56 space-y-2 overflow-y-auto">
-                {history.slice(0, 20).map((item) => (
-                  <div key={item.id} className="rounded bg-gray-900/50 px-2 py-2 text-xs text-gray-300">
-                    <p className="font-medium text-gray-200">动作：{item.action}</p>
-                    <p>时间：{item.createdAt || '-'}</p>
-                    {(() => {
-                      const snap = item?.after?.snapshot || item?.after || null;
-                      if (!snap || typeof snap !== 'object') return null;
-                      return (
-                        <div className="mt-1 rounded border border-gray-700 bg-gray-800/50 p-2">
-                          <p>标题：{snap.title || '-'}</p>
-                          <p>地址：{snap.address || '-'}{snap.district ? `（${snap.district}）` : ''}</p>
-                          <p>租金：{snap.rentAmount || '-'} ETH/月</p>
-                          <p>最少租期：{snap.minLeaseMonths || '-'} 个月</p>
-                          <p>状态：{snap.status || '-'}</p>
-                          <p className="break-all">contentHash：{snap.contentHash || '-'}</p>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                  {history.slice(0, 30).map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setSelectedHistoryId(item.id)}
+                      className={`w-full rounded border px-2 py-2 text-left text-xs transition-colors ${
+                        selectedHistoryId === item.id
+                          ? 'border-primary-500 bg-primary-900/25 text-gray-100'
+                          : 'border-gray-700 bg-gray-900/40 text-gray-300 hover:bg-gray-900/60'
+                      }`}
+                    >
+                      <p className="font-medium">{item.action}</p>
+                      <p className="mt-1 text-gray-400">{item.createdAt || '-'}</p>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="rounded border border-gray-700 bg-gray-900/40 p-3 text-xs text-gray-300">
+                  {!selectedHistory ? (
+                    <p className="text-gray-500">请选择一个历史版本</p>
+                  ) : (
+                    <>
+                      <p className="font-medium text-gray-100">动作：{selectedHistory.action}</p>
+                      <p className="mt-1 text-gray-400">时间：{selectedHistory.createdAt || '-'}</p>
+                      {!selectedSnapshot ? (
+                        <p className="mt-3 rounded border border-yellow-700/60 bg-yellow-900/20 px-2 py-2 text-yellow-300">
+                          该历史记录没有可渲染快照（旧记录或日志字段缺失）。
+                        </p>
+                      ) : (
+                        <div className="mt-3 space-y-2">
+                          {selectedImages.length > 0 ? (
+                            <div className="rounded bg-gray-950/70 p-2">
+                              <img
+                                src={resolveImageUrl(selectedImages[0])}
+                                alt="version"
+                                className="h-28 w-full rounded object-cover"
+                              />
+                              {selectedImages.length > 1 && (
+                                <div className="mt-2 grid grid-cols-4 gap-1">
+                                  {selectedImages.slice(1, 5).map((url, idx) => (
+                                    <img key={`${url}_${idx}`} src={resolveImageUrl(url)} alt={`v_${idx}`} className="h-10 w-full rounded object-cover" />
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="flex h-20 items-center justify-center rounded bg-gray-950/70 text-gray-500">
+                              无图片
+                            </div>
+                          )}
+                          <p>标题：{selectedSnapshot.title || '-'}</p>
+                          <p>地址：{selectedSnapshot.address || '-'}{selectedSnapshot.district ? `（${selectedSnapshot.district}）` : ''}</p>
+                          <p>租金：{selectedSnapshot.rentAmount || '-'} ETH/月</p>
+                          <p>最少租期：{selectedSnapshot.minLeaseMonths || '-'} 个月</p>
+                          <p>状态：{selectedSnapshot.status || '-'}</p>
+                          <p className="break-all">contentHash：{selectedSnapshot.contentHash || '-'}</p>
+                          <p className="text-gray-400">{selectedSnapshot.description || '无描述'}</p>
+                          <div className="mt-2 rounded border border-gray-700 bg-gray-900/70 p-2">
+                            <p className="font-medium text-gray-200">防篡改绑定</p>
+                            <p className={`mt-1 ${selectedHistory?.bindingVerified ? 'text-emerald-400' : 'text-yellow-300'}`}>
+                              绑定校验：{selectedHistory?.bindingVerified ? '通过' : '未通过/缺失'}
+                            </p>
+                            <p className="break-all">本地快照哈希：{selectedHistory?.expectedSnapshotHash || '-'}</p>
+                            <p className="break-all">绑定快照哈希：{selectedBinding?.snapshotHash || '-'}</p>
+                            <p>链上版本号：{selectedBinding?.chainVersion || '-'}</p>
+                            <p>链上操作序号：{selectedBinding?.chainNonce || '-'}</p>
+                            <p>事件：{selectedBinding?.eventName || '-'}</p>
+                            <p>区块号：{selectedBinding?.blockNumber || '-'}</p>
+                            <p className="break-all">交易哈希：{selectedBinding?.txHash || '-'}</p>
+                          </div>
                         </div>
-                      );
-                    })()}
-                  </div>
-                ))}
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -214,7 +321,7 @@ export default function ListingDetail() {
             <div className="space-y-3 rounded-lg border border-gray-700 p-4">
               <p className="text-sm font-medium text-gray-200">签约前设置</p>
               <p className="text-xs text-gray-400">
-                当前租客邮箱（提交申请后会展示给房东用于协商）：{user?.email || '未设置'}
+                当前租客钱包（提交申请后会展示给房东）：{user?.walletAddress ? `${user.walletAddress.slice(0, 6)}...${user.walletAddress.slice(-4)}` : '未连接'}
               </p>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
@@ -238,11 +345,23 @@ export default function ListingDetail() {
             </div>
           )}
 
+          {statusMeta.key === 'signing' && (
+            <p className="rounded-lg border border-yellow-800/50 bg-yellow-900/20 p-3 text-sm text-yellow-300">
+              该房源已有合同在签署流程中，暂不能发起新的签约申请。
+            </p>
+          )}
+
+          {statusMeta.key === 'rented' && (
+            <p className="rounded-lg border border-gray-700 bg-gray-800/70 p-3 text-sm text-gray-300">
+              该房源已租出，可查看房源信息和链上存证，暂不能发起新的普通签约申请。
+            </p>
+          )}
+
           {isOwner && (
             <p className="rounded-lg bg-yellow-900/20 border border-yellow-800/50 p-3 text-sm text-yellow-400">这是您的房源。</p>
           )}
 
-          {!user && (
+          {!user && isAvailable && (
             <div className="flex items-start rounded-lg bg-gray-800 p-3 text-sm text-gray-300">
               <AlertCircleIcon className="mr-2 mt-0.5 h-4 w-4 flex-shrink-0" />
               <p>

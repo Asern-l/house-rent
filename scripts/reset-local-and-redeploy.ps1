@@ -11,6 +11,7 @@ $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
 $backendDbPath = Join-Path $projectRoot ("apps\backend\data\database.{0}.sqlite" -f $ChainEnv)
+$userDbPath = Join-Path $projectRoot "apps\backend\data\users.shared.sqlite"
 $logPath = Join-Path $projectRoot "logs\sign-flow-error.log"
 $blockchainDir = Join-Path $projectRoot "blockchain"
 $deployJsonPath = Join-Path $blockchainDir "deployments-rental-localhost.json"
@@ -20,6 +21,7 @@ $abiTargetPath = Join-Path $projectRoot "apps\frontend\src\shared\blockchain\Ren
 
 Write-Log "Delete local data files"
 if (Test-Path $backendDbPath) { Remove-Item -LiteralPath $backendDbPath -Force; Write-Log "Deleted database: $backendDbPath" }
+if (Test-Path $userDbPath) { Remove-Item -LiteralPath $userDbPath -Force; Write-Log "Deleted user database: $userDbPath" }
 if (Test-Path $logPath) { Remove-Item -LiteralPath $logPath -Force; Write-Log "Deleted log file: $logPath" }
 if (Test-Path $deployJsonPath) { Remove-Item -LiteralPath $deployJsonPath -Force; Write-Log "Deleted old deployment file: $deployJsonPath" }
 

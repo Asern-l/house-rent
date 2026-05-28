@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "docs/schemes/onchain-redesign/01-房源上链字段与逻辑方案.md",
+                "file": "docs/项目结构与文件职责说明.md",
                 "mode": "preview",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "01-房源上链字段与逻辑方案"
+              "title": "项目结构与文件职责说明"
             }
           }
         ]
@@ -94,7 +94,7 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "docs/schemes/onchain-redesign/01-房源上链字段与逻辑方案.md",
+                "file": "docs/项目结构与文件职责说明.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -104,7 +104,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "01-房源上链字段与逻辑方案 的反向链接列表"
+              "title": "项目结构与文件职责说明 的反向链接列表"
             }
           },
           {
@@ -169,8 +169,7 @@
       }
     ],
     "direction": "horizontal",
-    "width": 300,
-    "collapsed": true
+    "width": 300
   },
   "left-ribbon": {
     "hiddenItems": {
@@ -185,27 +184,51 @@
   },
   "active": "4ba0d20d6f9f015e",
   "lastOpenFiles": [
-    "apps/frontend/dist/assets/index-B9pyZ6FI.css",
-    "apps/frontend/dist/assets/index-D4KDDPaF.js",
-    "apps/frontend/vite.config.js.timestamp-1779806626201-52983a198995c8.mjs",
-    "apps/frontend/dist/assets/index-DpWFQKHv.js",
-    "apps/frontend/dist/assets/index-Chq7p7vb.css",
-    "apps/frontend/src/pages/MyListings.jsx",
-    "apps/frontend/dist/assets/index-DZUVEG7D.js",
-    "docs/schemes/onchain-redesign/02-合同上链字段签署续租方案.md",
-    "docs/schemes/onchain-redesign/01-房源上链字段与逻辑方案.md",
-    "apps/frontend/dist/assets/index-3eQAhe_5.js",
-    "apps/frontend/dist/assets/index-D1zfaRTA.js",
-    "apps/frontend/dist/assets/index-Din_XDgF.css",
-    "docs/待实现总览.md",
-    "apps/frontend/dist/assets/index-CFrGh2WA.js",
-    "docs/合同生效判定与支付授权方案.md",
+    "docs/日志埋点说明.md",
+    "docs/启动脚本说明.md",
+    "docs/协作开发规范.md",
+    "docs/项目结构与文件职责说明.md",
     "docs/复用代码清单.md",
     "docs/配置与部署教程.md",
-    "docs/房源上链与合同上链目的说明.md",
-    "docs/schemes/onchain-redesign/03-智能合约逻辑权限与修改方案.md",
-    "old-docs/待实现总览.md",
+    "docs/todo-sync/合同到期释放与懒释放机制说明.md",
+    "docs/todo-sync/待办清单.md",
+    "docs/assumptions/假设合集.md",
+    "docs/已实现总览.md",
+    "docs/todo-sync/合同链上字段与支付校验待办.md",
+    "docs/todo-sync/提前解约机制说明.md",
+    "docs/schemes/onchain-redesign/03-智能合约数据结构与状态机方案.md",
+    "docs/schemes/onchain-redesign/02-合同上链字段签署续租方案.md",
+    "docs/后端接口与前端调用文档.md",
+    "docs/智能合约数据结构与函数说明.md",
+    "docs/验证码测试模式说明.md",
     "docs/任务测试与校对清单.md",
-    "docs/启动脚本说明.md"
+    "docs/合同生效判定与支付授权方案.md",
+    "docs/房源上链与合同上链目的说明.md",
+    "docs/待实现总览.md",
+    "docs/todo-sync/AI接续说明-合同续约改造与测试优先.md",
+    "apps/frontend/dist/assets/index-DrmnCnw_.css",
+    "apps/frontend/dist/assets/index-ByMnw1AX.js",
+    "apps/frontend/dist/assets",
+    "apps/frontend/vite.config.js.timestamp-1779957990434-4e2d6c35266d48.mjs",
+    "apps/frontend/src/pages/MyListings.jsx",
+    "apps/frontend/dist/assets/index-CeOt9RDi.js",
+    "apps/frontend/src/pages/MyContracts.jsx",
+    "apps/frontend/src/pages/ListingsPage.jsx",
+    "docs/schemes/onchain-redesign/03-智能合约逻辑权限与修改方案.md",
+    "docs/schemes/onchain-redesign/01-房源上链字段与逻辑方案.md",
+    "old-docs/智能合约数据结构与函数说明.md",
+    "old-docs/已实现总览.md",
+    "apps/frontend/dist/assets/index-BNPqoUhA.js",
+    "apps/frontend/vite.config.js.timestamp-1779956078535-d2fb2008205fc8.mjs",
+    "apps/backend/data/uploads/listings/1779882351266_bf0f8a6bcada4974.jpg",
+    "apps/backend/data/uploads/listings/1779859473604_accbe2ad9742f360.png",
+    "apps/backend/data/uploads/listings/1779859135429_bf0f8a6bcada4974.jpg",
+    "apps/backend/data/uploads/listings/1779858846618_bf0f8a6bcada4974.jpg",
+    "apps/backend/data/uploads/listings/1779858709097_bf0f8a6bcada4974.jpg",
+    "apps/backend/data/uploads/listings/1779857881855_bf0f8a6bcada4974.jpg",
+    "apps/backend/data/uploads/listings/1779857873767_bf0f8a6bcada4974.jpg",
+    "apps/backend/data/uploads/listings/1779857576178_bf0f8a6bcada4974.jpg",
+    "apps/backend/data/uploads/listings/1779857535252_bf0f8a6bcada4974.jpg",
+    "apps/backend/data/uploads/listings/1779857413975_bf0f8a6bcada4974.jpg"
   ]
 }

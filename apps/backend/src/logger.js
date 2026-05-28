@@ -41,11 +41,7 @@ function writeJsonLine(filePath, payload) {
     ensureDir(path.dirname(filePath));
     fs.appendFileSync(filePath, `${JSON.stringify(payload)}\n`, 'utf8');
   } catch (error) {
-    // 日志写入失败时降级到 stderr，避免因日志权限问题导致主流程崩溃。
-    console.error('[logger-fallback]', {
-      filePath,
-      message: error?.message || 'write log failed',
-    });
+    // 日志写入失败时仅静默降级，避免污染控制台。
   }
 }
 
@@ -74,7 +70,6 @@ function logSignFlow(stage, detail = {}) {
     stage,
     ...detail,
   };
-  console.error('[sign-flow]', payload);
   writeJsonLine(getNetworkLogFile('sign-flow-error', networkKey), payload);
 }
 
@@ -89,7 +84,6 @@ function logListingError(stage, detail = {}) {
     stage,
     ...detail,
   };
-  console.error('[listing]', payload);
   writeJsonLine(getNetworkLogFile('listing-error', networkKey), payload);
 }
 
@@ -104,7 +98,6 @@ function logApiError(stage, detail = {}) {
     stage,
     ...detail,
   };
-  console.error('[api-error]', payload);
   writeJsonLine(getNetworkLogFile('api-error', networkKey), payload);
 }
 
@@ -119,7 +112,6 @@ function logSystemError(stage, detail = {}) {
     stage,
     ...detail,
   };
-  console.error('[system-error]', payload);
   writeJsonLine(getNetworkLogFile('system-error', networkKey), payload);
 }
 
@@ -134,7 +126,6 @@ function logRiskEvent(stage, detail = {}) {
     stage,
     ...detail,
   };
-  console.error('[risk-event]', payload);
   writeJsonLine(getNetworkLogFile('risk-event', networkKey), payload);
 }
 
@@ -147,7 +138,6 @@ function logUserEvent(stage, detail = {}) {
     stage,
     ...detail,
   };
-  console.error('[user-event]', payload);
   writeJsonLine(USER_LOG_FILE, payload);
 }
 

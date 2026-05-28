@@ -6,10 +6,11 @@ const express = require('express');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { ethers } = require('ethers');
 const { getDb, saveDb, parseResult, CHAIN_ENV } = require('../db');
 const { getUserDb, parseResult: parseUserResult } = require('../user-db');
 const { authMiddleware, requireRole } = require('../auth');
-const { logListingError } = require('../logger');
+const { logListingError, logRiskEvent } = require('../logger');
 
 const router = express.Router();
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -18,6 +19,12 @@ const MAX_IMAGE_COUNT = 12;
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
+const RENTAL_CHAIN_ABI = require('../../../frontend/src/shared/blockchain/RentalChainABI.json');
+const iface = new ethers.Interface(RENTAL_CHAIN_ABI);
+
+function createTraceId(prefix = 'web') {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
 
 // 函数 1: 将金额规范化为字符串，避免精度展示异常。
 function normalizeAmount(value) {
@@ -58,11 +65,49 @@ function toWeiString(amountStr) {
 
 // 函数 5-1: 安全解析日志中的 JSON 字段。
 function safeParseJson(raw, fallback = {}) {
+  if (raw === null || raw === undefined) return fallback;
+  if (typeof raw === 'object') return raw;
+  const text = String(raw || '').trim();
+  if (!text) return fallback;
   try {
-    return raw ? JSON.parse(raw) : fallback;
+    let parsed = JSON.parse(text);
+    if (typeof parsed === 'string') {
+      parsed = JSON.parse(parsed);
+    }
+    return parsed && typeof parsed === 'object' ? parsed : fallback;
   } catch {
-    return fallback;
+    try {
+      // 容错处理：去除 BOM/控制字符后再尝试一次解析。
+      const sanitized = text
+        .replace(/^\uFEFF/, '')
+        .replace(/\u0000/g, '')
+        .trim();
+      if (!sanitized) return fallback;
+      let parsed = JSON.parse(sanitized);
+      if (typeof parsed === 'string') {
+        parsed = JSON.parse(parsed);
+      }
+      return parsed && typeof parsed === 'object' ? parsed : fallback;
+    } catch {
+      return fallback;
+    }
   }
+}
+
+function normalizeDateOnly(value) {
+  const s = String(value || '').trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  const d = new Date(`${s}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? null : s;
+}
+
+function parseCnDateTime(value) {
+  const s = String(value || '').trim();
+  if (!s) return null;
+  const normalized = s.includes('T') ? s : s.replace(' ', 'T');
+  const d = new Date(normalized);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 // 函数 5-2: 生成房源完整快照（用于历史回放渲染）。
@@ -83,6 +128,70 @@ function buildListingSnapshot(row, overrides = {}) {
     updatedAt: row.updated_at || '',
   };
   return { ...base, ...overrides };
+}
+
+function parseContractContent(contract = {}) {
+  if (typeof contract.content_json === 'string') {
+    return safeParseJson(contract.content_json, {});
+  }
+  return contract.content_json && typeof contract.content_json === 'object' ? contract.content_json : {};
+}
+
+function parseContractStartAtMs(contract = {}) {
+  const content = parseContractContent(contract);
+  const exactStartAtMs = Number(content?.renewal?.startAtMs || 0);
+  if (Number.isFinite(exactStartAtMs) && exactStartAtMs > 0) return exactStartAtMs;
+  const startDateOnly = normalizeDateOnly(content?.terms?.startDate);
+  if (!startDateOnly) return 0;
+  const d = new Date(`${startDateOnly}T00:00:00+08:00`);
+  return Number.isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+function parseContractEndAtMs(contract = {}) {
+  const content = parseContractContent(contract);
+  const endDateOnly = normalizeDateOnly(content?.terms?.endDate);
+  if (!endDateOnly) return 0;
+  const d = new Date(`${endDateOnly}T23:59:59+08:00`);
+  return Number.isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+function isContractCurrentlyOccupying(contract, now = Date.now()) {
+  const startAtMs = parseContractStartAtMs(contract);
+  const endAtMs = parseContractEndAtMs(contract);
+  return String(contract.status || '') === 'active' && startAtMs > 0 && startAtMs <= now && now < endAtMs;
+}
+
+function isContractSigningOrReserved(contract, now = Date.now()) {
+  const status = String(contract.status || '');
+  if (status === 'pending' || status === 'tenant_signed') return true;
+  if (status === 'pending_payment') {
+    const deadline = parseCnDateTime(contract.payment_deadline || contract.expires_at);
+    return !!deadline && deadline.getTime() > now;
+  }
+  if (status === 'active') {
+    const startAtMs = parseContractStartAtMs(contract);
+    const endAtMs = parseContractEndAtMs(contract);
+    return startAtMs > now && endAtMs > now;
+  }
+  return false;
+}
+
+// 函数 5-3: 计算历史快照哈希（用于版本防篡改绑定）。
+function calcSnapshotHash(snapshot) {
+  return `0x${crypto.createHash('sha256').update(JSON.stringify(snapshot || {})).digest('hex')}`;
+}
+
+// 函数 5-4: 构建历史记录链上绑定信息。
+function buildHistoryBinding({ snapshot, verified, txHash }) {
+  return {
+    snapshotHash: calcSnapshotHash(snapshot),
+    chainVersion: Number(verified?.args?.version || 0),
+    chainNonce: Number(verified?.args?.nonce || 0),
+    txHash: String(txHash || '').toLowerCase(),
+    eventName: String(verified?.eventName || ''),
+    blockNumber: Number(verified?.blockNumber || 0),
+    blockTime: Number(verified?.blockTime || 0),
+  };
 }
 
 // 函数 1-1: 构建房源内容哈希载荷（用于锚点哈希计算）。
@@ -119,6 +228,179 @@ function calcImageRootHash(imageHashes) {
   return `0x${digest}`;
 }
 
+// 函数 1-3b: 校验 bytes32 字符串格式。
+function isBytes32Hex(value) {
+  return /^0x[0-9a-fA-F]{64}$/.test(String(value || '').trim());
+}
+
+// 函数 1-4: 读取当前网络配置（合约地址唯一来源：部署 JSON 文件）。
+function getChainRuntime() {
+  const rpcUrl = CHAIN_ENV === 'local'
+    ? String(process.env.LOCAL_RPC_URL || 'http://127.0.0.1:8545').trim()
+    : String(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia.publicnode.com').trim();
+
+  let contractAddress = '';
+  const deployFile = CHAIN_ENV === 'local'
+    ? path.join(__dirname, '..', '..', '..', '..', 'blockchain', 'deployments-rental-localhost.json')
+    : path.join(__dirname, '..', '..', '..', '..', 'blockchain', 'deployments-rental-sepolia.json');
+  if (fs.existsSync(deployFile)) {
+    const deploy = JSON.parse(fs.readFileSync(deployFile, 'utf8'));
+    contractAddress = String(deploy.address || '').trim();
+  }
+  return { rpcUrl, contractAddress };
+}
+
+// 函数 1-5: 规范化并验证交易哈希。
+function normalizeTxHash(txHash) {
+  const value = String(txHash || '').trim();
+  return /^0x[a-fA-F0-9]{64}$/.test(value) ? value.toLowerCase() : '';
+}
+
+// 函数 1-6b: 解析并修复房源 content_hash（优先数据库，异常时回退链上并回填）。
+async function resolveListingContentHash(db, listing) {
+  const dbHash = String(listing?.content_hash || '').trim().toLowerCase();
+  if (isBytes32Hex(dbHash)) return dbHash;
+
+  try {
+    const { rpcUrl, contractAddress } = getChainRuntime();
+    if (rpcUrl && ethers.isAddress(contractAddress)) {
+      const provider = new ethers.JsonRpcProvider(rpcUrl);
+      const contract = new ethers.Contract(contractAddress, RENTAL_CHAIN_ABI, provider);
+      const chainState = await contract.getListing(String(listing.id));
+      const onchainHash = String(chainState?.contentHash ?? chainState?.[2] ?? '').trim().toLowerCase();
+      const onchainExists = Boolean(chainState?.exists ?? chainState?.[11]);
+      if (onchainExists && isBytes32Hex(onchainHash)) {
+        db.run('UPDATE listings SET content_hash = ?, updated_at = datetime(\'now\', \'+8 hours\') WHERE id = ?', [onchainHash, listing.id]);
+        listing.content_hash = onchainHash;
+        saveDb();
+        return onchainHash;
+      }
+    }
+  } catch {
+    // ignore and fallback to local reconstruction
+  }
+
+  try {
+    const userDb = await getUserDb();
+    const users = parseUserResult(userDb.exec('SELECT wallet_address FROM users WHERE id = ?', [listing.landlord_id]));
+    const landlordWallet = String(users?.[0]?.wallet_address || '').trim().toLowerCase();
+    if (!ethers.isAddress(landlordWallet)) return '';
+
+    const imageUrls = parseJsonArray(listing.image_urls);
+    let imageHashes = parseJsonArray(listing.image_hashes).map((x) => String(x || '').toLowerCase());
+    if (!imageHashes.length && imageUrls.length) {
+      imageHashes = imageUrls.map((u) => `0x${crypto.createHash('sha256').update(String(u || '')).digest('hex')}`);
+    }
+
+    const rebuiltHash = calcListingContentHash({
+      listingId: listing.id,
+      landlordWallet,
+      title: listing.title,
+      description: listing.description,
+      address: listing.address,
+      district: listing.district || '',
+      rentAmount: listing.rent_amount,
+      minLeaseMonths: Number(listing.min_lease_months || 1),
+      bedrooms: Number(listing.bedrooms || 1),
+      livingrooms: Number(listing.livingrooms || 1),
+      bathrooms: Number(listing.bathrooms || 1),
+      area: Number(listing.area || 0),
+      imageHashes,
+    });
+    if (!isBytes32Hex(rebuiltHash)) return '';
+
+    db.run('UPDATE listings SET content_hash = ?, updated_at = datetime(\'now\', \'+8 hours\') WHERE id = ?', [rebuiltHash, listing.id]);
+    listing.content_hash = rebuiltHash;
+    saveDb();
+    return rebuiltHash;
+  } catch {
+    return '';
+  }
+}
+
+// 函数 1-6: 记录链上操作幂等状态。
+function upsertChainOperation(db, payload) {
+  db.run(
+    `INSERT INTO listing_chain_operations (op_id, listing_id, action, tx_hash, status, request_id, detail_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(op_id) DO UPDATE SET
+       tx_hash = excluded.tx_hash,
+       status = excluded.status,
+       request_id = excluded.request_id,
+       detail_json = excluded.detail_json,
+       updated_at = datetime('now', '+8 hours')`,
+    [
+      payload.opId,
+      payload.listingId,
+      payload.action,
+      payload.txHash || '',
+      payload.status || 'pending',
+      payload.requestId || '',
+      JSON.stringify(payload.detail || {}),
+    ]
+  );
+}
+
+// 函数 1-7: 链上真实性校验（回执/地址/事件/参数）。
+async function verifyOnchainTx({
+  txHash,
+  expectedFrom,
+  eventName,
+  argChecker,
+}) {
+  const { rpcUrl, contractAddress } = getChainRuntime();
+  if (!rpcUrl) throw new Error('RPC 未配置，无法校验链上交易');
+  if (!ethers.isAddress(contractAddress)) throw new Error('合约地址未配置或格式不正确');
+
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const receipt = await provider.getTransactionReceipt(txHash);
+  if (!receipt) throw new Error('链上回执不存在，交易可能未确认');
+  if (receipt.status !== 1) throw new Error('链上交易执行失败');
+
+  const tx = await provider.getTransaction(txHash);
+  if (!tx) throw new Error('无法获取交易详情');
+  if (String(tx.to || '').toLowerCase() !== contractAddress.toLowerCase()) {
+    throw new Error('交易目标合约地址不匹配');
+  }
+  if (String(tx.from || '').toLowerCase() !== String(expectedFrom || '').toLowerCase()) {
+    throw new Error('交易发送者与房东绑定钱包不匹配');
+  }
+
+  // 解包 Indexed 对象为 hash 字符串，方便 argChecker 比较。
+  function normalizeArgs(args) {
+    const obj = typeof args.toObject === 'function' ? args.toObject() : args;
+    const result = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key] = (value && typeof value === 'object' && value._isIndexed) ? String(value.hash) : value;
+    }
+    return result;
+  }
+
+  const candidates = [];
+  for (const log of receipt.logs || []) {
+    if (String(log.address || '').toLowerCase() !== contractAddress.toLowerCase()) continue;
+    try {
+      const parsed = iface.parseLog({ topics: log.topics, data: log.data });
+      candidates.push({ name: parsed.name, args: normalizeArgs(parsed.args) });
+    } catch {
+      // ignore non-matching log
+    }
+  }
+  const matched = candidates.find((item) => item?.name === eventName && argChecker(item.args));
+  if (!matched) throw new Error(`未找到匹配事件：${eventName}`);
+
+  const block = await provider.getBlock(receipt.blockNumber);
+  return {
+    txHash,
+    from: tx.from,
+    to: tx.to,
+    blockNumber: Number(receipt.blockNumber || 0),
+    blockTime: Number(block?.timestamp || 0),
+    eventName,
+    args: matched.args,
+  };
+}
+
 function logListingOperation(db, { listingId, operatorId, action, before = {}, after = {}, requestId = '', source = 'api', note = '' }) {
   db.run(
     `INSERT INTO listing_operation_logs (id, listing_id, operator_id, action, before_json, after_json, request_id, source, note)
@@ -136,44 +418,6 @@ function logListingOperation(db, { listingId, operatorId, action, before = {}, a
     ]
   );
 }
-
-
-async function scoreListingPayload({ title, description, address, imageUrls }) {
-  const endpoint = String(process.env.AI_SCORE_ENDPOINT || '').trim();
-  if (endpoint) {
-    const resp = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, description, address, imageUrls }),
-    });
-    if (!resp.ok) throw new Error(`AI score endpoint failed: ${resp.status}`);
-    const data = await resp.json();
-    return {
-      score: Number(data.score || 0),
-      confidence: Number(data.confidence || 0.7),
-      riskTags: Array.isArray(data.riskTags) ? data.riskTags : [],
-      reason: String(data.reason || '外部 AI 服务评分'),
-      modelVersion: String(data.modelVersion || 'external-ai'),
-      source: 'external_ai',
-    };
-  }
-
-  const risks = [];
-  let score = 72;
-  if (String(description || '').length >= 80) score += 8; else risks.push('description_short');
-  if (Array.isArray(imageUrls) && imageUrls.length >= 3) score += 8; else risks.push('image_count_low');
-  if (String(address || '').length >= 6) score += 6; else risks.push('address_weak');
-  if (String(title || '').length >= 6) score += 4; else risks.push('title_short');
-  return {
-    score: Math.max(0, Math.min(100, score)),
-    confidence: 0.62,
-    riskTags: risks,
-    reason: risks.length ? `启发式评分：${risks.join(', ')}` : '启发式评分：信息完整度较高',
-    modelVersion: 'local-heuristic-v1',
-    source: 'local_fallback',
-  };
-}
-
 // 函数 2: 确保上传目录存在。
 function ensureUploadDir() {
   if (!fs.existsSync(UPLOAD_ROOT)) {
@@ -287,6 +531,25 @@ router.post('/upload-images', authMiddleware, requireRole('landlord'), asyncHand
   }
 }));
 
+// 函数 6-0: 客户端房源流程失败上报（前端诊断日志）。
+router.post('/client-report', authMiddleware, asyncHandler(async (req, res) => {
+  const body = req.body || {};
+  logListingError('client.report', {
+    requestId: req.requestId || body.requestId || createTraceId('listing'),
+    userId: req.user?.id || '',
+    listingId: body.listingId || '',
+    stage: body.stage || '',
+    message: body.message || '',
+    stack: body.stack || '',
+    preferredNetwork: body.preferredNetwork || '',
+    walletAddress: body.walletAddress || '',
+    chainId: body.chainId || '',
+    pageUrl: body.pageUrl || '',
+    extra: body.extra || {},
+  });
+  res.json({ success: true });
+}));
+
 // 函数 6-1: 预创建房源，返回上链锚点参数（先上链后入库）。
 router.post('/prepare-create', authMiddleware, requireRole('landlord'), asyncHandler(async (req, res) => {
   const {
@@ -345,9 +608,10 @@ router.post('/prepare-create', authMiddleware, requireRole('landlord'), asyncHan
 
 // 函数 6-2: 提交房源创建（必须已完成链上交易并回传 txHash）。
 router.post('/commit-create', authMiddleware, requireRole('landlord'), asyncHandler(async (req, res) => {
-  const { draft, chainAnchor, txHash } = req.body || {};
+  const { draft, chainAnchor, txHash, operationId = '' } = req.body || {};
   if (!draft || !chainAnchor) return res.status(400).json({ error: 'draft 与 chainAnchor 不能为空' });
-  if (!/^0x[a-fA-F0-9]{64}$/.test(String(txHash || ''))) return res.status(400).json({ error: 'txHash 格式不正确' });
+  const normalizedTxHash = normalizeTxHash(txHash);
+  if (!normalizedTxHash) return res.status(400).json({ error: 'txHash 格式不正确' });
 
   const expectedHash = calcListingContentHash(draft);
   if (String(chainAnchor.contentHash || '').toLowerCase() !== expectedHash.toLowerCase()) return res.status(400).json({ error: 'contentHash 校验失败，请重新发起发布流程' });
@@ -367,63 +631,135 @@ router.post('/commit-create', authMiddleware, requireRole('landlord'), asyncHand
   }
 
   const db = await getDb();
+  const opId = String(operationId || `op_create_${draft.listingId}_${normalizedTxHash}`).trim();
+  const existedOp = parseResult(db.exec('SELECT * FROM listing_chain_operations WHERE op_id = ?', [opId]));
+  if (existedOp.length && existedOp[0].status === 'confirmed') {
+    return res.json({ success: true, message: '重复提交已幂等处理', data: { id: draft.listingId, txHash: normalizedTxHash, contentHash: expectedHash } });
+  }
+  const reusedTx = parseResult(db.exec('SELECT * FROM listing_chain_operations WHERE tx_hash = ? AND op_id <> ?', [normalizedTxHash, opId]));
+  if (reusedTx.length) return res.status(409).json({ error: 'txHash 已被其它操作占用' });
+
   const existed = parseResult(db.exec('SELECT id FROM listings WHERE id = ?', [draft.listingId]));
   if (existed.length) return res.status(409).json({ error: 'listingId 已存在，请重新发起发布流程' });
 
-  const score = await scoreListingPayload({
-    title: draft.title,
-    description: draft.description,
-    address: draft.address,
-    imageUrls: Array.isArray(draft.imageUrls) ? draft.imageUrls : [],
-  }).catch((error) => ({ score: null, confidence: 0, riskTags: ['score_failed'], reason: error.message, modelVersion: 'score_failed', source: 'error' }));
+  upsertChainOperation(db, {
+    opId,
+    listingId: draft.listingId,
+    action: 'create',
+    txHash: normalizedTxHash,
+    status: 'pending',
+    requestId: req.requestId,
+    detail: { phase: 'verify_onchain' },
+  });
+
+  let verified;
+  try {
+    verified = await verifyOnchainTx({
+      txHash: normalizedTxHash,
+      expectedFrom: boundWallet,
+      eventName: 'ListingCreated',
+      argChecker: (args) => (
+        String(args.listingId).toLowerCase() === ethers.id(String(draft.listingId)).toLowerCase() &&
+        String(args.landlord).toLowerCase() === boundWallet &&
+        String(args.contentHash).toLowerCase() === String(expectedHash).toLowerCase() &&
+        String(args.rentAmountWei) === String(expectedWei) &&
+        Number(args.minLeaseMonths) === Number(draft.minLeaseMonths) &&
+        String(args.imageRootHash).toLowerCase() === String(expectedImageRootHash).toLowerCase()
+      ),
+    });
+  } catch (error) {
+    upsertChainOperation(db, {
+      opId,
+      listingId: draft.listingId,
+      action: 'create',
+      txHash: normalizedTxHash,
+      status: 'failed',
+      requestId: req.requestId,
+      detail: { message: error?.message || 'verify_failed' },
+    });
+    throw error;
+  }
 
   db.run(`INSERT INTO listings (
     id, landlord_id, title, description, address, district, rent_amount,
     rent_cycle, min_lease_months, bedrooms, livingrooms, bathrooms, area,
-    image_urls, ai_score, ai_confidence, ai_risk_tags, ai_score_reason,
-    ai_model_version, ai_score_source, ai_scored_at, image_hashes, tx_hash,
+    image_urls, image_hashes, tx_hash,
     onchain_status, onchain_attempts, onchain_error, onchain_last_attempt_at, status
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+8 hours'), ?, ?, 'confirmed', 1, '', datetime('now', '+8 hours'), 'available')`, [
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', 1, '', datetime('now', '+8 hours'), 'available')`, [
     draft.listingId, req.user.id, draft.title, draft.description, draft.address, draft.district || '', draft.rentAmount,
     draft.rentCycle || 'month', Number(draft.minLeaseMonths || 1), Number(draft.bedrooms || 1), Number(draft.livingrooms || 1),
     Number(draft.bathrooms || 1), Number(draft.area || 0), JSON.stringify(Array.isArray(draft.imageUrls) ? draft.imageUrls : []),
-    score.score, score.confidence, JSON.stringify(score.riskTags), score.reason, score.modelVersion, score.source,
-    JSON.stringify(Array.isArray(draft.imageHashes) ? draft.imageHashes : []), txHash,
+    JSON.stringify(Array.isArray(draft.imageHashes) ? draft.imageHashes : []), normalizedTxHash,
   ]);
 
+  db.run(
+    `UPDATE listings
+     SET chain_version = ?, chain_nonce = ?, chain_block_number = ?, chain_block_time = ?
+     WHERE id = ?`,
+    [
+      Number(verified.args.version || 0),
+      Number(verified.args.nonce || 0),
+      Number(verified.blockNumber || 0),
+      Number(verified.blockTime || 0),
+      draft.listingId,
+    ]
+  );
+
+  const createdSnapshot = {
+    id: draft.listingId,
+    title: draft.title,
+    description: draft.description,
+    address: draft.address,
+    district: draft.district || '',
+    rentAmount: draft.rentAmount,
+    minLeaseMonths: Number(draft.minLeaseMonths || 1),
+    imageUrls: Array.isArray(draft.imageUrls) ? draft.imageUrls : [],
+    imageHashes: Array.isArray(draft.imageHashes) ? draft.imageHashes : [],
+    status: 'available',
+    contentHash: expectedHash,
+    txHash: normalizedTxHash,
+  };
   logListingOperation(db, {
     listingId: draft.listingId,
     operatorId: req.user.id,
     action: 'create_listing_onchain_commit',
     after: {
-      txHash,
+      txHash: normalizedTxHash,
       contentHash: expectedHash,
       landlordWallet: chainAnchor.landlordWallet,
-      score,
-      snapshot: {
-        id: draft.listingId,
-        title: draft.title,
-        description: draft.description,
-        address: draft.address,
-        district: draft.district || '',
-        rentAmount: draft.rentAmount,
-        minLeaseMonths: Number(draft.minLeaseMonths || 1),
-        imageUrls: Array.isArray(draft.imageUrls) ? draft.imageUrls : [],
-        imageHashes: Array.isArray(draft.imageHashes) ? draft.imageHashes : [],
-        status: 'available',
-        contentHash: expectedHash,
-        txHash,
-      },
+      snapshot: createdSnapshot,
+      binding: buildHistoryBinding({ snapshot: createdSnapshot, verified, txHash: normalizedTxHash }),
     },
     requestId: req.requestId,
     source: 'web',
   });
+  upsertChainOperation(db, {
+    opId,
+    listingId: draft.listingId,
+    action: 'create',
+    txHash: normalizedTxHash,
+    status: 'confirmed',
+    requestId: req.requestId,
+    detail: {
+      eventName: verified.eventName,
+      blockNumber: verified.blockNumber,
+      blockTime: verified.blockTime,
+    },
+  });
+  logRiskEvent('listing.onchain.commit.create', {
+    listingId: draft.listingId,
+    txHash: normalizedTxHash,
+    chainId: CHAIN_ENV,
+    opId,
+    eventName: verified.eventName,
+    blockNumber: verified.blockNumber,
+  });
   saveDb();
 
-  res.json({ success: true, data: { id: draft.listingId, txHash, contentHash: expectedHash, aiScore: score.score, aiRiskTags: score.riskTags } });
+  res.json({ success: true, data: { id: draft.listingId, txHash: normalizedTxHash, contentHash: expectedHash } });
 }));
 
-// 函数 2: 批量补齐房东昵称与邮箱。
+// 函数 2: 批量补齐房东昵称与手机号。
 async function attachLandlordProfile(rows) {
   if (!rows.length) return rows;
   const userDb = await getUserDb();
@@ -432,7 +768,7 @@ async function attachLandlordProfile(rows) {
 
   const placeholders = landlordIds.map(() => '?').join(',');
   const users = parseUserResult(userDb.exec(
-    `SELECT id, nickname, email FROM users WHERE id IN (${placeholders})`,
+    `SELECT id, nickname, phone FROM users WHERE id IN (${placeholders})`,
     landlordIds
   ));
   const profileMap = new Map(users.map((u) => [u.id, u]));
@@ -442,28 +778,89 @@ async function attachLandlordProfile(rows) {
     return {
       ...item,
       landlord_name: profile.nickname || '',
-      landlord_email: profile.email || '',
+      landlord_phone: profile.phone || '',
     };
   });
 }
 
-// 函数 7: 发布房源接口（房东）。
-router.post('/', authMiddleware, requireRole('landlord'), asyncHandler(async (req, res) => {
-  res.status(410).json({ error: '请改用新流程：/listings/prepare-create -> 钱包上链 -> /listings/commit-create' });
-}));
+function resolveListingPublicStatus(listing, contracts = []) {
+  const status = String(listing.status || '').trim().toLowerCase();
+  if (status !== 'available' && status !== 'rented') return status;
+  const now = Date.now();
+  if (contracts.some((item) => isContractCurrentlyOccupying(item, now))) return 'rented';
+  if (contracts.some((item) => isContractSigningOrReserved(item, now))) return 'signing';
+  return 'available';
+}
 
-// 函数 3: 获取房源列表接口。
-router.get('/', asyncHandler(async (req, res) => {
-  const { keyword = '', status = 'available' } = req.query;
+async function attachPublicListingState(rows) {
+  if (!rows.length) return rows;
+  const ids = [...new Set(rows.map((item) => item.id).filter(Boolean))];
+  if (ids.length === 0) return rows;
   const db = await getDb();
+  const placeholders = ids.map(() => '?').join(',');
+  const contracts = parseResult(db.exec(
+    `SELECT id, listing_id, status, content_json, expires_at, payment_deadline, parent_contract_id
+     FROM contracts
+     WHERE listing_id IN (${placeholders})
+       AND status NOT IN ('cancelled', 'expired', 'ended')`,
+    ids
+  ));
+  const byListing = new Map();
+  contracts.forEach((item) => {
+    const key = item.listing_id;
+    if (!byListing.has(key)) byListing.set(key, []);
+    byListing.get(key).push(item);
+  });
+  return rows.map((item) => {
+    const related = byListing.get(item.id) || [];
+    const now = Date.now();
+    const activeContract = related
+      .filter((contract) => isContractCurrentlyOccupying(contract, now))
+      .sort((a, b) => parseContractStartAtMs(b) - parseContractStartAtMs(a))[0] || null;
+    const signingContract = related
+      .filter((contract) => !activeContract || contract.id !== activeContract.id)
+      .filter((contract) => isContractSigningOrReserved(contract, now))
+      .sort((a, b) => {
+        const aDeadline = parseCnDateTime(a.payment_deadline || a.expires_at)?.getTime() || 0;
+        const bDeadline = parseCnDateTime(b.payment_deadline || b.expires_at)?.getTime() || 0;
+        return bDeadline - aDeadline;
+      })[0] || null;
+
+    return {
+      ...item,
+      public_status: resolveListingPublicStatus(item, related),
+      active_contract_id: activeContract?.id || '',
+      signing_contract_id: signingContract?.id || '',
+    };
+  });
+}
+
+// 函数 2-3: 获取房源列表接口。
+router.get('/', asyncHandler(async (req, res) => {
+  const rawKeyword = String(req.query.keyword || '').trim();
+  const status = String(req.query.status || 'public').trim();
+  // 转义 LIKE 通配符，防止 % 和 _ 绕过关键词过滤
+  const keyword = rawKeyword.replace(/[%_]/g, '\\$&');
+  const db = await getDb();
+  const isPublicStatusFilter = ['public', 'available', 'signing', 'rented'].includes(status);
+  const statusSql = isPublicStatusFilter
+    ? "status IN ('available','rented')"
+    : 'status = ?';
+  const params = isPublicStatusFilter
+    ? [`%${keyword}%`, `%${keyword}%`, `%${keyword}%`]
+    : [status, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`];
   const rows = parseResult(db.exec(
     `SELECT *
      FROM listings
-     WHERE status = ? AND (title LIKE ? OR description LIKE ? OR address LIKE ?)
+     WHERE ${statusSql} AND (title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' OR address LIKE ? ESCAPE '\\')
      ORDER BY created_at DESC`,
-    [status, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`]
+    params
   ));
-  const data = await attachLandlordProfile(rows);
+  let data = await attachPublicListingState(rows);
+  if (['available', 'signing', 'rented'].includes(status)) {
+    data = data.filter((item) => item.public_status === status);
+  }
+  data = await attachLandlordProfile(data);
   res.json({ success: true, data, total: data.length });
 }));
 
@@ -474,7 +871,8 @@ router.get('/my', authMiddleware, requireRole('landlord'), asyncHandler(async (r
     'SELECT * FROM listings WHERE landlord_id = ? ORDER BY created_at DESC',
     [req.user.id]
   ));
-  res.json({ success: true, data: rows });
+  const data = await attachPublicListingState(rows);
+  res.json({ success: true, data });
 }));
 
 // 函数 5: 获取房源详情接口。
@@ -489,7 +887,8 @@ router.get('/:id', asyncHandler(async (req, res) => {
   if (!rows.length) {
     return res.status(404).json({ error: '房源不存在' });
   }
-  const [detail] = await attachLandlordProfile(rows);
+  const [detailWithState] = await attachPublicListingState(rows);
+  const [detail] = await attachLandlordProfile([detailWithState]);
   res.json({ success: true, data: detail });
 }));
 
@@ -510,15 +909,39 @@ router.get('/:id/history', asyncHandler(async (req, res) => {
     [req.params.id]
   ));
 
-  const history = logs.map((item) => ({
-    id: item.id,
-    action: item.action,
-    before: safeParseJson(item.before_json, {}),
-    after: safeParseJson(item.after_json, {}),
-    note: item.note || '',
-    source: item.source || '',
-    createdAt: item.created_at,
-  }));
+  const history = logs.map((item) => {
+    const before = safeParseJson(item.before_json, {});
+    const after = safeParseJson(item.after_json, {});
+    const snapshot = after?.snapshot
+      || ((after && typeof after === 'object')
+        ? (() => {
+          const { binding: _ignoredBinding, ...rest } = after;
+          return rest;
+        })()
+        : after);
+    const binding = after?.binding || null;
+    const expectedSnapshotHash = snapshot && typeof snapshot === 'object' ? calcSnapshotHash(snapshot) : '';
+    const bindingVerified = Boolean(
+      binding &&
+      binding.snapshotHash &&
+      expectedSnapshotHash &&
+      String(binding.snapshotHash).toLowerCase() === String(expectedSnapshotHash).toLowerCase() &&
+      Number(binding.chainVersion || 0) > 0 &&
+      Number(binding.chainNonce || 0) > 0
+    );
+    return {
+      id: item.id,
+      action: item.action,
+      before,
+      after,
+      note: item.note || '',
+      source: item.source || '',
+      createdAt: item.created_at,
+      bindingVerified,
+      expectedSnapshotHash,
+      binding,
+    };
+  });
 
   res.json({
     success: true,
@@ -528,11 +951,6 @@ router.get('/:id/history', asyncHandler(async (req, res) => {
       history,
     },
   });
-}));
-
-// 函数 6: 状态更新旧接口（已下线，改为先上链再回写）。
-router.put('/:id/status', authMiddleware, requireRole('landlord'), asyncHandler(async (req, res) => {
-  res.status(410).json({ error: '请改用新流程：/listings/:id/status/prepare -> 钱包上链 -> /listings/:id/status/commit' });
 }));
 
 // 函数 6-1: 状态更新预检查，返回上链参数。
@@ -553,7 +971,7 @@ router.post('/:id/status/prepare', authMiddleware, requireRole('landlord'), asyn
   if (currentStatus === status) {
     return res.status(400).json({ error: '状态未变化，无需重复提交' });
   }
-  const chainStatusMap = { available: 0, offline: 3, closed: 4 };
+  const chainStatusMap = { available: 0, offline: 2, closed: 3 };
   res.json({
     success: true,
     data: {
@@ -567,13 +985,12 @@ router.post('/:id/status/prepare', authMiddleware, requireRole('landlord'), asyn
 
 // 函数 6-2: 状态更新回写（必须已完成链上交易）。
 router.post('/:id/status/commit', authMiddleware, requireRole('landlord'), asyncHandler(async (req, res) => {
-  const { status, txHash } = req.body || {};
+  const { status, txHash, operationId = '' } = req.body || {};
   if (!['available', 'offline', 'closed'].includes(status)) {
     return res.status(400).json({ error: '状态仅支持 available / offline / closed' });
   }
-  if (!/^0x[a-fA-F0-9]{64}$/.test(String(txHash || ''))) {
-    return res.status(400).json({ error: 'txHash 格式不正确' });
-  }
+  const normalizedTxHash = normalizeTxHash(txHash);
+  if (!normalizedTxHash) return res.status(400).json({ error: 'txHash 格式不正确' });
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT id, status FROM listings WHERE id = ? AND landlord_id = ?', [req.params.id, req.user.id]));
   if (!rows.length) {
@@ -586,11 +1003,77 @@ router.post('/:id/status/commit', authMiddleware, requireRole('landlord'), async
   if (currentStatus === status) {
     return res.status(400).json({ error: '状态未变化，无需回写' });
   }
+  const opId = String(operationId || `op_status_${req.params.id}_${status}_${normalizedTxHash}`).trim();
+  const existedOp = parseResult(db.exec('SELECT * FROM listing_chain_operations WHERE op_id = ?', [opId]));
+  if (existedOp.length && existedOp[0].status === 'confirmed') {
+    return res.json({ success: true, message: '重复提交已幂等处理' });
+  }
+  const reusedTx = parseResult(db.exec('SELECT * FROM listing_chain_operations WHERE tx_hash = ? AND op_id <> ?', [normalizedTxHash, opId]));
+  if (reusedTx.length) return res.status(409).json({ error: 'txHash 已被其它操作占用' });
+  upsertChainOperation(db, {
+    opId,
+    listingId: req.params.id,
+    action: 'status',
+    txHash: normalizedTxHash,
+    status: 'pending',
+    requestId: req.requestId,
+    detail: { toStatus: status },
+  });
+  const userDb = await getUserDb();
+  const users = parseUserResult(userDb.exec('SELECT wallet_address FROM users WHERE id = ?', [req.user.id]));
+  if (!users.length) return res.status(404).json({ error: '用户不存在' });
+  const boundWallet = String(users[0].wallet_address || '').trim().toLowerCase();
+  if (!boundWallet) return res.status(400).json({ error: '当前账号未绑定钱包地址' });
 
-  db.run('UPDATE listings SET status = ?, tx_hash = ?, updated_at = datetime(\'now\', \'+8 hours\') WHERE id = ? AND status IN (\'available\', \'offline\')', [status, txHash, req.params.id]);
+  const chainEnumMap = { available: 0, offline: 1, closed: 2 };
+  const listingRow = parseResult(db.exec('SELECT chain_version, chain_nonce, status FROM listings WHERE id = ?', [req.params.id]));
+  const expectedVersion = Number(listingRow[0]?.chain_version || 0);
+  const expectedNonce = Number(listingRow[0]?.chain_nonce || 0);
+  const oldStatusEnum = { available: 0, rented: 0, offline: 1, closed: 2 }[listingRow[0]?.status] ?? -1;
+
+  let verified;
+  try {
+    verified = await verifyOnchainTx({
+      txHash: normalizedTxHash,
+      expectedFrom: boundWallet,
+      eventName: 'ListingStatusChanged',
+      argChecker: (args) => (
+        String(args.listingId).toLowerCase() === ethers.id(String(req.params.id)).toLowerCase() &&
+        Number(args.oldStatus) === oldStatusEnum &&
+        Number(args.newStatus) === Number(chainEnumMap[status]) &&
+        Number(args.version) === expectedVersion + 1 &&
+        Number(args.nonce) === expectedNonce + 1
+      ),
+    });
+  } catch (error) {
+    upsertChainOperation(db, {
+      opId,
+      listingId: req.params.id,
+      action: 'status',
+      txHash: normalizedTxHash,
+      status: 'failed',
+      requestId: req.requestId,
+      detail: { message: error?.message || 'verify_failed', toStatus: status },
+    });
+    throw error;
+  }
+
+  db.run('UPDATE listings SET status = ?, tx_hash = ?, chain_version = ?, chain_nonce = ?, chain_block_number = ?, chain_block_time = ?, updated_at = datetime(\'now\', \'+8 hours\') WHERE id = ? AND status IN (\'available\', \'offline\')', [
+    status,
+    normalizedTxHash,
+    Number(verified.args.version || 0),
+    Number(verified.args.nonce || 0),
+    Number(verified.blockNumber || 0),
+    Number(verified.blockTime || 0),
+    req.params.id,
+  ]);
   if (db.getRowsModified() !== 1) {
     return res.status(409).json({ error: '房源状态已变化，请刷新后重试' });
   }
+  const statusSnapshot = buildListingSnapshot(
+    parseResult(db.exec('SELECT * FROM listings WHERE id = ?', [req.params.id]))[0],
+    { status, txHash: normalizedTxHash }
+  );
   logListingOperation(db, {
     listingId: req.params.id,
     operatorId: req.user.id,
@@ -598,14 +1081,29 @@ router.post('/:id/status/commit', authMiddleware, requireRole('landlord'), async
     before: { status: currentStatus },
     after: {
       status,
-      txHash,
-      snapshot: buildListingSnapshot(
-        parseResult(db.exec('SELECT * FROM listings WHERE id = ?', [req.params.id]))[0],
-        { status, txHash }
-      ),
+      txHash: normalizedTxHash,
+      snapshot: statusSnapshot,
+      binding: buildHistoryBinding({ snapshot: statusSnapshot, verified, txHash: normalizedTxHash }),
     },
     requestId: req.requestId,
     source: 'web',
+  });
+  upsertChainOperation(db, {
+    opId,
+    listingId: req.params.id,
+    action: 'status',
+    txHash: normalizedTxHash,
+    status: 'confirmed',
+    requestId: req.requestId,
+    detail: { eventName: verified.eventName, blockNumber: verified.blockNumber, toStatus: status },
+  });
+  logRiskEvent('listing.onchain.commit.status', {
+    listingId: req.params.id,
+    txHash: normalizedTxHash,
+    chainId: CHAIN_ENV,
+    opId,
+    eventName: verified.eventName,
+    blockNumber: verified.blockNumber,
   });
   saveDb();
   res.json({ success: true, message: status === 'closed' ? '房源已销毁（已关闭）' : '状态更新成功' });
@@ -630,6 +1128,10 @@ router.post('/:id/terms/prepare', authMiddleware, requireRole('landlord'), async
     return res.status(400).json({ error: '最少租期必须为 1-12 月的整数' });
   }
   if (!imageUrls) return res.status(400).json({ error: `imageUrls 格式不正确，且最多 ${MAX_IMAGE_COUNT} 张` });
+  const contentHash = await resolveListingContentHash(db, listing);
+  if (!isBytes32Hex(contentHash)) {
+    return res.status(400).json({ error: '当前房源 contentHash 无效，请先重新发布或完成一次上链修复' });
+  }
 
   const imageHashes = imageUrls.map((u) => `0x${crypto.createHash('sha256').update(u).digest('hex')}`);
   const rentAmountWei = toWeiString(rentAmount);
@@ -640,14 +1142,14 @@ router.post('/:id/terms/prepare', authMiddleware, requireRole('landlord'), async
     success: true,
     data: {
       listingId: req.params.id,
-      contentHash: listing.content_hash,
+      contentHash,
       rentAmount,
       minLeaseMonths,
       imageUrls,
       imageHashes,
       chainAnchor: {
         listingId: req.params.id,
-        contentHash: listing.content_hash,
+        contentHash,
         rentAmountWei,
         minLeaseMonths,
         imageRootHash,
@@ -658,8 +1160,9 @@ router.post('/:id/terms/prepare', authMiddleware, requireRole('landlord'), async
 
 // 函数 6-5: 条款更新回写（链上成功后入库）。
 router.post('/:id/terms/commit', authMiddleware, requireRole('landlord'), asyncHandler(async (req, res) => {
-  const { rentAmount, minLeaseMonths, imageUrls, txHash, chainAnchor } = req.body || {};
-  if (!/^0x[a-fA-F0-9]{64}$/.test(String(txHash || ''))) return res.status(400).json({ error: 'txHash 格式不正确' });
+  const { rentAmount, minLeaseMonths, imageUrls, txHash, chainAnchor, operationId = '' } = req.body || {};
+  const normalizedTxHash = normalizeTxHash(txHash);
+  if (!normalizedTxHash) return res.status(400).json({ error: 'txHash 格式不正确' });
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM listings WHERE id = ? AND landlord_id = ?', [req.params.id, req.user.id]));
   if (!rows.length) return res.status(403).json({ error: '无权限操作该房源' });
@@ -676,34 +1179,125 @@ router.post('/:id/terms/commit', authMiddleware, requireRole('landlord'), asyncH
     return res.status(400).json({ error: '最少租期必须为 1-12 月的整数' });
   }
   if (!normalizedImageUrls) return res.status(400).json({ error: `imageUrls 格式不正确，且最多 ${MAX_IMAGE_COUNT} 张` });
+  const contentHash = await resolveListingContentHash(db, listing);
+  if (!isBytes32Hex(contentHash)) {
+    return res.status(400).json({ error: '当前房源 contentHash 无效，无法完成上链校验' });
+  }
 
   const expectedRentAmountWei = toWeiString(normalizedRentAmount);
   const expectedImageHashes = normalizedImageUrls.map((u) => `0x${crypto.createHash('sha256').update(u).digest('hex')}`);
   const expectedImageRootHash = calcImageRootHash(expectedImageHashes);
-  if (String(chainAnchor?.contentHash || '').toLowerCase() !== String(listing.content_hash || '').toLowerCase()) {
+  if (String(chainAnchor?.contentHash || '').toLowerCase() !== contentHash) {
     return res.status(400).json({ error: 'contentHash 必须保持与当前一致' });
   }
   if (String(chainAnchor?.rentAmountWei || '') !== String(expectedRentAmountWei || '')) return res.status(400).json({ error: 'rentAmountWei 校验失败' });
   if (Number(chainAnchor?.minLeaseMonths || 0) !== minLeaseMonthsNum) return res.status(400).json({ error: 'minLeaseMonths 校验失败' });
   if (String(chainAnchor?.imageRootHash || '').toLowerCase() !== String(expectedImageRootHash || '').toLowerCase()) return res.status(400).json({ error: 'imageRootHash 校验失败' });
+  const opId = String(operationId || `op_terms_${req.params.id}_${normalizedTxHash}`).trim();
+  const existedOp = parseResult(db.exec('SELECT * FROM listing_chain_operations WHERE op_id = ?', [opId]));
+  if (existedOp.length && existedOp[0].status === 'confirmed') {
+    return res.json({ success: true, message: '重复提交已幂等处理', data: buildListingSnapshot(listing) });
+  }
+  const reusedTx = parseResult(db.exec('SELECT * FROM listing_chain_operations WHERE tx_hash = ? AND op_id <> ?', [normalizedTxHash, opId]));
+  if (reusedTx.length) return res.status(409).json({ error: 'txHash 已被其它操作占用' });
+  upsertChainOperation(db, {
+    opId,
+    listingId: req.params.id,
+    action: 'terms',
+    txHash: normalizedTxHash,
+    status: 'pending',
+    requestId: req.requestId,
+    detail: { rentAmount: normalizedRentAmount, minLeaseMonths: minLeaseMonthsNum },
+  });
+
+  const userDb = await getUserDb();
+  const users = parseUserResult(userDb.exec('SELECT wallet_address FROM users WHERE id = ?', [req.user.id]));
+  if (!users.length) return res.status(404).json({ error: '用户不存在' });
+  const boundWallet = String(users[0].wallet_address || '').trim().toLowerCase();
+  if (!boundWallet) return res.status(400).json({ error: '当前账号未绑定钱包地址' });
+
+  let verified;
+  try {
+    verified = await verifyOnchainTx({
+      txHash: normalizedTxHash,
+      expectedFrom: boundWallet,
+      eventName: 'ListingContentUpdated',
+      argChecker: (args) => (
+        String(args.listingId).toLowerCase() === ethers.id(String(req.params.id)).toLowerCase() &&
+        String(args.newContentHash).toLowerCase() === contentHash &&
+        String(args.newRentAmountWei) === String(expectedRentAmountWei) &&
+        Number(args.newMinLeaseMonths) === minLeaseMonthsNum &&
+        String(args.newImageRootHash).toLowerCase() === String(expectedImageRootHash).toLowerCase() &&
+        Number(args.version) === Number(listing.chain_version || 0) + 1 &&
+        Number(args.nonce) === Number(listing.chain_nonce || 0) + 1
+      ),
+    });
+  } catch (error) {
+    upsertChainOperation(db, {
+      opId,
+      listingId: req.params.id,
+      action: 'terms',
+      txHash: normalizedTxHash,
+      status: 'failed',
+      requestId: req.requestId,
+      detail: { message: error?.message || 'verify_failed' },
+    });
+    throw error;
+  }
 
   db.run(
     `UPDATE listings
-     SET rent_amount = ?, min_lease_months = ?, image_urls = ?, image_hashes = ?, tx_hash = ?, updated_at = datetime('now', '+8 hours')
+     SET rent_amount = ?, min_lease_months = ?, image_urls = ?, image_hashes = ?, tx_hash = ?,
+         chain_version = ?, chain_nonce = ?, chain_block_number = ?, chain_block_time = ?,
+         updated_at = datetime('now', '+8 hours')
      WHERE id = ? AND landlord_id = ? AND status IN ('available','offline')`,
-    [normalizedRentAmount, minLeaseMonthsNum, JSON.stringify(normalizedImageUrls), JSON.stringify(expectedImageHashes), txHash, req.params.id, req.user.id]
+    [
+      normalizedRentAmount,
+      minLeaseMonthsNum,
+      JSON.stringify(normalizedImageUrls),
+      JSON.stringify(expectedImageHashes),
+      normalizedTxHash,
+      Number(verified.args.version || 0),
+      Number(verified.args.nonce || 0),
+      Number(verified.blockNumber || 0),
+      Number(verified.blockTime || 0),
+      req.params.id,
+      req.user.id,
+    ]
   );
   if (db.getRowsModified() !== 1) return res.status(409).json({ error: '房源状态已变化，请刷新后重试' });
 
   const latest = parseResult(db.exec('SELECT * FROM listings WHERE id = ?', [req.params.id]))[0];
+  const beforeSnapshot = buildListingSnapshot(listing);
+  const afterSnapshot = buildListingSnapshot(latest);
   logListingOperation(db, {
     listingId: req.params.id,
     operatorId: req.user.id,
     action: 'update_terms_onchain_commit',
-    before: buildListingSnapshot(listing),
-    after: buildListingSnapshot(latest),
+    before: beforeSnapshot,
+    after: {
+      snapshot: afterSnapshot,
+      binding: buildHistoryBinding({ snapshot: afterSnapshot, verified, txHash: normalizedTxHash }),
+    },
     requestId: req.requestId,
     source: 'web',
+  });
+  upsertChainOperation(db, {
+    opId,
+    listingId: req.params.id,
+    action: 'terms',
+    txHash: normalizedTxHash,
+    status: 'confirmed',
+    requestId: req.requestId,
+    detail: { eventName: verified.eventName, blockNumber: verified.blockNumber },
+  });
+  logRiskEvent('listing.onchain.commit.terms', {
+    listingId: req.params.id,
+    txHash: normalizedTxHash,
+    chainId: CHAIN_ENV,
+    opId,
+    eventName: verified.eventName,
+    blockNumber: verified.blockNumber,
   });
   saveDb();
   res.json({
@@ -711,11 +1305,6 @@ router.post('/:id/terms/commit', authMiddleware, requireRole('landlord'), asyncH
     message: '链上条款更新成功',
     data: buildListingSnapshot(latest),
   });
-}));
-
-// 函数 6-3: 编辑房源基础信息（已下线，content 锁定不可改）。
-router.put('/:id', authMiddleware, requireRole('landlord'), asyncHandler(async (req, res) => {
-  res.status(410).json({ error: '房源内容已锁定（content_hash 不可修改）' });
 }));
 
 // 函数 7: 改价接口（仅可租/下架状态允许改价）。
@@ -782,38 +1371,6 @@ router.delete('/:id/images', authMiddleware, requireRole('landlord'), asyncHandl
   });
   saveDb();
   res.json({ success: true, message: '图片已删除', data: { imageUrls: nextUrls, imageHashes: nextHashes } });
-}));
-
-// 函数 9: 重新评分接口。
-router.post('/:id/score', authMiddleware, requireRole('landlord'), asyncHandler(async (req, res) => {
-  const db = await getDb();
-  const rows = parseResult(db.exec('SELECT * FROM listings WHERE id = ? AND landlord_id = ?', [req.params.id, req.user.id]));
-  if (!rows.length) return res.status(403).json({ error: '无权限操作该房源' });
-  const listing = rows[0];
-  const score = await scoreListingPayload({
-    title: listing.title,
-    description: listing.description,
-    address: listing.address,
-    imageUrls: parseJsonArray(listing.image_urls),
-  });
-  db.run(
-    `UPDATE listings
-     SET ai_score = ?, ai_confidence = ?, ai_risk_tags = ?, ai_score_reason = ?,
-         ai_model_version = ?, ai_score_source = ?, ai_scored_at = datetime('now', '+8 hours'),
-         updated_at = datetime('now', '+8 hours')
-     WHERE id = ?`,
-    [score.score, score.confidence, JSON.stringify(score.riskTags), score.reason, score.modelVersion, score.source, req.params.id]
-  );
-  logListingOperation(db, {
-    listingId: req.params.id,
-    operatorId: req.user.id,
-    action: 'score_listing',
-    after: score,
-    requestId: req.requestId,
-    source: 'web',
-  });
-  saveDb();
-  res.json({ success: true, data: score });
 }));
 
 // 函数 10: 查询房源操作日志。

@@ -9,16 +9,21 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
+const fs = require('fs');
+const { ethers } = require('ethers');
+const RENTAL_CHAIN_ABI = require('../../frontend/src/shared/blockchain/RentalChainABI.json');
 const { migrate, getDb, parseResult, saveDb, CHAIN_ENV, DB_PATH } = require('./db');
 const { getUserDb, saveUserDb, USER_DB_PATH } = require('./user-db');
 const { logApiError, logSystemError, logRiskEvent } = require('./logger');
 const contractRoutes = require('./routes/contracts');
 const listingRoutes = require('./routes/listings');
+const iface = new ethers.Interface(RENTAL_CHAIN_ABI);
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const HOST = String(process.env.HOST || '127.0.0.1');
 const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || '100mb');
+const PAYMENT_WINDOW_HOURS = Math.max(1, Number(process.env.PAYMENT_WINDOW_HOURS || 2));
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // 函数 1: 生成请求追踪ID，便于前后端日志关联。
@@ -57,6 +62,7 @@ function setupMiddlewares() {
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: '请求过于频繁，请稍后重试' },
+    skip: (req) => req.path === '/health',
   }));
   app.use('/uploads', express.static(path.join(__dirname, '..', 'data', 'uploads')));
 }
@@ -107,7 +113,14 @@ function setupRoutes() {
         authPort: Number(process.env.AUTH_PORT || 3005),
         port: PORT,
         rpcUrl: CHAIN_ENV === 'local' ? (process.env.LOCAL_RPC_URL || 'http://127.0.0.1:8545') : (process.env.SEPOLIA_RPC_URL || ''),
-        rentalChainAddress: process.env.RENTAL_CHAIN_ADDRESS || '',
+        rentalChainAddress: (() => {
+          const fs = require('fs');
+          const df = CHAIN_ENV === 'local'
+            ? path.join(__dirname, '..', '..', '..', 'blockchain', 'deployments-rental-localhost.json')
+            : path.join(__dirname, '..', '..', '..', 'blockchain', 'deployments-rental-sepolia.json');
+          try { if (fs.existsSync(df)) return JSON.parse(fs.readFileSync(df, 'utf8')).address || ''; } catch {}
+          return '';
+        })(),
         counts,
       },
     });
@@ -177,7 +190,123 @@ function setupErrorHandlers() {
   });
 }
 
-// 函数 7: 处理超时未支付合同（房东签署后 2 小时）。
+// 函数 6-1: 获取链运行配置（合约地址唯一来源：部署 JSON 文件）。
+function getChainRuntime() {
+  const rpcUrl = CHAIN_ENV === 'local'
+    ? String(process.env.LOCAL_RPC_URL || 'http://127.0.0.1:8545').trim()
+    : String(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia.publicnode.com').trim();
+
+  let contractAddress = '';
+  const deployFile = CHAIN_ENV === 'local'
+    ? path.join(__dirname, '..', '..', '..', 'blockchain', 'deployments-rental-localhost.json')
+    : path.join(__dirname, '..', '..', '..', 'blockchain', 'deployments-rental-sepolia.json');
+  if (fs.existsSync(deployFile)) {
+    const deploy = JSON.parse(fs.readFileSync(deployFile, 'utf8'));
+    contractAddress = String(deploy.address || '').trim();
+  }
+  return { rpcUrl, contractAddress };
+}
+
+// 函数 6-2: 链上补偿任务（修复 pending 操作和缺失区块元数据）。
+async function reconcileListingOnchainData() {
+  const { rpcUrl, contractAddress } = getChainRuntime();
+  if (!rpcUrl || !ethers.isAddress(contractAddress)) return;
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const db = await getDb();
+
+  const pendingOps = parseResult(db.exec(
+    `SELECT op_id, listing_id, action, tx_hash
+     FROM listing_chain_operations
+     WHERE status = 'pending'
+     ORDER BY created_at ASC
+     LIMIT 50`
+  ));
+  for (const op of pendingOps) {
+    try {
+      const receipt = await provider.getTransactionReceipt(op.tx_hash);
+      if (!receipt) continue;
+      if (receipt.status !== 1) {
+        db.run("UPDATE listing_chain_operations SET status = 'failed', updated_at = datetime('now', '+8 hours') WHERE op_id = ?", [op.op_id]);
+        continue;
+      }
+      const block = await provider.getBlock(receipt.blockNumber);
+      db.run(
+        `UPDATE listing_chain_operations
+         SET status = 'confirmed', detail_json = ?, updated_at = datetime('now', '+8 hours')
+         WHERE op_id = ?`,
+        [JSON.stringify({ blockNumber: Number(receipt.blockNumber || 0), blockTime: Number(block?.timestamp || 0) }), op.op_id]
+      );
+      if (op.listing_id) {
+        db.run(
+          `UPDATE listings
+           SET chain_block_number = CASE WHEN chain_block_number = 0 THEN ? ELSE chain_block_number END,
+               chain_block_time = CASE WHEN chain_block_time = 0 THEN ? ELSE chain_block_time END
+           WHERE id = ?`,
+          [Number(receipt.blockNumber || 0), Number(block?.timestamp || 0), op.listing_id]
+        );
+      }
+      logRiskEvent('listing.onchain.reconcile.confirmed', {
+        listingId: op.listing_id,
+        opId: op.op_id,
+        txHash: op.tx_hash,
+        blockNumber: Number(receipt.blockNumber || 0),
+      });
+    } catch (error) {
+      logSystemError('reconcile.listing-op.exception', {
+        opId: op.op_id,
+        txHash: op.tx_hash,
+        message: error?.message || 'reconcile_failed',
+      });
+    }
+  }
+
+  const needBackfill = parseResult(db.exec(
+    `SELECT id, tx_hash
+     FROM listings
+     WHERE tx_hash IS NOT NULL AND tx_hash <> ''
+       AND (chain_block_number = 0 OR chain_block_time = 0)
+     ORDER BY updated_at DESC
+     LIMIT 50`
+  ));
+  for (const row of needBackfill) {
+    try {
+      const receipt = await provider.getTransactionReceipt(row.tx_hash);
+      if (!receipt || receipt.status !== 1) continue;
+      const block = await provider.getBlock(receipt.blockNumber);
+      db.run(
+        `UPDATE listings
+         SET chain_block_number = ?, chain_block_time = ?
+         WHERE id = ?`,
+        [Number(receipt.blockNumber || 0), Number(block?.timestamp || 0), row.id]
+      );
+      const parsedEvents = [];
+      for (const log of receipt.logs || []) {
+        if (String(log.address || '').toLowerCase() !== contractAddress.toLowerCase()) continue;
+        try {
+          const event = iface.parseLog({ topics: log.topics, data: log.data });
+          parsedEvents.push(event?.name || '');
+        } catch {
+          // ignore
+        }
+      }
+      logRiskEvent('listing.onchain.reconcile.backfill', {
+        listingId: row.id,
+        txHash: row.tx_hash,
+        blockNumber: Number(receipt.blockNumber || 0),
+        events: parsedEvents,
+      });
+    } catch (error) {
+      logSystemError('reconcile.listing-backfill.exception', {
+        listingId: row.id,
+        txHash: row.tx_hash,
+        message: error?.message || 'reconcile_backfill_failed',
+      });
+    }
+  }
+  saveDb();
+}
+
+// 函数 7: 处理超时未支付合同（按配置窗口或 payment_deadline 自动取消）。
 async function expirePendingPaymentContracts() {
   const db = await getDb();
   const timeoutContracts = parseResult(db.exec(
@@ -186,9 +315,10 @@ async function expirePendingPaymentContracts() {
      WHERE status = 'pending_payment'
        AND landlord_signed_at IS NOT NULL
        AND (
-         datetime(landlord_signed_at, '+2 hours') <= datetime('now', '+8 hours')
+         datetime(landlord_signed_at, ?) <= datetime('now', '+8 hours')
          OR (payment_deadline IS NOT NULL AND payment_deadline <> '' AND datetime(payment_deadline) <= datetime('now', '+8 hours'))
-       )`
+       )`,
+    [`+${PAYMENT_WINDOW_HOURS} hours`]
   ));
   if (timeoutContracts.length === 0) return;
 
@@ -221,7 +351,7 @@ async function expirePendingPaymentContracts() {
     ));
     if (sibling.length === 0) {
       db.run(
-        "UPDATE listings SET status = 'available', updated_at = datetime('now', '+8 hours') WHERE id = ? AND status = 'locked'",
+        "UPDATE listings SET status = 'available', updated_at = datetime('now', '+8 hours') WHERE id = ? AND status = 'available'",
         [item.listing_id]
       );
     }
@@ -247,6 +377,12 @@ async function expireUnsignedContractsByExpiresAt() {
       [item.id]
     );
     if (db.getRowsModified() !== 1) return;
+    db.run(
+      `UPDATE contract_gas_authorizations
+       SET status = 'expired', updated_at = datetime('now', '+8 hours')
+       WHERE contract_id = ? AND status = 'active'`,
+      [item.id]
+    );
 
     const sibling = parseResult(db.exec(
       `SELECT id
@@ -257,7 +393,7 @@ async function expireUnsignedContractsByExpiresAt() {
     ));
     if (sibling.length === 0) {
       db.run(
-        "UPDATE listings SET status = 'available', updated_at = datetime('now', '+8 hours') WHERE id = ? AND status = 'locked'",
+        "UPDATE listings SET status = 'available', updated_at = datetime('now', '+8 hours') WHERE id = ? AND status = 'available'",
         [item.listing_id]
       );
     }
@@ -338,13 +474,16 @@ async function startServer() {
     await migrate();
     setInterval(() => {
       expireUnsignedContractsByExpiresAt().catch((err) => {
-        console.error('签约前超时自动过期任务失败:', err);
+        logSystemError('job.expireUnsignedContractsByExpiresAt.failed', { message: err?.message || 'unknown_error', stack: err?.stack || '' });
       });
       expirePendingPaymentContracts().catch((err) => {
-        console.error('超时取消任务失败:', err);
+        logSystemError('job.expirePendingPaymentContracts.failed', { message: err?.message || 'unknown_error', stack: err?.stack || '' });
       });
       expireActiveContractsByEndDate().catch((err) => {
-        console.error('租期到期任务失败:', err);
+        logSystemError('job.expireActiveContractsByEndDate.failed', { message: err?.message || 'unknown_error', stack: err?.stack || '' });
+      });
+      reconcileListingOnchainData().catch((err) => {
+        logSystemError('job.reconcileListingOnchainData.failed', { message: err?.message || 'unknown_error', stack: err?.stack || '' });
       });
     }, 60 * 1000);
     const server = app.listen(PORT, HOST, () => {
@@ -359,7 +498,7 @@ async function startServer() {
         port: PORT,
       });
       if (error?.code === 'EADDRINUSE') {
-        console.error(`端口 ${PORT} 已被占用，请先关闭占用进程后重试。`);
+        logSystemError('server.listen.eaddrinuse', { message: `端口 ${PORT} 已被占用，请先关闭占用进程后重试。`, port: PORT });
       }
       process.exit(1);
     });

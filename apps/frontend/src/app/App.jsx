@@ -153,14 +153,10 @@ export default function App() {
                   onClick={openProfileModal}
                   className="flex items-center gap-2 px-2.5 py-1.5 rounded-full hover:bg-stone-900/5 transition-colors">
                   <div className="w-6 h-6 rounded-full bg-primary-600 flex items-center justify-center text-white text-[11px] font-semibold flex-shrink-0">
-                    {user.avatarUrl ? (
-                      <img src={user.avatarUrl} alt="" className="h-full w-full rounded-full object-cover" />
-                    ) : (
-                      (user.nickname || user.email || '?')[0].toUpperCase()
-                    )}
+                    {(user.nickname || user.walletAddress || '?')[0].toUpperCase()}
                   </div>
                   <span className="hidden sm:block text-sm font-medium text-stone-700">
-                    {user.nickname || user.email}
+                    {user.nickname || `${(user.walletAddress || '').slice(0, 6)}...${(user.walletAddress || '').slice(-4)}`}
                   </span>
                 </button>
 

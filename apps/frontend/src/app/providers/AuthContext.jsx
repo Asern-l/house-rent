@@ -154,11 +154,17 @@ export function AuthProvider({ children }) {
     };
   }, [refreshWalletInfo]);
 
-    // 函数 6: 用户登录并写入当前网络会话。
-  const login = async (email, password) => {
+    // 函数 6: 钱包签名登录（自动判断新老用户）。
+  const walletLogin = async (walletAddress, signature, message, timestamp, nonce, role = 'tenant', nickname = '', phone = '') => {
     const res = await axios.post(`${AUTH_API_BASE}/auth/login`, {
-      email,
-      password,
+      walletAddress,
+      signature,
+      message,
+      timestamp,
+      nonce,
+      role,
+      nickname,
+      phone,
     });
     const { token, user: userData } = res.data.data;
     const keys = storageKeys(preferredNetwork);
@@ -169,38 +175,16 @@ export function AuthProvider({ children }) {
     return userData;
   };
 
-    // 函数 7: 用户注册并写入当前网络会话。
-  const register = async (email, password, role, nickname, walletAddress) => {
-    const res = await axios.post(`${AUTH_API_BASE}/auth/register`, {
-      email, password, role, nickname, walletAddress,
-    });
-    const { token, user: userData } = res.data.data;
-    const keys = storageKeys(preferredNetwork);
-    localStorage.setItem(keys.token, token);
-    localStorage.setItem(keys.user, JSON.stringify(userData));
-    axios.defaults.headers.common.Authorization = `Bearer ${token}`;
-    setUser(userData);
-    return userData;
-  };
-
-  const resetPassword = async (email, password) => {
-    const res = await axios.post(`${AUTH_API_BASE}/auth/reset-password`, {
-      email,
-      password,
-    });
-    return res.data;
-  };
-
-  const updateProfile = async ({ nickname, avatarUrl }) => {
+  const updateProfile = async ({ nickname, phone }) => {
     const keys = storageKeys(preferredNetwork);
     const token = localStorage.getItem(keys.token) || '';
-    const res = await axios.put(`${AUTH_API_BASE}/auth/me`, { nickname, avatarUrl }, {
+    const res = await axios.put(`${AUTH_API_BASE}/auth/me`, { nickname, phone }, {
       headers: { Authorization: `Bearer ${token}` },
     });
     const nextUser = res.data?.data?.user || {
       ...user,
       ...(nickname !== undefined ? { nickname } : {}),
-      ...(avatarUrl !== undefined ? { avatarUrl } : {}),
+      ...(phone !== undefined ? { phone } : {}),
     };
     setUser(nextUser);
     localStorage.setItem(keys.user, JSON.stringify(nextUser));
@@ -217,10 +201,10 @@ export function AuthProvider({ children }) {
     setWalletInfo(null);
   };
 
-    // 函数 9: 连接钱包并回写钱包地址。
+    // 函数 9: 连接钱包（验证与已登录用户钱包地址一致）。
   const connectWallet = async () => {
     if (!window.ethereum) {
-      toast.error('Please install MetaMask');
+      toast.error('请安装 MetaMask');
       return null;
     }
     try {
@@ -233,32 +217,23 @@ export function AuthProvider({ children }) {
           return null;
         }
         const bound = String(user.walletAddress || '').trim();
-        if (bound && selected.toLowerCase() !== bound.toLowerCase()) {
-          toast.error(`仅支持重连已绑定地址：${bound}`);
+        if (selected.toLowerCase() !== bound.toLowerCase()) {
+          toast.error(`当前钱包(${selected.slice(0,6)}...${selected.slice(-4)})与已登录地址不一致`);
           return null;
         }
-
-        const keys = storageKeys(preferredNetwork);
-        const token = localStorage.getItem(keys.token) || '';
-        await axios.put(`${AUTH_API_BASE}/auth/me`, { walletAddress: selected }, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const nextUser = { ...user, walletAddress: selected };
-        setUser(nextUser);
-        localStorage.setItem(keys.user, JSON.stringify(nextUser));
         await refreshWalletInfo();
-        toast.success(bound ? '钱包已重连' : '钱包绑定成功');
+        toast.success('钱包已连接');
       }
       return accounts[0] || null;
     } catch {
-      toast.error('Failed to connect wallet');
+      toast.error('连接钱包失败');
       return null;
     }
   };
 
     // 函数 10: 钱包断连提示（当前策略不允许解绑）。
   const disconnectWallet = async () => {
-    toast.error('当前策略不支持解绑钱包，仅支持重连已绑定地址');
+    toast.error('当前策略不支持解绑钱包');
   };
 
     // 函数 11: 更新目标网络并尝试切换钱包网络。
@@ -305,9 +280,7 @@ export function AuthProvider({ children }) {
     <AuthContext.Provider value={{
       user,
       loading,
-      login,
-      register,
-      resetPassword,
+      walletLogin,
       updateProfile,
       logout,
       connectWallet,

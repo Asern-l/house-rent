@@ -171,6 +171,7 @@ export default function PublishListing({ onClose }) {
         draft,
         chainAnchor,
         txHash: tx.hash,
+        operationId: `op_create_${chainAnchor.listingId}_${String(tx.hash || '').toLowerCase()}`,
       });
 
       toast.success('房源发布成功（已上链）');

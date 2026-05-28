@@ -1,12 +1,12 @@
 ﻿/**
  * 文件说明：鉴权中间件。
- * 提供 JWT 解析和角色校验能力。
+ * 提供 JWT 解析和角色校验能力（基于钱包地址登录）。
  */
 const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
 
-// 函数 1: 校验登录令牌并挂载用户信息。
+// 函数 1: 校验登录令牌并挂载用户信息（钱包地址 + id + role）。
 function authMiddleware(req, res, next) {
   const raw = req.headers.authorization || '';
   if (!raw.startsWith('Bearer ')) {

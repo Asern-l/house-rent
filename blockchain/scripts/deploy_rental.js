@@ -22,8 +22,12 @@ async function main() {
   console.log(`部署账户: ${deployer.address}`);
   console.log(`账户余额: ${hre.ethers.formatEther(balance)} ETH\n`);
 
+  const paymentWindowHours = Math.max(1, Number(process.env.PAYMENT_WINDOW_HOURS || 2));
+  const paymentWindowMs = BigInt(paymentWindowHours) * 60n * 60n * 1000n;
+  console.log(`支付窗口: ${paymentWindowHours} 小时 (${paymentWindowMs} ms)\n`);
+
   const RentalChain = await hre.ethers.getContractFactory('RentalChain');
-  const contract = await RentalChain.deploy();
+  const contract = await RentalChain.deploy(paymentWindowMs);
   await contract.waitForDeployment();
 
   const address = await contract.getAddress();
@@ -36,6 +40,8 @@ async function main() {
     contract: 'RentalChain',
     address,
     deployer: deployer.address,
+    paymentWindowHours,
+    paymentWindowMs: paymentWindowMs.toString(),
     timestamp: new Date().toISOString(),
   }, null, 2));
 

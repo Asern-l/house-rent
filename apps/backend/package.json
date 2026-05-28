@@ -9,7 +9,6 @@
     "start:auth": "node src/auth-server.js"
   },
   "dependencies": {
-    "bcryptjs": "^2.4.3",
     "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "express": "^4.22.2",
