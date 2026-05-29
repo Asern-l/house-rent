@@ -43,7 +43,7 @@ export default function ProfilePage({ onClose }) {
   if (!user) {
     return (
       <div className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-950/55 px-4 py-6 backdrop-blur-sm">
-        <div className="relative w-full max-w-[385px] rounded-[1.5rem] border border-primary-600/20 bg-[#f5f0e8] p-8 text-center shadow-[0_22px_55px_rgba(27,23,18,0.28)]">
+        <div className="card-enter relative w-full max-w-[385px] rounded-[1.5rem] border border-primary-600/20 bg-[#f5f0e8] p-8 text-center shadow-[0_22px_55px_rgba(27,23,18,0.28)]">
           {onClose && <CloseButton onClose={onClose} />}
           <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#fbf7ef] text-stone-950 shadow-[0_12px_30px_rgba(36,31,26,0.18)]">
             <UserIcon className="h-7 w-7" />
@@ -132,7 +132,7 @@ export default function ProfilePage({ onClose }) {
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-stone-950/55 px-4 py-6 backdrop-blur-sm">
       <div
-        className="relative w-full max-w-[460px] rounded-[1.5rem] border border-primary-600/20 p-8 shadow-[0_22px_55px_rgba(27,23,18,0.28)] animate-fade-in"
+        className="card-enter relative w-full max-w-[460px] rounded-[1.5rem] border border-primary-600/20 p-8 shadow-[0_22px_55px_rgba(27,23,18,0.28)]"
         style={{
           background:
             'linear-gradient(180deg, rgba(245,240,232,0.98) 0%, rgba(242,236,226,0.98) 100%)',

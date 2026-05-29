@@ -44,6 +44,44 @@ body {
 .badge-red    { @apply badge bg-red-900/50    text-red-400    border border-red-800/50; }
 .badge-gray   { @apply badge bg-gray-800      text-gray-400   border border-gray-700; }
 
+/* ── Page route transitions ── */
+@keyframes pageEnter {
+  from { opacity: 0; transform: translateY(18px); filter: blur(4px); }
+  to   { opacity: 1; transform: translateY(0);    filter: blur(0); }
+}
+.page-enter {
+  animation: pageEnter 320ms cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+
+/* ── Modal overlay / card transitions ── */
+@keyframes overlayEnter {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes overlayExit {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes cardEnter {
+  from { opacity: 0; transform: translateY(28px) scale(0.95); filter: blur(6px); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    filter: blur(0); }
+}
+@keyframes cardExit {
+  from { opacity: 1; transform: translateY(0)   scale(1);    filter: blur(0); }
+  to   { opacity: 0; transform: translateY(12px) scale(0.97); filter: blur(4px); }
+}
+.overlay-enter { animation: overlayEnter 220ms ease both; }
+.overlay-exit  { animation: overlayExit  200ms ease both; }
+.card-enter    { animation: cardEnter 320ms cubic-bezier(0.34, 1.3, 0.64, 1) both; }
+.card-exit     { animation: cardExit  180ms ease both; }
+
+/* ── Mobile nav slide-down ── */
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.slide-down { animation: slideDown 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94) both; }
+
 /* ── Hero reveal animation (matches RelayEstate source) ── */
 @keyframes revealFlow {
   0%   { opacity: 0; transform: translateY(34px) scale(0.985); filter: blur(10px); }

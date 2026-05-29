@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './providers/AuthContext';
 import {
@@ -228,7 +228,7 @@ export default function App() {
 
         {/* Mobile dropdown */}
         {mobileOpen && (
-          <div className="md:hidden border-t border-white/10 bg-black/60 backdrop-blur-xl px-4 py-3 space-y-0.5">
+          <div className="slide-down md:hidden border-t border-white/10 bg-black/60 backdrop-blur-xl px-4 py-3 space-y-0.5">
             {navItems.map((item) => (
               item.path === '/publish' || item.path === '/verify' ? (
                 <button
@@ -301,7 +301,7 @@ export default function App() {
 
       {/* ── Page content ── */}
       <main className="relative z-10 flex-1 overflow-y-auto p-6">
-        <div className="relative z-10">
+        <div key={location.key} className="page-enter relative z-10">
           <Routes>
             <Route path="/"           element={<HomePage />} />
             <Route path="/login"      element={<HomePage />} />
@@ -317,24 +317,54 @@ export default function App() {
         </div>
       </main>
 
-      {authModal && (
+      <ModalTransition open={!!authModal}>
         <LoginPage
-          initialMode={authModal}
+          initialMode={authModal || 'login'}
           onClose={() => setAuthModal(null)}
         />
-      )}
-      {profileModalOpen && (
+      </ModalTransition>
+      <ModalTransition open={profileModalOpen}>
         <ProfilePage onClose={closeProfileModal} />
-      )}
-      {publishModalOpen && (
+      </ModalTransition>
+      <ModalTransition open={publishModalOpen}>
         <PublishListing onClose={closePublishModal} />
-      )}
-      {verifyModalOpen && (
+      </ModalTransition>
+      <ModalTransition open={verifyModalOpen}>
         <VerifyPage onClose={closeVerifyModal} />
-      )}
+      </ModalTransition>
 
       {/* 开发用快捷登录面板，生产构建自动隐藏 */}
       <DevPanel />
+    </div>
+  );
+}
+
+function ModalTransition({ open, children }) {
+  const EXIT_MS = 180;
+  const [mounted, setMounted] = useState(open);
+  const [exiting, setExiting] = useState(false);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (open) {
+      clearTimeout(timerRef.current);
+      setExiting(false);
+      setMounted(true);
+    } else if (mounted) {
+      setExiting(true);
+      timerRef.current = setTimeout(() => {
+        setMounted(false);
+        setExiting(false);
+      }, EXIT_MS);
+    }
+    return () => clearTimeout(timerRef.current);
+  }, [open]);
+
+  if (!mounted) return null;
+
+  return (
+    <div className={exiting ? 'overlay-exit' : 'overlay-enter'}>
+      {children}
     </div>
   );
 }

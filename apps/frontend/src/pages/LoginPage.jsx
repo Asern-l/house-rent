@@ -9,7 +9,9 @@ import {
   LoaderIcon,
   LockIcon,
   MailIcon,
+  RefreshCwIcon,
   UserIcon,
+  WifiOffIcon,
   XIcon,
 } from 'lucide-react';
 import { useAuth } from '../app/providers/AuthContext';
@@ -30,6 +32,7 @@ export default function LoginPage({ initialMode = 'login', onClose }) {
     captchaAnswer: '',
   });
   const [captcha, setCaptcha] = useState(null);
+  const [captchaError, setCaptchaError] = useState(false);
   const [loading, setLoading] = useState(false);
   const [codeLoading, setCodeLoading] = useState(false);
   const [devCode, setDevCode] = useState('');
@@ -38,12 +41,14 @@ export default function LoginPage({ initialMode = 'login', onClose }) {
   const isReset = mode === 'reset';
 
   const loadCaptcha = useCallback(async () => {
+    setCaptchaError(false);
     try {
       const nextCaptcha = await getCaptcha();
       setCaptcha(nextCaptcha);
       setForm((prev) => ({ ...prev, captchaAnswer: '' }));
     } catch {
       setCaptcha(null);
+      setCaptchaError(true);
     }
   }, [getCaptcha]);
 
@@ -61,7 +66,7 @@ export default function LoginPage({ initialMode = 'login', onClose }) {
     confirmPassword: (s) => s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ''),
     nickname:        (s) => s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F<>"]/g, ''),
     emailCode:       (s) => s.replace(/\D/g, '').slice(0, 6),
-    captchaAnswer:   (s) => s.replace(/\D/g, '').slice(0, 2),
+    captchaAnswer:   (s) => s.replace(/\D/g, '').slice(0, 4),
     role:            (s) => s,
   };
 
@@ -97,6 +102,8 @@ export default function LoginPage({ initialMode = 'login', onClose }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!form.email.trim()) { toast.error('请填写邮箱'); return; }
+    if (!form.password) { toast.error('请填写密码'); return; }
     setLoading(true);
     try {
       if (isRegister || isReset) {
@@ -126,6 +133,11 @@ export default function LoginPage({ initialMode = 'login', onClose }) {
         toast.success('注册成功');
         if (onClose) onClose(); else navigate('/');
       } else {
+        if (captchaError) {
+          toast.error('验证服务不可用，请点击重试后再登录');
+          setLoading(false);
+          return;
+        }
         if (!form.captchaAnswer.trim()) {
           toast.error('请先完成人机验证');
           setLoading(false);
@@ -149,7 +161,7 @@ export default function LoginPage({ initialMode = 'login', onClose }) {
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-950/55 px-4 py-6 backdrop-blur-sm">
       <div
-        className="relative w-full max-w-[385px] rounded-[1.5rem] border border-primary-600/20 p-8 shadow-[0_22px_55px_rgba(27,23,18,0.28)]"
+        className="card-enter relative w-full max-w-[385px] rounded-[1.5rem] border border-primary-600/20 p-8 shadow-[0_22px_55px_rgba(27,23,18,0.28)]"
         style={{
           background:
             'linear-gradient(180deg, rgba(245,240,232,0.98) 0%, rgba(242,236,226,0.98) 100%)',
@@ -191,7 +203,6 @@ export default function LoginPage({ initialMode = 'login', onClose }) {
               placeholder="Email"
               value={form.email}
               onChange={(e) => updateForm('email', e.target.value)}
-              required
               maxLength={254}
               autoComplete="email"
             />
@@ -204,7 +215,6 @@ export default function LoginPage({ initialMode = 'login', onClose }) {
               placeholder="Password"
               value={form.password}
               onChange={(e) => updateForm('password', e.target.value)}
-              required
               minLength={6}
               maxLength={128}
               autoComplete={isRegister ? 'new-password' : 'current-password'}
@@ -220,7 +230,6 @@ export default function LoginPage({ initialMode = 'login', onClose }) {
                   placeholder="Confirm password"
                   value={form.confirmPassword}
                   onChange={(e) => updateForm('confirmPassword', e.target.value)}
-                  required
                   minLength={6}
                   maxLength={128}
                   autoComplete="new-password"
@@ -271,7 +280,6 @@ export default function LoginPage({ initialMode = 'login', onClose }) {
                     placeholder="Email code"
                     value={form.emailCode}
                     onChange={(e) => updateForm('emailCode', e.target.value)}
-                    required
                     maxLength={6}
                   />
                 </Field>
@@ -287,6 +295,7 @@ export default function LoginPage({ initialMode = 'login', onClose }) {
 
               <HumanCheck
                 captcha={captcha}
+                error={captchaError}
                 value={form.captchaAnswer}
                 onChange={(value) => updateForm('captchaAnswer', value)}
                 onRefresh={loadCaptcha}
@@ -354,22 +363,39 @@ function Field({ icon: Icon, className = '', children }) {
   );
 }
 
-function HumanCheck({ captcha, value, onChange, onRefresh }) {
+function HumanCheck({ captcha, error, value, onChange, onRefresh }) {
+  if (error) {
+    return (
+      <div className="flex items-center gap-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-2.5">
+        <WifiOffIcon className="h-4 w-4 shrink-0 text-red-400" />
+        <span className="min-w-0 flex-1 text-xs text-red-600">验证服务连接失败，请检查后端是否已启动</span>
+        <button
+          type="button"
+          onClick={onRefresh}
+          className="flex shrink-0 items-center gap-1 rounded-xl border border-red-300 bg-white px-2.5 py-1 text-xs font-semibold text-red-600 transition-colors hover:bg-red-50"
+        >
+          <RefreshCwIcon className="h-3 w-3" />
+          重试
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center gap-2 rounded-2xl border border-stone-300 bg-[#fbf7ef] px-3 py-2">
-      <span className="shrink-0 text-xs font-semibold text-stone-500">
-        {captcha?.question || '验证加载中'}
+      <span className="shrink-0 rounded-lg bg-stone-200/70 px-2 py-0.5 font-mono text-xs font-bold text-stone-700">
+        {captcha?.question ?? '…'} =
       </span>
       <input
         type="text"
         inputMode="numeric"
         className="min-w-0 flex-1 bg-transparent text-sm text-stone-800 outline-none placeholder:text-stone-400"
-        placeholder="Answer"
+        placeholder="?"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        maxLength={2}
+        maxLength={4}
       />
-      <button type="button" onClick={onRefresh} className="text-xs font-semibold text-primary-700">
+      <button type="button" onClick={onRefresh} className="shrink-0 text-xs font-semibold text-primary-700">
         换题
       </button>
     </div>
