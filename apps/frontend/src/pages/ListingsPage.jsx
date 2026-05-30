@@ -1,6 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { HomeIcon, LoaderIcon, MapPinIcon, SearchIcon } from 'lucide-react';
+import { HomeIcon, MapPinIcon, SearchIcon, LoaderIcon } from 'lucide-react';
+
+function openMap(address) {
+  const q = encodeURIComponent(address);
+  const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
+  const url = isMac ? `maps://?q=${q}&address=${q}` : `https://maps.google.com/?q=${q}`;
+  window.open(url, '_blank');
+}
 import { apiGet } from '../shared/api/api';
 
 function getFirstImageUrl(item) {
@@ -19,23 +26,6 @@ function resolveImageUrl(url) {
     return String(url).replace('/uploads/', '/uploads-local/');
   }
   return String(url || '');
-}
-
-function getListingStatusMeta(item) {
-  const status = String(item?.public_status || item?.status || '').trim().toLowerCase();
-  if (status === 'signing') {
-    return { label: '签约中', className: 'border-yellow-700/60 bg-yellow-900/30 text-yellow-300' };
-  }
-  if (status === 'rented') {
-    return { label: '已租出', className: 'border-gray-600 bg-gray-800 text-gray-300' };
-  }
-  if (status === 'offline') {
-    return { label: '已下架', className: 'border-slate-700/60 bg-slate-900/40 text-slate-300' };
-  }
-  if (status === 'closed') {
-    return { label: '已关闭', className: 'border-red-800/50 bg-red-950/30 text-red-300' };
-  }
-  return { label: '可申请', className: 'border-emerald-700/60 bg-emerald-900/30 text-emerald-300' };
 }
 
 export default function ListingsPage() {
@@ -76,7 +66,7 @@ export default function ListingsPage() {
       </div>
 
       <div className="card mb-4 p-3">
-        <div className="flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2">
+        <div className="flex items-center gap-2 rounded-lg border border-white/15 bg-black/30 px-3 py-2">
           <SearchIcon className="h-4 w-4 text-gray-500" />
           <input
             value={keyword}
@@ -103,37 +93,32 @@ export default function ListingsPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filteredListings.map((item) => {
-            const statusMeta = getListingStatusMeta(item);
-            const firstImage = getFirstImageUrl(item);
-            return (
-              <Link key={item.id} to={`/listing/${item.id}`} className="card block p-4 transition-all hover:-translate-y-0.5 hover:border-gray-700">
-                <div className="relative mb-3">
-                  {firstImage ? (
-                    <img
-                      src={resolveImageUrl(firstImage)}
-                      alt={item.title || 'listing'}
-                      className="h-36 w-full rounded-lg object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-36 items-center justify-center rounded-lg bg-gradient-to-br from-primary-900/30 to-blue-900/30">
-                      <HomeIcon className="h-12 w-12 text-primary-600" />
-                    </div>
-                  )}
-                  <span className={`absolute left-2 top-2 rounded-md border px-2 py-1 text-xs font-semibold ${statusMeta.className}`}>
-                    {statusMeta.label}
-                  </span>
+          {filteredListings.map((item) => (
+            <Link key={item.id} to={`/listing/${item.id}`} className="card block p-4 transition-all hover:border-gray-700 hover:-translate-y-0.5">
+              {getFirstImageUrl(item) ? (
+                <img
+                  src={resolveImageUrl(getFirstImageUrl(item))}
+                  alt={item.title || 'listing'}
+                  className="mb-3 h-36 w-full rounded-lg object-cover"
+                />
+              ) : (
+                <div className="mb-3 flex h-36 items-center justify-center rounded-lg bg-black/20 border border-white/5">
+                  <HomeIcon className="h-12 w-12 text-primary-600" />
                 </div>
-
-                <h3 className="line-clamp-1 text-base font-semibold text-gray-100">{item.title || '未命名房源'}</h3>
-                <p className="mt-2 flex items-start text-sm text-gray-400">
-                  <MapPinIcon className="mr-1 mt-0.5 h-4 w-4 flex-shrink-0" />
-                  <span className="line-clamp-2">{item.address || '-'}</span>
-                </p>
-                <p className="mt-3 text-lg font-bold text-primary-400">{item.rent_amount} ETH/月</p>
-              </Link>
-            );
-          })}
+              )}
+              <h3 className="line-clamp-1 text-base font-semibold text-gray-100">{item.title || '未命名房源'}</h3>
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); openMap(item.address); }}
+                className="mt-2 flex items-start text-sm text-gray-400 transition-colors hover:text-primary-400 group"
+                title="在地图中查看"
+              >
+                <MapPinIcon className="mr-1 mt-0.5 h-4 w-4 shrink-0 group-hover:text-primary-400" />
+                <span className="line-clamp-1 text-left underline-offset-2 group-hover:underline">{item.address || '-'}</span>
+              </button>
+              <p className="mt-3 text-lg font-bold text-primary-400">{item.rent_amount} ETH/月</p>
+            </Link>
+          ))}
         </div>
       )}
     </div>

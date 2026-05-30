@@ -37,15 +37,15 @@ export default function ProfilePage({ onClose }) {
 
   if (!user) {
     return (
-      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-950/55 px-4 py-6 backdrop-blur-sm">
-        <div className="relative w-full max-w-[385px] rounded-[1.5rem] border border-primary-600/20 bg-[#f5f0e8] p-8 text-center shadow-[0_22px_55px_rgba(27,23,18,0.28)]">
+      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
+        <div className="relative w-full max-w-[385px] rounded-[1.5rem] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.78)_0%,rgba(10,15,28,0.82)_100%)] p-8 text-center shadow-[0_22px_55px_rgba(27,23,18,0.28)]">
           {onClose && <CloseButton onClose={onClose} />}
-          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#fbf7ef] text-stone-950 shadow-[0_12px_30px_rgba(36,31,26,0.18)]">
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/8 text-amber-200 shadow-[0_12px_30px_rgba(2,6,23,0.24)]">
             <UserIcon className="h-7 w-7" />
           </div>
-          <h1 className="text-2xl font-bold text-stone-950">请先登录</h1>
-          <p className="mt-3 text-sm text-stone-500">连接钱包登录后可以查看个人资料和快捷操作。</p>
-          <Link to="/login" onClick={onClose} className="mt-7 flex h-11 w-full items-center justify-center rounded-2xl bg-gradient-to-b from-slate-800 to-slate-950 text-base font-semibold text-[#f5f0e8] shadow-[0_6px_12px_rgba(15,23,42,0.32)]">
+          <h1 className="text-2xl font-bold text-white">请先登录</h1>
+          <p className="mt-3 text-sm text-slate-300/72">连接钱包登录后可以查看个人资料和快捷操作。</p>
+          <Link to="/login" onClick={onClose} className="mt-7 flex h-11 w-full items-center justify-center rounded-2xl bg-gradient-to-b from-slate-800 to-slate-950 text-base font-semibold text-slate-100 shadow-[0_6px_12px_rgba(15,23,42,0.32)]">
             去登录
           </Link>
         </div>
@@ -94,42 +94,42 @@ export default function ProfilePage({ onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-stone-950/55 px-4 py-6 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
       <div
-        className="relative w-full max-w-[460px] rounded-[1.5rem] border border-primary-600/20 p-8 shadow-[0_22px_55px_rgba(27,23,18,0.28)] animate-fade-in"
+        className="relative w-full max-w-[460px] rounded-[1.5rem] border border-white/10 p-8 shadow-[0_22px_55px_rgba(2,6,23,0.34)] backdrop-blur-xl animate-fade-in"
         style={{
           background:
-            'linear-gradient(180deg, rgba(245,240,232,0.98) 0%, rgba(242,236,226,0.98) 100%)',
+            'linear-gradient(180deg, rgba(15,23,42,0.82) 0%, rgba(10,15,28,0.86) 100%)',
         }}
       >
         {onClose && <CloseButton onClose={onClose} />}
 
         <div className="mb-7 text-center">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-600 text-xl font-bold text-stone-950 shadow-[0_12px_30px_rgba(231,167,121,0.35)]">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-600 text-xl font-bold text-white shadow-[0_12px_30px_rgba(231,167,121,0.35)]">
             <WalletIcon className="h-8 w-8" />
           </div>
           <input
-            className="mx-auto block w-full max-w-[260px] rounded-2xl border border-stone-300 bg-[#fbf7ef] px-4 py-2 text-center text-xl font-bold text-stone-950 outline-none transition-colors focus:border-primary-600/80"
+            className="mx-auto block w-full max-w-[260px] rounded-2xl border border-white/10 bg-white/6 px-4 py-2 text-center text-xl font-bold text-white outline-none transition-colors focus:border-primary-600/80"
             value={nickname}
             onChange={(event) => setNickname(event.target.value)}
             placeholder="昵称"
             maxLength={32}
           />
-          <p className="mt-2 font-mono text-xs text-stone-400">{shortAddr}</p>
-          <span className="mt-3 inline-flex rounded-full border border-primary-600/40 bg-primary-600/20 px-3 py-1 text-xs font-semibold text-stone-800">
+          <p className="mt-2 font-mono text-xs text-slate-400">{shortAddr}</p>
+          <span className="mt-3 inline-flex rounded-full border border-primary-600/40 bg-primary-600/20 px-3 py-1 text-xs font-semibold text-amber-100">
             {roleLabel}
           </span>
         </div>
 
         {/* 手机号 */}
-        <section className="mb-4 rounded-2xl border border-stone-300 bg-[#fbf7ef] p-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-stone-900">
+        <section className="mb-4 rounded-2xl border border-white/10 bg-white/6 p-4">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-100">
             <PhoneIcon className="h-4 w-4 text-primary-700" />
             联系方式
           </div>
           <input
             type="tel"
-            className="w-full rounded-2xl border border-stone-300 bg-[#f5f0e8] px-4 py-2 text-sm text-stone-700 outline-none transition-colors focus:border-primary-600/80"
+            className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-2 text-sm text-slate-200 outline-none transition-colors focus:border-primary-600/80"
             value={phone}
             onChange={(event) => setPhone(event.target.value)}
             placeholder="手机号（选填）"
@@ -141,21 +141,21 @@ export default function ProfilePage({ onClose }) {
           type="button"
           onClick={handleSaveProfile}
           disabled={saving}
-          className="mx-auto mb-4 flex h-10 min-w-[160px] items-center justify-center gap-2 rounded-2xl bg-stone-950 px-4 text-sm font-semibold text-[#f5f0e8] transition-colors hover:bg-stone-800 disabled:opacity-60"
+          className="mx-auto mb-4 flex h-10 min-w-[160px] items-center justify-center gap-2 rounded-2xl bg-stone-950 px-4 text-sm font-semibold text-slate-100 transition-colors hover:bg-stone-800 disabled:opacity-60"
         >
           {saving && <LoaderIcon className="h-4 w-4 animate-spin" />}
           保存资料
         </button>
 
-        <section className="rounded-2xl border border-stone-300 bg-[#fbf7ef] p-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-stone-900">
+        <section className="rounded-2xl border border-white/10 bg-white/6 p-4">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-100">
             <WalletIcon className="h-4 w-4 text-primary-700" />
             钱包
           </div>
           <div className="space-y-3">
-            <div className="rounded-2xl border border-stone-200 bg-[#f5f0e8] px-3 py-3">
-              <p className="text-xs text-stone-500">已绑定钱包地址</p>
-              <p className="mt-1 break-all font-mono text-xs text-stone-700">{user.walletAddress}</p>
+            <div className="rounded-2xl border border-white/10 bg-white/6 px-3 py-3">
+              <p className="text-xs text-slate-300/72">已绑定钱包地址</p>
+              <p className="mt-1 break-all font-mono text-xs text-slate-200">{user.walletAddress}</p>
             </div>
             <button onClick={connectWallet} className="profile-secondary-button">
               连接钱包
@@ -163,15 +163,15 @@ export default function ProfilePage({ onClose }) {
           </div>
         </section>
 
-        <section className="mt-4 rounded-2xl border border-stone-300 bg-[#fbf7ef] p-4">
-          <div className="mb-3 text-sm font-semibold text-stone-900">快捷操作</div>
+        <section className="mt-4 rounded-2xl border border-white/10 bg-white/6 p-4">
+          <div className="mb-3 text-sm font-semibold text-slate-100">快捷操作</div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {quickActions.map((item) => (
               <Link
                 key={item.to}
                 to={item.to}
                 onClick={(event) => handleQuickAction(event, item)}
-                className="group flex items-center justify-between rounded-2xl border border-transparent px-3 py-3 text-sm font-semibold text-stone-700 transition-all hover:border-primary-600/40 hover:bg-primary-600/15"
+                className="group flex items-center justify-between rounded-2xl border border-transparent px-3 py-3 text-sm font-semibold text-slate-200 transition-all hover:border-primary-600/40 hover:bg-primary-600/15"
               >
                 <span className="flex items-center gap-3">
                   <item.icon className="h-4 w-4 text-primary-700" />
@@ -185,7 +185,7 @@ export default function ProfilePage({ onClose }) {
 
         <button
           onClick={handleLogout}
-          className="mt-5 flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50 text-sm font-semibold text-red-600 transition-colors hover:bg-red-100"
+          className="mt-5 flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 text-sm font-semibold text-red-200 transition-colors hover:bg-red-500/15"
         >
           <LogOutIcon className="h-4 w-4" />
           退出登录
@@ -200,7 +200,7 @@ function CloseButton({ onClose }) {
     <button
       type="button"
       onClick={onClose}
-      className="absolute right-4 top-4 rounded-full p-1.5 text-stone-400 transition-colors hover:bg-stone-900/5 hover:text-stone-700"
+      className="absolute right-4 top-4 rounded-full p-1.5 text-slate-400 transition-colors hover:bg-stone-900/5 hover:text-slate-200"
       aria-label="关闭"
     >
       <XIcon className="h-4 w-4" />

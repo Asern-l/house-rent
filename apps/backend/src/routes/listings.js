@@ -33,6 +33,17 @@ const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
 const RENTAL_CHAIN_ABI = require('../../../frontend/src/shared/blockchain/RentalChainABI.json');
 const iface = new ethers.Interface(RENTAL_CHAIN_ABI);
 const LISTING_ONCHAIN_KINDS = ['listing.create', 'listing.status', 'listing.terms'];
+const LISTING_FEEDBACK_TYPES = new Set(['mismatch', 'photos', 'noise', 'communication', 'other']);
+const LISTING_FEEDBACK_TYPE_TO_CODE = {
+  mismatch: 1,
+  photos: 2,
+  noise: 3,
+  communication: 4,
+  other: 5,
+};
+const LISTING_FEEDBACK_CODE_TO_TYPE = Object.fromEntries(
+  Object.entries(LISTING_FEEDBACK_TYPE_TO_CODE).map(([key, value]) => [value, key])
+);
 
 function createTraceId(prefix = 'web') {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -108,6 +119,30 @@ function normalizeClauses(raw) {
   if (clauses.length > 50) return null;
   if (clauses.some((item) => item.length > 200)) return null;
   return clauses;
+}
+
+function normalizePublicComment(raw, maxLength = 300) {
+  const text = String(raw || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\u0000/g, '')
+    .trim();
+  if (!text) return '';
+  if (text.length > maxLength) return '';
+  return text;
+}
+
+function normalizeWalletAddress(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return '';
+  try {
+    return ethers.getAddress(text).toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function buildListingFeedbackCommentHash(commentText) {
+  return ethers.keccak256(ethers.toUtf8Bytes(String(commentText || '')));
 }
 
 // 函数 5-2: 生成房源完整快照（用于历史回放渲染）。
@@ -836,7 +871,126 @@ router.get('/:id', asyncHandler(async (req, res) => {
   }
   const [detailWithState] = await attachPublicListingState(rows);
   const [detail] = await attachLandlordProfile([detailWithState]);
+  const feedbacks = parseResult(db.exec(
+    `SELECT id, author_wallet, feedback_type, comment_text, comment_hash, tx_hash, created_at
+     FROM listing_feedbacks
+     WHERE listing_id = ?
+     ORDER BY created_at DESC
+     LIMIT 50`,
+    [req.params.id]
+  )).map((item) => ({
+    id: item.id,
+    author_wallet: String(item.author_wallet || '').trim().toLowerCase(),
+    feedback_type: item.feedback_type,
+    comment_text: item.comment_text,
+    comment_hash: String(item.comment_hash || '').trim().toLowerCase(),
+    tx_hash: String(item.tx_hash || '').trim().toLowerCase(),
+    created_at: item.created_at,
+  }));
+  const tenantReviews = parseResult(db.exec(
+    `SELECT id, contract_id, tenant_wallet, rating, weight, comment_text, created_at
+     FROM contract_reviews
+     WHERE listing_id = ?
+     ORDER BY created_at DESC
+     LIMIT 50`,
+    [req.params.id]
+  )).map((item) => ({
+    id: item.id,
+    contract_id: item.contract_id,
+    tenant_wallet: String(item.tenant_wallet || '').trim().toLowerCase(),
+    rating: Number(item.rating || 0),
+    weight: Number(item.weight || 1),
+    comment_text: item.comment_text,
+    created_at: item.created_at,
+  }));
+  const reviewCount = tenantReviews.length;
+  const weightSum = tenantReviews.reduce((sum, item) => sum + Number(item.weight || 1), 0);
+  const weightedScoreSum = tenantReviews.reduce((sum, item) => sum + Number(item.rating || 0) * Number(item.weight || 1), 0);
+  detail.feedbacks = feedbacks;
+  detail.tenant_reviews = tenantReviews;
+  detail.review_summary = {
+    review_count: reviewCount,
+    weight_sum: weightSum,
+    weighted_score_sum: weightedScoreSum,
+    average_visible: reviewCount >= 3 && weightSum > 0,
+    weighted_average: reviewCount >= 3 && weightSum > 0
+      ? Number((weightedScoreSum / weightSum).toFixed(1))
+      : null,
+    sample_threshold: 3,
+  };
   res.json({ success: true, data: detail });
+}));
+
+router.post('/:id/feedbacks', authMiddleware, asyncHandler(async (req, res) => {
+  const db = await getDb();
+  const rows = parseResult(db.exec('SELECT id, landlord_id FROM listings WHERE id = ?', [req.params.id]));
+  if (!rows.length) {
+    return sendError(res, 404, 'LISTING_NOT_FOUND', '房源不存在');
+  }
+  const listing = rows[0];
+  if (listing.landlord_id === req.user.id) {
+    return sendError(res, 400, 'LISTING_FEEDBACK_OWNER_FORBIDDEN', '房东不能给自己的房源提交反馈');
+  }
+  const authorWallet = normalizeWalletAddress(req.user.walletAddress || '');
+  if (!authorWallet) {
+    return sendError(res, 400, 'LISTING_FEEDBACK_WALLET_REQUIRED', '当前登录会话缺少有效钱包地址');
+  }
+  const normalizedTxHash = normalizeTxHash(req.body?.txHash);
+  if (!normalizedTxHash) {
+    return sendError(res, 400, 'LISTING_FEEDBACK_TX_INVALID', '反馈交易哈希无效');
+  }
+  const feedbackType = String(req.body?.feedbackType || '').trim();
+  if (!LISTING_FEEDBACK_TYPES.has(feedbackType)) {
+    return sendError(res, 400, 'LISTING_FEEDBACK_TYPE_INVALID', '反馈类型不合法');
+  }
+  const feedbackTypeCode = Number(LISTING_FEEDBACK_TYPE_TO_CODE[feedbackType] || 0);
+  if (!feedbackTypeCode) {
+    return sendError(res, 400, 'LISTING_FEEDBACK_TYPE_INVALID', '反馈类型不合法');
+  }
+  const commentText = normalizePublicComment(req.body?.commentText, 300);
+  if (!commentText) {
+    return sendError(res, 400, 'LISTING_FEEDBACK_COMMENT_INVALID', '反馈内容不能为空且不能超过 300 字');
+  }
+  const normalizedCommentHash = String(req.body?.commentHash || '').trim().toLowerCase();
+  const expectedCommentHash = buildListingFeedbackCommentHash(commentText).toLowerCase();
+  if (normalizedCommentHash !== expectedCommentHash) {
+    return sendError(res, 400, 'LISTING_FEEDBACK_COMMENT_HASH_MISMATCH', '反馈内容哈希不匹配');
+  }
+  const existed = parseResult(db.exec('SELECT id FROM listing_feedbacks WHERE tx_hash = ? LIMIT 1', [normalizedTxHash]));
+  if (existed.length > 0) {
+    return sendError(res, 409, 'LISTING_FEEDBACK_TX_DUPLICATED', '该反馈交易已回写');
+  }
+  const verified = await verifyOnchainTx({
+    txHash: normalizedTxHash,
+    expectedFrom: authorWallet,
+    eventName: 'ListingFeedbackSubmitted',
+    argChecker: (args) => (
+      String(args.listingId || '') === req.params.id
+      && Number(args.feedbackType || 0) === feedbackTypeCode
+      && String(args.commentHash || '').trim().toLowerCase() === normalizedCommentHash
+      && normalizeWalletAddress(args.sender || '') === authorWallet
+    ),
+  });
+  const feedbackId = `lfb_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  db.run(
+    `INSERT INTO listing_feedbacks (id, listing_id, author_id, author_role, author_wallet, feedback_type, comment_text, comment_hash, tx_hash, chain_env)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [feedbackId, req.params.id, req.user.id, String(req.user.role || ''), authorWallet, feedbackType, commentText, normalizedCommentHash, normalizedTxHash, CHAIN_ENV]
+  );
+  saveDb();
+  res.json({
+    success: true,
+    message: '房源反馈已提交',
+    data: {
+      id: feedbackId,
+      author_wallet: authorWallet,
+      feedback_type: feedbackType,
+      comment_text: commentText,
+      comment_hash: normalizedCommentHash,
+      tx_hash: normalizedTxHash,
+      created_at: getCnDateTime(new Date((verified.blockTime || Math.floor(Date.now() / 1000)) * 1000)),
+    },
+  });
 }));
 
 // 函数 5-1: 查询房源历史版本（公开只读）。

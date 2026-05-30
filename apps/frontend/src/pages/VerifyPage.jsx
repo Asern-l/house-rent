@@ -107,25 +107,25 @@ export default function VerifyPage({ onClose }) {
   const comparisons = result?.comparisons || null;
 
   return (
-    <div className={isModal ? 'fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-stone-950/55 px-4 py-6 backdrop-blur-sm' : 'mx-auto w-full max-w-[760px] animate-fade-in'}>
+    <div className={isModal ? 'fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-slate-950/55 px-4 py-6 backdrop-blur-sm' : 'mx-auto w-full max-w-[760px] animate-fade-in'}>
       <div
-        className="relative w-full max-w-[760px] rounded-[1.5rem] border border-primary-600/20 p-8 shadow-[0_22px_55px_rgba(27,23,18,0.28)] animate-fade-in"
-        style={{ background: 'linear-gradient(180deg, rgba(245,240,232,0.98) 0%, rgba(242,236,226,0.98) 100%)' }}
+        className="relative w-full max-w-[760px] rounded-[1.5rem] border border-white/10 p-8 shadow-[0_22px_55px_rgba(2,6,23,0.34)] backdrop-blur-xl animate-fade-in"
+        style={{ background: 'linear-gradient(180deg, rgba(15,23,42,0.82) 0%, rgba(10,15,28,0.86) 100%)' }}
       >
         {isModal && onClose && <CloseButton onClose={onClose} />}
 
         <div className="mb-7 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#fbf7ef] text-stone-950 shadow-[0_12px_30px_rgba(36,31,26,0.18)]">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/8 text-amber-200 shadow-[0_12px_30px_rgba(2,6,23,0.24)]">
             <ShieldCheckIcon className="h-7 w-7" />
           </div>
-          <h1 className="text-2xl font-bold text-stone-950">链上验真</h1>
-          <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-stone-500">
+          <h1 className="text-2xl font-bold text-white">链上验真</h1>
+          <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-300/72">
             支持按房源或合同查询当前网络的验真结果，展示关键 ID、哈希、版本号、操作序号与上链状态。
           </p>
         </div>
 
-        <form onSubmit={handleVerify} className="rounded-2xl border border-stone-300 bg-[#fbf7ef] p-4">
-          <label className="mb-2 block text-xs font-semibold text-stone-500">验真类型</label>
+        <form onSubmit={handleVerify} className="rounded-2xl border border-white/10 bg-white/6 p-4">
+          <label className="mb-2 block text-xs font-semibold text-slate-300/72">验真类型</label>
           <div className="mb-3 flex gap-2">
             {VERIFY_TYPES.map((item) => (
               <button
@@ -138,7 +138,7 @@ export default function VerifyPage({ onClose }) {
                   setError('');
                 }}
                 className={`rounded-xl px-3 py-1.5 text-sm font-semibold transition-colors ${
-                  verifyType === item.key ? 'bg-stone-900 text-[#f5f0e8]' : 'bg-stone-200 text-stone-700 hover:bg-stone-300'
+                  verifyType === item.key ? 'bg-stone-900 text-slate-100' : 'bg-white/10 text-slate-200 hover:bg-white/15'
                 }`}
               >
                 {item.label}
@@ -146,17 +146,17 @@ export default function VerifyPage({ onClose }) {
             ))}
           </div>
 
-          <label className="mb-2 block text-xs font-semibold text-stone-500">{typeMeta.label} ID</label>
+          <label className="mb-2 block text-xs font-semibold text-slate-300/72">{typeMeta.label} ID</label>
           <div className="flex flex-col gap-2 sm:flex-row">
             <input
               value={entityId}
               onChange={(e) => setEntityId(e.target.value)}
-              className="min-h-[42px] min-w-0 flex-1 rounded-2xl border border-stone-300 bg-[#f5f0e8] px-4 text-sm text-stone-800 outline-none placeholder:text-stone-400 focus:border-primary-600/80"
+              className="min-h-[42px] min-w-0 flex-1 rounded-2xl border border-white/10 bg-white/6 px-4 text-sm text-slate-100 outline-none placeholder:text-slate-400 focus:border-primary-600/80"
               placeholder={typeMeta.placeholder}
             />
             <button
               type="submit"
-              className="inline-flex h-[42px] items-center justify-center gap-2 rounded-2xl bg-stone-950 px-5 text-sm font-semibold text-[#f5f0e8] transition-colors hover:bg-stone-800 disabled:opacity-60"
+              className="inline-flex h-[42px] items-center justify-center gap-2 rounded-2xl bg-stone-950 px-5 text-sm font-semibold text-slate-100 transition-colors hover:bg-stone-800 disabled:opacity-60"
               disabled={loading}
             >
               <SearchIcon className="h-4 w-4" />
@@ -165,10 +165,10 @@ export default function VerifyPage({ onClose }) {
           </div>
         </form>
 
-        {error && <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+        {error && <div className="mt-4 rounded-2xl border border-red-500/30 bg-red-500/12 p-3 text-sm text-red-200">{error}</div>}
 
         {result && !result.exists && (
-          <section className="mt-4 rounded-2xl border border-yellow-300 bg-yellow-50 p-4 text-sm text-yellow-800">
+          <section className="mt-4 rounded-2xl border border-yellow-500/30 bg-yellow-500/12 p-4 text-sm text-yellow-100">
             {result.message || `${typeMeta.label}不存在`}
           </section>
         )}
@@ -211,8 +211,8 @@ export default function VerifyPage({ onClose }) {
             </InfoPanel>
 
             <InfoPanel title="链上快照">
-              {!result.onchain?.readable && <p className="text-red-600">当前网络链上不可读：{result.onchain?.reason || '未知原因'}</p>}
-              {result.onchain?.readable && !result.onchain?.exists && <p className="text-yellow-700">链上未查询到该房源记录。</p>}
+              {!result.onchain?.readable && <p className="text-red-200">当前网络链上不可读：{result.onchain?.reason || '未知原因'}</p>}
+              {result.onchain?.readable && !result.onchain?.exists && <p className="text-yellow-100">链上未查询到该房源记录。</p>}
               {result.onchain?.readable && result.onchain?.exists && (
                 <Grid>
                   <KeyValue label="合约地址" value={result.onchain?.contractAddress || '-'} mono />
@@ -244,7 +244,12 @@ export default function VerifyPage({ onClose }) {
         {result && result.exists && verifyType === 'contract' && (
           <div className="mt-4 space-y-3">
             <StatusCard
-              ok={Boolean(result.hashMatch && result.signatureVerification?.allSignaturesValid && (result.onchainAnchored || !result.txHash || result.txHash === '???') && (result.semanticVerification?.semanticMatch ?? true))}
+              ok={Boolean(
+                result.hashMatch &&
+                result.signatureVerification?.allSignaturesValid &&
+                (result.onchainAnchored || !result.txHash || String(result.txHash).trim() === '未上链') &&
+                (result.semanticVerification?.semanticMatch ?? true)
+              )}
               title="合同验真"
               desc={result.conclusion}
             />
@@ -284,7 +289,7 @@ export default function VerifyPage({ onClose }) {
             </InfoPanel>
 
             <InfoPanel title="链上签名锚定">
-              {!result.onchain?.readable && <p className="text-red-600">当前网络链上合同不可读：{result.onchain?.reason || '未知原因'}</p>}
+              {!result.onchain?.readable && <p className="text-red-200">当前网络链上合同不可读：{result.onchain?.reason || '未知原因'}</p>}
               {result.onchain?.readable && !result.onchain?.exists && <p className="text-yellow-700">链上未查询到该合同记录。</p>}
               {result.onchain?.readable && result.onchain?.exists && (
                 <>
@@ -342,12 +347,12 @@ export default function VerifyPage({ onClose }) {
 
 function StatusCard({ ok, title, desc }) {
   return (
-    <section className={`rounded-2xl border p-4 ${ok ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+    <section className={`rounded-2xl border p-4 ${ok ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-amber-500/30 bg-amber-500/10'}`}>
       <div className="flex items-start gap-3">
-        {ok ? <CheckCircleIcon className="mt-0.5 h-5 w-5 text-emerald-600" /> : <AlertCircleIcon className="mt-0.5 h-5 w-5 text-amber-600" />}
+        {ok ? <CheckCircleIcon className="mt-0.5 h-5 w-5 text-emerald-300" /> : <AlertCircleIcon className="mt-0.5 h-5 w-5 text-amber-200" />}
         <div>
-          <p className={`text-sm font-semibold ${ok ? 'text-emerald-700' : 'text-amber-700'}`}>{title}</p>
-          <p className="mt-1 text-sm text-stone-700">{desc}</p>
+          <p className={`text-sm font-semibold ${ok ? 'text-emerald-300' : 'text-amber-200'}`}>{title}</p>
+          <p className="mt-1 text-sm text-slate-200">{desc}</p>
         </div>
       </div>
     </section>
@@ -361,7 +366,7 @@ function ComparisonGrid({ labels, comparisons }) {
         <div
           key={key}
           className={`rounded-xl border px-3 py-2 text-sm ${
-            value ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'
+            value ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200' : 'border-red-500/30 bg-red-500/10 text-red-200'
           }`}
         >
           {labels[key] || key}：{resultText(Boolean(value))}
@@ -378,15 +383,15 @@ function Grid({ children }) {
 function KeyValue({ label, value, mono = false }) {
   return (
     <div>
-      <p className="text-xs font-semibold text-stone-500">{label}</p>
-      <p className={`mt-1 break-all text-sm text-stone-800 ${mono ? 'font-mono text-xs' : ''}`}>{value || '-'}</p>
+      <p className="text-xs font-semibold text-slate-300/72">{label}</p>
+      <p className={`mt-1 break-all text-sm text-slate-100 ${mono ? 'font-mono text-xs' : ''}`}>{value || '-'}</p>
     </div>
   );
 }
 
 function ExplorerLink({ href, text }) {
   return (
-    <a className="mt-2 inline-block text-sm font-semibold text-primary-700 underline" href={href} target="_blank" rel="noreferrer">
+    <a className="mt-2 inline-block text-sm font-semibold text-amber-200 underline" href={href} target="_blank" rel="noreferrer">
       {text}
     </a>
   );
@@ -394,8 +399,8 @@ function ExplorerLink({ href, text }) {
 
 function InfoPanel({ title, children }) {
   return (
-    <section className="rounded-2xl border border-stone-300 bg-[#fbf7ef] p-4 text-sm leading-6 text-stone-700">
-      <h2 className="mb-2 text-sm font-semibold text-stone-950">{title}</h2>
+    <section className="rounded-2xl border border-white/10 bg-white/6 p-4 text-sm leading-6 text-slate-200">
+      <h2 className="mb-2 text-sm font-semibold text-white">{title}</h2>
       {children}
     </section>
   );
@@ -406,7 +411,7 @@ function CloseButton({ onClose }) {
     <button
       type="button"
       onClick={onClose}
-      className="absolute right-4 top-4 rounded-full p-1.5 text-stone-400 transition-colors hover:bg-stone-900/5 hover:text-stone-700"
+      className="absolute right-4 top-4 rounded-full p-1.5 text-slate-400 transition-colors hover:bg-stone-900/5 hover:text-slate-200"
       aria-label="关闭"
     >
       <XIcon className="h-4 w-4" />

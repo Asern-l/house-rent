@@ -99,6 +99,10 @@ function ensureIndexes(d) {
   d.run('CREATE INDEX IF NOT EXISTS idx_contract_versions_contract ON contract_versions(contract_id)');
   d.run('CREATE INDEX IF NOT EXISTS idx_contract_terminations_contract ON contract_terminations(contract_id)');
   d.run('CREATE INDEX IF NOT EXISTS idx_listing_operation_logs_listing ON listing_operation_logs(listing_id)');
+  d.run('CREATE INDEX IF NOT EXISTS idx_listing_feedbacks_listing ON listing_feedbacks(listing_id, created_at)');
+  d.run('CREATE INDEX IF NOT EXISTS idx_listing_feedbacks_tx ON listing_feedbacks(tx_hash)');
+  d.run('CREATE INDEX IF NOT EXISTS idx_contract_reviews_listing ON contract_reviews(listing_id, created_at)');
+  d.run('CREATE INDEX IF NOT EXISTS idx_contract_reviews_contract ON contract_reviews(contract_id)');
   d.run('CREATE INDEX IF NOT EXISTS idx_onchain_operations_entity ON onchain_operations(entity_type, entity_id)');
   d.run('CREATE INDEX IF NOT EXISTS idx_onchain_operations_status ON onchain_operations(status, operation_kind)');
 }
@@ -142,6 +146,15 @@ function assertStrictSchema(d) {
   assertRequiredColumns(d, 'onchain_operations', [
     'op_id', 'entity_type', 'entity_id', 'operation_kind', 'tx_hash', 'status',
     'request_id', 'payload_json', 'result_json', 'error_message', 'created_at', 'updated_at'
+  ]);
+
+  assertRequiredColumns(d, 'listing_feedbacks', [
+    'id', 'listing_id', 'author_id', 'author_role', 'author_wallet', 'feedback_type', 'comment_text', 'comment_hash', 'tx_hash', 'chain_env', 'created_at'
+  ]);
+
+  assertRequiredColumns(d, 'contract_reviews', [
+    'id', 'contract_id', 'listing_id', 'tenant_id', 'tenant_wallet', 'rating', 'weight',
+    'comment_text', 'comment_hash', 'tx_hash', 'chain_env', 'created_at'
   ]);
 
   const contractsSql = getTableCreateSql(d, 'contracts');
@@ -311,6 +324,38 @@ async function migrate() {
     source TEXT DEFAULT '',
     note TEXT DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
+  )`);
+
+  d.run(`CREATE TABLE IF NOT EXISTS listing_feedbacks (
+    id TEXT PRIMARY KEY,
+    listing_id TEXT NOT NULL,
+    author_id TEXT NOT NULL,
+    author_role TEXT NOT NULL,
+    author_wallet TEXT NOT NULL,
+    feedback_type TEXT NOT NULL CHECK(feedback_type IN ('mismatch','photos','noise','communication','other')),
+    comment_text TEXT NOT NULL,
+    comment_hash TEXT NOT NULL,
+    tx_hash TEXT NOT NULL UNIQUE,
+    chain_env TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+    FOREIGN KEY(listing_id) REFERENCES listings(id)
+  )`);
+
+  d.run(`CREATE TABLE IF NOT EXISTS contract_reviews (
+    id TEXT PRIMARY KEY,
+    contract_id TEXT NOT NULL UNIQUE,
+    listing_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    tenant_wallet TEXT NOT NULL,
+    rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+    weight INTEGER NOT NULL CHECK(weight >= 1),
+    comment_text TEXT NOT NULL,
+    comment_hash TEXT NOT NULL,
+    tx_hash TEXT NOT NULL UNIQUE,
+    chain_env TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+    FOREIGN KEY(contract_id) REFERENCES contracts(id),
+    FOREIGN KEY(listing_id) REFERENCES listings(id)
   )`);
 
 

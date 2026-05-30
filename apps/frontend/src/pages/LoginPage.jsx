@@ -86,34 +86,34 @@ export default function LoginPage({ onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-950/55 px-4 py-6 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
       <div
-        className="relative w-full max-w-[385px] rounded-[1.5rem] border border-primary-600/20 p-8 shadow-[0_22px_55px_rgba(27,23,18,0.28)]"
+        className="relative w-full max-w-[385px] rounded-[1.5rem] border border-white/10 p-8 shadow-[0_22px_55px_rgba(2,6,23,0.34)] backdrop-blur-xl"
         style={{
           background:
-            'linear-gradient(180deg, rgba(245,240,232,0.98) 0%, rgba(242,236,226,0.98) 100%)',
+            'linear-gradient(180deg, rgba(15,23,42,0.78) 0%, rgba(10,15,28,0.82) 100%)',
         }}
       >
         {onClose && (
           <button
             type="button"
             onClick={onClose}
-            className="absolute right-4 top-4 rounded-full p-1.5 text-stone-400 transition-colors hover:bg-stone-900/5 hover:text-stone-700"
+            className="absolute right-4 top-4 rounded-full p-1.5 text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-100"
             aria-label="关闭"
           >
             <XIcon className="h-4 w-4" />
           </button>
         )}
 
-        <div className="mx-auto mb-7 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#fbf7ef] text-stone-950 shadow-[0_12px_30px_rgba(36,31,26,0.18)]">
+        <div className="mx-auto mb-7 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/8 text-amber-200 shadow-[0_12px_30px_rgba(2,6,23,0.24)]">
           <ArrowRightToLineIcon className="h-7 w-7" />
         </div>
 
         <div className="mb-7 text-center">
-          <h1 className="text-2xl font-bold text-stone-950">
+          <h1 className="text-2xl font-bold text-white">
             {step === 'connect' ? '钱包登录' : '完善信息'}
           </h1>
-          <p className="mx-auto mt-3 max-w-[280px] text-sm leading-6 text-stone-500">
+          <p className="mx-auto mt-3 max-w-[280px] text-sm leading-6 text-slate-300/72">
             {step === 'connect'
               ? '连接 MetaMask 钱包即可登录，新用户将自动注册。'
               : '设置昵称和联系方式（可选），完成后签署消息即登录。'}
@@ -135,15 +135,15 @@ export default function LoginPage({ onClose }) {
               )}
               连接 MetaMask
             </button>
-            <p className="text-center text-xs text-stone-400">
+            <p className="text-center text-xs text-slate-400">
               首次连接即自动创建账号
             </p>
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="rounded-2xl border border-stone-300 bg-[#fbf7ef] px-4 py-3">
-              <p className="text-xs text-stone-500">已连接钱包</p>
-              <p className="mt-1 font-mono text-xs text-stone-700 break-all">
+            <div className="rounded-2xl border border-white/10 bg-white/6 px-4 py-3 backdrop-blur-sm">
+              <p className="text-xs text-slate-400">已连接钱包</p>
+              <p className="mt-1 break-all font-mono text-xs text-slate-200">
                 {walletAddress}
               </p>
             </div>
@@ -159,8 +159,8 @@ export default function LoginPage({ onClose }) {
                   onClick={() => updateForm('role', r)}
                   className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition-all ${
                     form.role === r
-                      ? 'border-primary-600 bg-primary-600/25 text-stone-950 shadow-[0_10px_24px_rgba(231,167,121,0.32)]'
-                      : 'border-stone-300 bg-[#fbf7ef] text-stone-500 hover:border-primary-600/60'
+                      ? 'border-primary-600 bg-primary-600/25 text-white shadow-[0_10px_24px_rgba(231,167,121,0.20)]'
+                      : 'border-white/10 bg-white/6 text-slate-300 hover:border-primary-600/60'
                   }`}
                 >
                   {label}
@@ -194,7 +194,7 @@ export default function LoginPage({ onClose }) {
               <button
                 type="button"
                 onClick={() => setStep('connect')}
-                className="flex h-11 flex-1 items-center justify-center rounded-2xl border border-stone-300 bg-[#fbf7ef] text-sm font-semibold text-stone-600 transition-colors hover:bg-stone-200"
+                className="flex h-11 flex-1 items-center justify-center rounded-2xl border border-white/10 bg-white/6 text-sm font-semibold text-slate-300 transition-colors hover:bg-white/10"
               >
                 返回
               </button>
@@ -218,9 +218,9 @@ export default function LoginPage({ onClose }) {
 function Field({ icon: IconComp, children }) {
   return (
     <div
-      className="flex items-center gap-3 rounded-2xl border border-stone-300 bg-[#fbf7ef] px-4 py-2 focus-within:border-primary-600/60 focus-within:shadow-[0_0_0_3px_rgba(231,167,121,0.15)] transition-all"
+      className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/6 px-4 py-2 transition-all focus-within:border-primary-600/60 focus-within:shadow-[0_0_0_3px_rgba(231,167,121,0.15)]"
     >
-      <IconComp className="h-4 w-4 flex-shrink-0 text-stone-400" />
+      <IconComp className="h-4 w-4 flex-shrink-0 text-slate-400" />
       {children}
     </div>
   );

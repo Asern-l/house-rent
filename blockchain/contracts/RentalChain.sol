@@ -74,6 +74,14 @@ contract RentalChain is ReentrancyGuard {
         bool exists;
     }
 
+    struct RentalReview {
+        bool exists;
+        uint8 rating;
+        bytes32 commentHash;
+        uint64 ratedAt;
+        address tenant;
+    }
+
     struct CreateContractParams {
         string contractId;
         string listingId;
@@ -98,8 +106,10 @@ contract RentalChain is ReentrancyGuard {
     mapping(string => ContractRecord) private _contracts;
     mapping(string => string) private _activeContractByListing;
     mapping(bytes32 => GasAuthorization) private _gasAuths;
+    mapping(string => RentalReview) private _rentalReviews;
 
     uint256 public immutable paymentWindowMs;
+    uint256 public constant REVIEW_WINDOW_MS = 30 days;
     uint256 public constant GAS_REIMBURSE_ESTIMATED_UNITS = 350000;
     uint256 public constant GAS_REIMBURSE_MULTIPLIER = 3;
 
@@ -176,6 +186,21 @@ contract RentalChain is ReentrancyGuard {
         string indexed childContractId,
         string indexed listingId,
         uint256 blockTime
+    );
+    event RentalReviewSubmitted(
+        string indexed contractId,
+        string indexed listingId,
+        address indexed tenant,
+        uint8 rating,
+        bytes32 commentHash,
+        uint256 ratedAt
+    );
+    event ListingFeedbackSubmitted(
+        string indexed listingId,
+        address indexed sender,
+        uint8 feedbackType,
+        bytes32 commentHash,
+        uint256 createdAt
     );
 
     constructor(uint256 paymentWindowMs_) {
@@ -575,6 +600,49 @@ contract RentalChain is ReentrancyGuard {
         emit ContractStatusChanged(contractId, record.listingId, uint8(ContractStatus.Created), uint8(nextStatus), block.timestamp);
     }
 
+    function submitRentalReview(
+        string calldata contractId,
+        bytes32 commentHash,
+        uint8 rating
+    ) external {
+        require(bytes(contractId).length > 0, "contractId required");
+        require(commentHash != bytes32(0), "commentHash required");
+        require(rating >= 1 && rating <= 5, "rating out of range");
+
+        ContractRecord storage record = _contracts[contractId];
+        require(record.exists, "contract not found");
+        require(msg.sender == record.tenant, "only tenant can review");
+        require(record.status == ContractStatus.Active || record.status == ContractStatus.Completed, "contract not reviewable");
+        require(record.endAtMs > 0 && block.timestamp * 1000 >= record.endAtMs, "review not open");
+        require(block.timestamp * 1000 <= record.endAtMs + REVIEW_WINDOW_MS * 1000, "review window closed");
+
+        RentalReview storage review = _rentalReviews[contractId];
+        require(!review.exists, "review already submitted");
+
+        review.exists = true;
+        review.rating = rating;
+        review.commentHash = commentHash;
+        review.ratedAt = uint64(block.timestamp);
+        review.tenant = msg.sender;
+
+        emit RentalReviewSubmitted(contractId, record.listingId, msg.sender, rating, commentHash, block.timestamp);
+    }
+
+    function submitListingFeedback(
+        string calldata listingId,
+        uint8 feedbackType,
+        bytes32 commentHash
+    ) external {
+        require(bytes(listingId).length > 0, "listingId required");
+        require(commentHash != bytes32(0), "commentHash required");
+        require(feedbackType >= 1 && feedbackType <= 5, "feedbackType out of range");
+
+        ListingRecord storage listing = _listings[listingId];
+        require(listing.exists, "listing not found");
+
+        emit ListingFeedbackSubmitted(listingId, msg.sender, feedbackType, commentHash, block.timestamp);
+    }
+
     function completeExpiredContract(string calldata contractId) external {
         ContractRecord storage record = _contracts[contractId];
         require(record.exists, "contract not found");
@@ -614,6 +682,10 @@ contract RentalChain is ReentrancyGuard {
     function getCurrentEffectiveContractByListing(string calldata listingId) external view returns (string memory currentContractId) {
         string memory headContractId = _activeContractByListing[listingId];
         return _findCurrentEffectiveContractIdFromHead(headContractId);
+    }
+
+    function getRentalReview(string calldata contractId) external view returns (RentalReview memory review) {
+        review = _rentalReviews[contractId];
     }
 
     function getListing(string calldata listingId)

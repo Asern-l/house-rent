@@ -1,16 +1,24 @@
-import React, { Suspense, lazy, useState, useEffect } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './providers/AuthContext';
 import {
-  HomeIcon, SearchIcon, PlusCircleIcon, FileTextIcon,
-  ShieldCheckIcon, LogOutIcon, WalletIcon,
-  MenuIcon, XIcon, ArrowRightIcon,
+  ArrowRightIcon,
+  FileTextIcon,
+  HomeIcon,
+  LogOutIcon,
+  MenuIcon,
+  PlusCircleIcon,
+  SearchIcon,
+  ShieldCheckIcon,
+  WalletIcon,
+  XIcon,
 } from 'lucide-react';
 
 const HomePage = lazy(() => import('../pages/HomePage'));
 const LoginPage = lazy(() => import('../pages/LoginPage'));
 const ListingsPage = lazy(() => import('../pages/ListingsPage'));
 const ListingDetail = lazy(() => import('../pages/ListingDetail'));
+const ListingReviewsPage = lazy(() => import('../pages/ListingReviewsPage'));
 const PublishListing = lazy(() => import('../pages/PublishListing'));
 const ContractPage = lazy(() => import('../pages/ContractPage'));
 const MyContracts = lazy(() => import('../pages/MyContracts'));
@@ -20,10 +28,15 @@ const VerifyPage = lazy(() => import('../pages/VerifyPage'));
 
 function PageFallback() {
   return (
-    <div className="flex min-h-[240px] items-center justify-center rounded-3xl border border-stone-200 bg-[#f5f0e8] text-sm font-medium text-stone-500">
+    <div className="card flex min-h-[240px] items-center justify-center text-sm font-medium text-slate-200">
       页面加载中...
     </div>
   );
+}
+
+function getHealthTone(ok) {
+  if (ok === false) return 'border-red-500/30 bg-red-500/10 text-red-200';
+  return 'border-white/10 bg-white/5 text-slate-300';
 }
 
 export default function App() {
@@ -36,14 +49,14 @@ export default function App() {
   const [backendHealth, setBackendHealth] = useState({ sepolia: null, local: null });
 
   const navItems = [
-    { path: '/', label: '\u9996\u9875', icon: HomeIcon },
-    { path: '/listings', label: '\u623f\u6e90', icon: SearchIcon },
-    ...(user?.role === 'landlord' ? [{ path: '/publish', label: '\u53d1\u5e03\u623f\u6e90', icon: PlusCircleIcon }] : []),
-    { path: '/contracts', label: '\u5408\u540c', icon: FileTextIcon },
-    { path: '/verify', label: '\u94fe\u4e0a\u9a8c\u771f', icon: ShieldCheckIcon },
+    { path: '/', label: '首页', icon: HomeIcon },
+    { path: '/listings', label: '房源', icon: SearchIcon },
+    ...(user?.role === 'landlord' ? [{ path: '/publish', label: '发布房源', icon: PlusCircleIcon }] : []),
+    { path: '/contracts', label: '合同', icon: FileTextIcon },
+    { path: '/verify', label: '链上验真', icon: ShieldCheckIcon },
   ];
 
-  const isActive = (p) => location.pathname === p;
+  const isActive = (path) => location.pathname === path;
 
   useEffect(() => {
     let mounted = true;
@@ -55,15 +68,16 @@ export default function App() {
       if (!mounted) return;
       setBackendHealth({
         sepolia: checks[0].status === 'fulfilled' && checks[0].value.ok,
-        local:   checks[1].status === 'fulfilled' && checks[1].value.ok,
+        local: checks[1].status === 'fulfilled' && checks[1].value.ok,
       });
     };
     check();
     const timer = setInterval(check, 10000);
-    return () => { mounted = false; clearInterval(timer); };
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
   }, []);
-
-  const selectedBackendOk = preferredNetwork === 'local' ? backendHealth.local : backendHealth.sepolia;
 
   useEffect(() => {
     if (location.pathname === '/login') setAuthModal('login');
@@ -78,6 +92,8 @@ export default function App() {
     window.addEventListener('auth-session-expired', handleSessionExpired);
     return () => window.removeEventListener('auth-session-expired', handleSessionExpired);
   }, []);
+
+  const selectedBackendOk = preferredNetwork === 'local' ? backendHealth.local : backendHealth.sepolia;
 
   const openAuthModal = (mode = 'login') => {
     setAuthModal(mode);
@@ -95,132 +111,135 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-gray-950 text-gray-100">
+    <div className="relative flex h-screen flex-col overflow-hidden text-slate-100">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute -left-24 top-0 h-80 w-80 rounded-full bg-amber-400/14 blur-3xl" />
+        <div className="absolute right-0 top-10 h-96 w-96 rounded-full bg-sky-400/12 blur-3xl" />
+        <div className="absolute bottom-0 left-1/3 h-72 w-72 rounded-full bg-emerald-400/10 blur-3xl" />
+      </div>
 
-      {/* ── Top header ── */}
-      <header className="flex-shrink-0 sticky top-0 z-40 border-b border-stone-200/80"
-        style={{ backgroundColor: '#f5f0e8' }}>
-        <div className="relative flex items-center h-14 px-5 lg:px-10">
-
-          {/* Logo */}
-          <Link to="/" className="absolute left-1/2 -translate-x-1/2 flex items-center flex-shrink-0">
-            <span className="font-bold text-stone-900 text-base tracking-wide">{'\u4fe1\u6e90\u94fe'}</span>
+      <header className="relative z-40 border-b border-white/10 bg-slate-950/68 backdrop-blur-xl">
+        <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-4 md:px-6 xl:px-8">
+          <Link to="/" className="flex flex-shrink-0 items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-300 to-orange-400 text-slate-950 shadow-[0_10px_24px_rgba(251,191,36,0.18)]">
+              <HomeIcon className="h-4 w-4" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold tracking-[0.16em] text-slate-100">信源链</p>
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-400">Blockchain Housing Flow</p>
+            </div>
           </Link>
 
-          {/* Desktop nav */}
-          <nav className="hidden md:flex items-center gap-0.5 flex-1">
+          <nav className="hidden flex-1 items-center gap-1 md:flex">
             {navItems.map((item) => (
               <Link
                 key={item.path}
                 to={item.path}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors
-                  ${isActive(item.path)
-                    ? 'bg-primary-600/20 text-stone-900 shadow-[0_8px_24px_rgba(231,167,121,0.38)]'
-                    : 'text-stone-500 hover:text-stone-900 hover:bg-stone-900/5'}`}
+                className={`rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
+                  isActive(item.path)
+                    ? 'bg-white/10 text-white shadow-[0_8px_24px_rgba(15,23,42,0.28)]'
+                    : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
+                }`}
               >
                 {item.label}
               </Link>
             ))}
           </nav>
 
-          {/* Right side */}
-          <div className="flex items-center gap-2 ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            <div className={`hidden items-center gap-2 rounded-full border px-3 py-1 text-xs md:flex ${getHealthTone(selectedBackendOk)}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${selectedBackendOk === false ? 'bg-red-400' : 'bg-emerald-400'}`} />
+              <select
+                className="bg-transparent outline-none"
+                value={preferredNetwork}
+                onChange={(e) => updatePreferredNetwork(e.target.value)}
+              >
+                <option value="sepolia">Sepolia</option>
+                <option value="local">Local</option>
+              </select>
+            </div>
+
             {user ? (
               <>
-                {/* Network selector */}
-                <div className={`hidden sm:flex items-center gap-1.5 text-xs border rounded-full px-2.5 py-1 transition-colors
-                  ${selectedBackendOk === false
-                    ? 'border-red-300 text-red-500 bg-red-50'
-                    : 'border-stone-300 text-stone-500 bg-white/60'}`}>
-                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${selectedBackendOk === false ? 'bg-red-500' : 'bg-emerald-500'}`} />
-                  <select
-                    className="bg-transparent outline-none text-xs"
-                    value={preferredNetwork}
-                    onChange={(e) => updatePreferredNetwork(e.target.value)}
-                  >
-                    <option value="sepolia">Sepolia</option>
-                    <option value="local">Local</option>
-                  </select>
-                </div>
-
-                {/* Wallet balance */}
                 {walletInfo && (
-                  <span className="hidden lg:block text-xs text-stone-400">
+                  <span className="hidden rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300 lg:inline-flex">
                     {walletInfo.balanceEth} ETH
                   </span>
                 )}
                 {!user.walletAddress && (
-                  <button onClick={connectWallet} className="hidden sm:block text-xs text-primary-600 hover:text-primary-700 font-medium">
+                  <button
+                    onClick={connectWallet}
+                    className="hidden rounded-full border border-amber-400/30 bg-amber-400/10 px-3 py-1 text-xs font-medium text-amber-200 transition-colors hover:bg-amber-400/20 md:inline-flex"
+                  >
                     连接钱包
                   </button>
                 )}
-
-                {/* User avatar + name */}
                 <button
                   type="button"
                   onClick={openProfileModal}
-                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-full hover:bg-stone-900/5 transition-colors">
-                  <div className="w-6 h-6 rounded-full bg-primary-600 flex items-center justify-center text-white text-[11px] font-semibold flex-shrink-0">
+                  className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-2.5 py-1.5 transition-colors hover:bg-white/10"
+                >
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-amber-300 to-orange-400 text-[11px] font-semibold text-slate-950">
                     {(user.nickname || user.walletAddress || '?')[0].toUpperCase()}
                   </div>
-                  <span className="hidden sm:block text-sm font-medium text-stone-700">
+                  <span className="hidden max-w-[140px] truncate text-sm font-medium text-slate-100 sm:block">
                     {user.nickname || `${(user.walletAddress || '').slice(0, 6)}...${(user.walletAddress || '').slice(-4)}`}
                   </span>
                 </button>
-
-                {/* Logout */}
                 <button
                   onClick={logout}
                   title="退出登录"
-                  className="p-1.5 text-stone-400 hover:text-stone-700 hover:bg-stone-900/5 rounded-md transition-colors"
+                  className="rounded-full p-2 text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-100"
                 >
-                  <LogOutIcon className="w-4 h-4" />
+                  <LogOutIcon className="h-4 w-4" />
                 </button>
               </>
             ) : (
               <button
                 type="button"
                 onClick={() => openAuthModal('login')}
-                className="flex items-center gap-1.5 bg-stone-900 text-white text-sm font-medium px-4 py-2 rounded-full hover:bg-stone-800 transition-colors"
+                className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-amber-300 to-orange-400 px-4 py-2 text-sm font-semibold text-slate-950 shadow-[0_14px_30px_rgba(251,191,36,0.2)] transition-transform hover:-translate-y-0.5"
               >
                 登录开始
-                <ArrowRightIcon className="w-3.5 h-3.5" />
+                <ArrowRightIcon className="h-3.5 w-3.5" />
               </button>
             )}
 
-            {/* Mobile hamburger */}
             <button
-              onClick={() => setMobileOpen(!mobileOpen)}
-              className="md:hidden p-2 text-stone-600 hover:bg-stone-900/5 rounded-md transition-colors"
+              onClick={() => setMobileOpen((prev) => !prev)}
+              className="rounded-full p-2 text-slate-300 transition-colors hover:bg-white/5 md:hidden"
             >
-              {mobileOpen ? <XIcon className="w-5 h-5" /> : <MenuIcon className="w-5 h-5" />}
+              {mobileOpen ? <XIcon className="h-5 w-5" /> : <MenuIcon className="h-5 w-5" />}
             </button>
           </div>
         </div>
 
-        {/* Mobile dropdown */}
         {mobileOpen && (
-          <div className="md:hidden border-t border-stone-200 bg-[#f5f0e8] px-4 py-3 space-y-0.5">
-            {navItems.map((item) => (
-              <Link
-                key={item.path}
-                to={item.path}
-                onClick={() => setMobileOpen(false)}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium
-                  ${isActive(item.path) ? 'bg-primary-600/20 text-stone-900 shadow-[0_8px_24px_rgba(231,167,121,0.32)]' : 'text-stone-600 hover:bg-stone-900/5'}`}
-              >
-                <item.icon className="w-4 h-4" />
-                {item.label}
-              </Link>
-            ))}
+          <div className="border-t border-white/10 bg-slate-950/95 px-4 py-3 md:hidden backdrop-blur-xl">
+            <div className="space-y-1">
+              {navItems.map((item) => (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  onClick={() => setMobileOpen(false)}
+                  className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${
+                    isActive(item.path)
+                      ? 'bg-white/10 text-white'
+                      : 'text-slate-300 hover:bg-white/5'
+                  }`}
+                >
+                  <item.icon className="h-4 w-4" />
+                  {item.label}
+                </Link>
+              ))}
+            </div>
 
-            {/* Mobile network + logout */}
-            {user && (
-              <div className="pt-2 border-t border-stone-200 mt-1 space-y-1">
-                <div className="flex items-center gap-2 px-3 py-2">
-                  <span className={`w-1.5 h-1.5 rounded-full ${selectedBackendOk === false ? 'bg-red-500' : 'bg-emerald-500'}`} />
+            {user ? (
+              <div className="mt-3 space-y-2 border-t border-white/10 pt-3">
+                <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-300">
+                  <span className={`h-1.5 w-1.5 rounded-full ${selectedBackendOk === false ? 'bg-red-400' : 'bg-emerald-400'}`} />
                   <select
-                    className="bg-transparent outline-none text-sm text-stone-600 flex-1"
+                    className="flex-1 bg-transparent outline-none"
                     value={preferredNetwork}
                     onChange={(e) => updatePreferredNetwork(e.target.value)}
                   >
@@ -230,28 +249,29 @@ export default function App() {
                 </div>
                 <button
                   onClick={openProfileModal}
-                  className="flex items-center gap-3 px-3 py-2.5 text-stone-700 text-sm w-full rounded-md hover:bg-stone-900/5"
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-slate-200 hover:bg-white/5"
                 >
-                  <WalletIcon className="w-4 h-4" />
+                  <WalletIcon className="h-4 w-4" />
                   个人面板
                 </button>
                 <button
-                  onClick={() => { logout(); setMobileOpen(false); }}
-                  className="flex items-center gap-3 px-3 py-2.5 text-red-500 text-sm w-full rounded-md hover:bg-red-50"
+                  onClick={() => {
+                    logout();
+                    setMobileOpen(false);
+                  }}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-red-300 hover:bg-red-500/10"
                 >
-                  <LogOutIcon className="w-4 h-4" />
+                  <LogOutIcon className="h-4 w-4" />
                   退出登录
                 </button>
               </div>
-            )}
-
-            {!user && (
+            ) : (
               <button
                 type="button"
                 onClick={() => openAuthModal('login')}
-                className="flex items-center gap-3 px-3 py-2.5 text-stone-700 text-sm font-medium"
+                className="mt-3 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-slate-200 hover:bg-white/5"
               >
-                <WalletIcon className="w-4 h-4" />
+                <WalletIcon className="h-4 w-4" />
                 登录 / 注册
               </button>
             )}
@@ -259,30 +279,29 @@ export default function App() {
         )}
       </header>
 
-      {/* ── Page content ── */}
-      <main className="flex-1 overflow-y-auto bg-gray-950 p-6">
-        <Suspense fallback={<PageFallback />}>
-          <Routes>
-            <Route path="/"           element={<HomePage />} />
-            <Route path="/login"      element={<HomePage />} />
-            <Route path="/listings"   element={<ListingsPage />} />
-            <Route path="/listing/:id" element={<ListingDetail />} />
-            <Route path="/publish"    element={<PublishListing />} />
-            <Route path="/contract/:id" element={<ContractPage />} />
-            <Route path="/contracts"  element={<MyContracts />} />
-            <Route path="/my-listings" element={<MyListings />} />
-            <Route path="/profile"    element={<HomePage />} />
-            <Route path="/verify"     element={<VerifyPage />} />
-          </Routes>
-        </Suspense>
+      <main className="relative z-10 flex-1 overflow-y-auto px-4 py-5 md:px-6 xl:px-8">
+        <div className="mx-auto max-w-7xl">
+          <Suspense fallback={<PageFallback />}>
+            <Routes>
+              <Route path="/" element={<HomePage />} />
+              <Route path="/login" element={<HomePage />} />
+              <Route path="/listings" element={<ListingsPage />} />
+              <Route path="/listing/:id" element={<ListingDetail />} />
+              <Route path="/listing/:id/reviews" element={<ListingReviewsPage />} />
+              <Route path="/publish" element={<PublishListing />} />
+              <Route path="/contract/:id" element={<ContractPage />} />
+              <Route path="/contracts" element={<MyContracts />} />
+              <Route path="/my-listings" element={<MyListings />} />
+              <Route path="/profile" element={<HomePage />} />
+              <Route path="/verify" element={<VerifyPage />} />
+            </Routes>
+          </Suspense>
+        </div>
       </main>
 
       {authModal && (
         <Suspense fallback={null}>
-          <LoginPage
-            initialMode={authModal}
-            onClose={() => setAuthModal(null)}
-          />
+          <LoginPage initialMode={authModal} onClose={() => setAuthModal(null)} />
         </Suspense>
       )}
       {profileModalOpen && (

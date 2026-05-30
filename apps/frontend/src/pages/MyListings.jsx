@@ -2,17 +2,17 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { ethers } from 'ethers';
-import { HomeIcon, LoaderIcon, PencilIcon, Trash2Icon, XIcon } from 'lucide-react';
+import { HomeIcon, LoaderIcon, MapPinIcon, PencilIcon, Trash2Icon, XIcon } from 'lucide-react';
 import { apiGet, apiPost } from '../shared/api/api';
 import RentalChainABI from '../shared/blockchain/RentalChainABI.json';
 
 const MAX_IMAGE_COUNT = 12;
 const LISTING_STATUS_MAP = {
-  available: { label: '可申请', badge: 'badge-green' },
-  signing: { label: '签约中', badge: 'badge-yellow' },
-  rented: { label: '已租出', badge: 'badge-blue' },
-  offline: { label: '已下架', badge: 'badge-gray' },
-  closed: { label: '已关闭', badge: 'badge-gray' },
+  available: { label: '\u53ef\u7533\u8bf7', badge: 'badge-green' },
+  signing: { label: '\u7b7e\u7ea6\u4e2d', badge: 'badge-yellow' },
+  rented: { label: '\u5df2\u79df\u51fa', badge: 'badge-blue' },
+  offline: { label: '\u5df2\u4e0b\u67b6', badge: 'badge-gray' },
+  closed: { label: '\u5df2\u5173\u95ed', badge: 'badge-gray' },
 };
 
 const CONTRACT_ADDR_MAP = {
@@ -24,6 +24,14 @@ const NETWORK_OPTIONS = {
   sepolia: { chainId: 11155111, chainIdHex: '0xaa36a7' },
   local: { chainId: 31337, chainIdHex: '0x7a69' },
 };
+
+function openMap(address) {
+  const q = encodeURIComponent(String(address || '').trim());
+  if (!q) return;
+  const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
+  const url = isMac ? `maps://?q=${q}&address=${q}` : `https://maps.google.com/?q=${q}`;
+  window.open(url, '_blank');
+}
 
 function parseImageUrls(raw) {
   try {
@@ -443,23 +451,30 @@ export default function MyListings() {
 
   if (loading) {
     return (
-      <div className="flex justify-center py-12">
-        <LoaderIcon className="h-8 w-8 animate-spin text-primary-500" />
+      <div className="flex justify-center py-20">
+        <LoaderIcon className="h-8 w-8 animate-spin text-amber-200" />
       </div>
     );
   }
 
   return (
     <div className="animate-fade-in">
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-100">我的房源</h1>
-        <Link to="/publish" className="btn-primary">发布新房源</Link>
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-white">{'我的房源'}</h1>
+          <p className="mt-1 text-sm text-slate-300/68">
+            {'管理当前网络下的房源状态、链上条款更新和附加条款模板。'}
+          </p>
+        </div>
+        <Link to="/publish" className="btn-primary">
+          {'发布新房源'}
+        </Link>
       </div>
 
       {listings.length === 0 ? (
         <div className="card p-8 text-center">
-          <HomeIcon className="mx-auto mb-3 h-12 w-12 text-gray-600" />
-          <p className="text-gray-400">暂无已发布房源</p>
+          <HomeIcon className="mx-auto mb-3 h-12 w-12 text-slate-500" />
+          <p className="text-slate-300/72">{'暂无已发布房源'}</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -473,73 +488,93 @@ export default function MyListings() {
             const displayStatus = getDisplayStatus(item);
             return (
               <div key={item.id} className="card p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="flex min-w-0 items-start gap-3">
                     {getFirstImageUrl(item) ? (
-                      <img src={resolveImageUrl(getFirstImageUrl(item))} alt={item.title || 'listing'} className="h-20 w-28 flex-shrink-0 rounded-md object-cover" />
+                      <img src={resolveImageUrl(getFirstImageUrl(item))} alt={item.title || 'listing'} className="h-20 w-28 flex-shrink-0 rounded-xl object-cover" />
                     ) : (
-                      <div className="flex h-20 w-28 flex-shrink-0 items-center justify-center rounded-md bg-gray-800">
-                        <HomeIcon className="h-6 w-6 text-gray-600" />
+                      <div className="flex h-20 w-28 flex-shrink-0 items-center justify-center rounded-xl bg-white/6">
+                        <HomeIcon className="h-6 w-6 text-slate-500" />
                       </div>
                     )}
-                    <div>
-                      <h3 className="text-base font-semibold text-gray-100">{item.title || '未命名房源'}</h3>
-                      <p className="mt-1 text-sm text-gray-400">{item.address || '-'}</p>
-                      <p className="mt-2 font-medium text-primary-400">{item.rent_amount} ETH/月</p>
+                    <div className="min-w-0">
+                      <h3 className="text-base font-semibold text-white">{item.title || '未命名房源'}</h3>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-300/80">
+                        <button
+                          type="button"
+                          onClick={() => openMap(item.address)}
+                          className="truncate text-left underline-offset-2 hover:text-white hover:underline"
+                          title={'在地图中查看'}
+                        >
+                          {item.address || '-'}
+                        </button>
+                        <MapPinIcon className="h-4 w-4 text-slate-500" />
+                        <button
+                          type="button"
+                          onClick={() => openMap(item.address)}
+                          className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-slate-200 transition hover:bg-white/10"
+                          title={'在地图中查看'}
+                        >
+                          {'查看地图'}
+                        </button>
+                      </div>
+                      <p className="mt-2 text-lg font-semibold text-amber-200">{item.rent_amount} ETH/{'月'}</p>
                     </div>
                   </div>
-                  <div className="flex-shrink-0 text-right">
-                    <span className={displayStatus.badge}>{displayStatus.label}</span>
-                    <div className="mt-2 flex flex-col gap-2">
+                  <div className="flex-shrink-0 lg:min-w-[210px]">
+                    <div className="mb-2 flex justify-start lg:justify-end">
+                      <span className={`${displayStatus.badge} px-2 py-0.5 text-[11px]`}>{displayStatus.label}</span>
+                    </div>
+                    <div className="flex flex-col gap-2">
                       {rawStatus === 'available' && (
                         <>
-                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => updateStatusOnchain(item.id, 'offline')}>下架（钱包签名）</button>
-                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => startEdit(item, 'info')}>房源信息编辑</button>
-                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => startEdit(item, 'clauses')}>附加条款编辑</button>
+                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => updateStatusOnchain(item.id, 'offline')}>{'下架（钱包签名）'}</button>
+                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => startEdit(item, 'info')}>{'房源信息编辑'}</button>
+                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => startEdit(item, 'clauses')}>{'附加条款编辑'}</button>
                           <button
                             disabled={submittingId === item.id}
-                            className="btn-secondary px-3 py-1.5 text-sm"
+                            className="rounded-xl border border-red-500/25 bg-red-500/12 px-3 py-1.5 text-sm font-medium text-red-200 transition hover:bg-red-500/18 disabled:opacity-60"
                             onClick={() => {
                               if (confirm('确认销毁该房源吗？销毁后不可恢复。')) {
                                 updateStatusOnchain(item.id, 'closed');
                               }
                             }}
                           >
-                            销毁（钱包签名）
+                            {'销毁（钱包签名）'}
                           </button>
                         </>
                       )}
                       {rawStatus === 'offline' && (
                         <>
-                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => updateStatusOnchain(item.id, 'available')}>重新上架（钱包签名）</button>
-                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => startEdit(item, 'info')}>房源信息编辑</button>
-                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => startEdit(item, 'clauses')}>附加条款编辑</button>
+                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => updateStatusOnchain(item.id, 'available')}>{'重新上架（钱包签名）'}</button>
+                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => startEdit(item, 'info')}>{'房源信息编辑'}</button>
+                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => startEdit(item, 'clauses')}>{'附加条款编辑'}</button>
                           <button
                             disabled={submittingId === item.id}
-                            className="btn-secondary px-3 py-1.5 text-sm"
+                            className="rounded-xl border border-red-500/25 bg-red-500/12 px-3 py-1.5 text-sm font-medium text-red-200 transition hover:bg-red-500/18 disabled:opacity-60"
                             onClick={() => {
                               if (confirm('确认销毁该房源吗？销毁后不可恢复。')) {
                                 updateStatusOnchain(item.id, 'closed');
                               }
                             }}
                           >
-                            销毁（钱包签名）
+                            {'销毁（钱包签名）'}
                           </button>
                         </>
                       )}
-                      {!isEditable && <span className="text-xs text-gray-500">当前流程中不可操作</span>}
+                      {!isEditable && <span className="text-xs text-slate-500">{'当前流程中不可操作'}</span>}
                     </div>
                   </div>
                 </div>
 
                 {isEditing && (
-                  <div className="mt-4 rounded-xl border border-gray-700 bg-gray-900/40 p-4">
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/35 p-4 backdrop-blur-md">
                     <div className="mb-3 flex items-center justify-between">
-                      <p className="flex items-center gap-2 text-sm font-semibold text-gray-100">
-                        <PencilIcon className="h-4 w-4" />
+                      <p className="flex items-center gap-2 text-sm font-semibold text-white">
+                        <PencilIcon className="h-4 w-4 text-amber-200" />
                         {isEditingClauses ? '附加条款编辑' : '房源信息编辑'}
                       </p>
-                      <button type="button" className="text-gray-400 hover:text-gray-200" onClick={resetEditingState}>
+                      <button type="button" className="rounded-full border border-white/10 bg-white/6 p-2 text-slate-300 transition hover:bg-white/12 hover:text-white" onClick={resetEditingState}>
                         <XIcon className="h-4 w-4" />
                       </button>
                     </div>
@@ -547,8 +582,8 @@ export default function MyListings() {
                     {isEditingInfo && (
                       <>
                         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                          <label className="text-xs text-gray-400">
-                            租金（ETH）
+                          <label className="text-xs text-slate-400">
+                            {'租金（ETH）'}
                             <input
                               type="number"
                               step="0.01"
@@ -558,27 +593,37 @@ export default function MyListings() {
                               onChange={(e) => setEditForm((p) => ({ ...p, rentAmount: e.target.value }))}
                             />
                           </label>
-                          <label className="text-xs text-gray-400">
-                            最少租期（月）
+                          <label className="text-xs text-slate-400">
+                            {'最少租期（月）'}
                             <select
                               className="input-field mt-1"
                               value={editForm.minLeaseMonths}
                               onChange={(e) => setEditForm((p) => ({ ...p, minLeaseMonths: Number(e.target.value) }))}
                             >
-                              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{m}个月</option>)}
+                              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{m}{'个月'}</option>)}
                             </select>
                           </label>
                         </div>
 
-                        <div className="mt-3 rounded-lg border border-gray-700 bg-gray-800/40 p-3">
-                          <p className="text-xs text-gray-500">以下字段仅展示，不支持编辑</p>
-                          <p className="mt-1 text-sm text-gray-400">标题：{item.title || '-'}</p>
-                          <p className="text-sm text-gray-400">地址：{item.address || '-'}</p>
-                          <p className="text-sm text-gray-400">描述：{item.description || '-'}</p>
+                        <div className="mt-3 rounded-xl border border-white/8 bg-white/6 p-4 backdrop-blur-sm">
+                          <p className="text-xs text-slate-500">{'以下字段仅展示，不支持编辑'}</p>
+                          <p className="mt-2 text-sm text-slate-300">{'标题：'}{item.title || '-'}</p>
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm text-slate-300">{'地址：'}{item.address || '-'}</p>
+                            <button
+                              type="button"
+                              onClick={() => openMap(item.address)}
+                              className="btn-secondary shrink-0 px-3 py-1.5 text-xs"
+                              title={'在地图中查看'}
+                            >
+                              {'查看地图'}
+                            </button>
+                          </div>
+                          <p className="text-sm text-slate-300">{'描述：'}{item.description || '-'}</p>
                         </div>
 
                         <div className="mt-3">
-                          <p className="text-xs text-gray-400">图片（可增删，最多 {MAX_IMAGE_COUNT} 张）</p>
+                          <p className="text-xs text-slate-400">{'图片（可增删，最多 '}{MAX_IMAGE_COUNT}{' 张）'}</p>
                           <div className="mt-2 grid grid-cols-3 gap-2 md:grid-cols-5">
                             {currentImageUrls.map((url, idx) => (
                               <div key={`cur_${url}_${idx}`} className="group relative overflow-hidden rounded border border-gray-700">
@@ -599,24 +644,24 @@ export default function MyListings() {
                           </div>
                           <input
                             type="file"
-                            className="mt-2 block w-full text-xs text-gray-300 file:mr-3 file:rounded file:border-0 file:bg-stone-900 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-[#f5f0e8]"
+                            className="mt-2 block w-full text-xs text-slate-300 file:mr-3 file:rounded-xl file:border-0 file:bg-white/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-slate-100"
                             accept="image/jpeg,image/png,image/webp"
                             multiple
                             onChange={handleSelectNewImages}
                           />
-                          <p className="mt-1 text-xs text-gray-500">当前总数：{allPreviewUrls.length}</p>
+                          <p className="mt-1 text-xs text-slate-500">{'当前总数：'}{allPreviewUrls.length}</p>
                         </div>
                       </>
                     )}
 
                     {isEditingClauses && (
-                      <label className="block text-xs text-gray-400">
-                        默认条款（每行一条）
+                      <label className="block text-xs text-slate-400">
+                        {'默认条款（每行一条）'}
                         <textarea
                           className="input-field mt-1 min-h-[120px] resize-y"
                           value={clausesForm.clausesText}
                           onChange={(e) => setClausesForm({ clausesText: e.target.value })}
-                          placeholder={'例如：\n租金需在每月 1 日前支付\n禁止转租\n保持房屋设施完好'}
+                          placeholder={`例如：\n租金需在每月 1 日前支付\n禁止转租\n保持房屋设施完好`}
                         />
                       </label>
                     )}
@@ -630,7 +675,7 @@ export default function MyListings() {
                       >
                         {submittingId === item.id ? '提交中...' : (isEditingClauses ? '提交附加条款修改' : '提交房源信息修改（钱包签名）')}
                       </button>
-                      <button type="button" className="btn-secondary px-4 py-2 text-sm" onClick={resetEditingState}>取消</button>
+                      <button type="button" className="btn-secondary px-4 py-2 text-sm" onClick={resetEditingState}>{'取消'}</button>
                     </div>
                   </div>
                 )}

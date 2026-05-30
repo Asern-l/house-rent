@@ -15,6 +15,7 @@ apps/backend/uploads/
 logs/
 blockchain/.ganache-db/
 blockchain/deployments-rental-localhost.json
+blockchain/deployments-rental-sepolia.json
 old-docs/
 
 # Environment files
@@ -24,3 +25,4 @@ old-docs/
 # OS/editor
 .DS_Store
 Thumbs.db
+.obsidian/

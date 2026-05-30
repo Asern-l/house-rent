@@ -45,13 +45,6 @@ function getPreferredNetwork() {
   return NETWORK_OPTIONS[key] ? key : 'sepolia';
 }
 
-function parseClausesText(text) {
-  return String(text || '')
-    .split(/\r?\n/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
 // 函数 1: 切换钱包到当前前端所选网络。
 async function ensureWalletNetwork(provider, networkKey) {
   const target = NETWORK_OPTIONS[networkKey] || NETWORK_OPTIONS.sepolia;
@@ -74,7 +67,6 @@ export default function PublishListing({ onClose }) {
     title: '', description: '', address: '', district: '',
     rentAmount: '', minLeaseMonths: 1,
     bedrooms: 1, livingrooms: 1, bathrooms: 1, area: '',
-    clausesText: '',
   });
   const [submitting, setSubmitting] = useState(false);
   const [imageFiles, setImageFiles] = useState([]);
@@ -149,11 +141,7 @@ export default function PublishListing({ onClose }) {
           : [];
       }
 
-      const prepare = await apiPost('/listings/prepare-create', {
-        ...form,
-        clauses: parseClausesText(form.clausesText),
-        imageUrls: uploadedImageUrls,
-      });
+      const prepare = await apiPost('/listings/prepare-create', { ...form, imageUrls: uploadedImageUrls });
       const draft = prepare?.data?.draft;
       const chainAnchor = prepare?.data?.chainAnchor;
       if (!draft || !chainAnchor?.listingId) throw new Error('预创建返回数据无效');
@@ -208,12 +196,12 @@ export default function PublishListing({ onClose }) {
       return (
         <div className="mx-auto max-w-xl">
           <div className="card p-8 text-center">
-            <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#fbf7ef] text-stone-950 shadow-[0_12px_30px_rgba(36,31,26,0.18)]">
+            <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/8 text-amber-200 shadow-[0_12px_30px_rgba(2,6,23,0.24)]">
               <AlertCircleIcon className="h-7 w-7 text-primary-700" />
             </div>
-            <h1 className="text-2xl font-bold text-stone-950">无法发布房源</h1>
-            <p className="mt-3 text-sm leading-6 text-stone-500">只有房东账号可以发布房源，请登录房东账号后重试。</p>
-            <Link to="/login" className="mt-7 inline-flex h-11 items-center justify-center rounded-2xl bg-gradient-to-b from-slate-800 to-slate-950 px-6 text-base font-semibold text-[#f5f0e8] shadow-[0_6px_12px_rgba(15,23,42,0.32)]">
+            <h1 className="text-2xl font-bold text-white">无法发布房源</h1>
+            <p className="mt-3 text-sm leading-6 text-slate-300/72">只有房东账号可以发布房源，请登录房东账号后重试。</p>
+            <Link to="/login" className="mt-7 inline-flex h-11 items-center justify-center rounded-2xl bg-gradient-to-b from-slate-800 to-slate-950 px-6 text-base font-semibold text-slate-100 shadow-[0_6px_12px_rgba(15,23,42,0.32)]">
               去登录
             </Link>
           </div>
@@ -221,15 +209,15 @@ export default function PublishListing({ onClose }) {
       );
     }
     return (
-      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-950/55 px-4 py-6 backdrop-blur-sm">
-        <div className="relative w-full max-w-[385px] rounded-[1.5rem] border border-primary-600/20 bg-[#f5f0e8] p-8 text-center shadow-[0_22px_55px_rgba(27,23,18,0.28)]">
+      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
+        <div className="relative w-full max-w-[385px] rounded-[1.5rem] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.78)_0%,rgba(10,15,28,0.82)_100%)] p-8 text-center shadow-[0_22px_55px_rgba(27,23,18,0.28)]">
           <CloseButton onClose={close} />
-          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#fbf7ef] text-stone-950 shadow-[0_12px_30px_rgba(36,31,26,0.18)]">
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/8 text-amber-200 shadow-[0_12px_30px_rgba(2,6,23,0.24)]">
             <AlertCircleIcon className="h-7 w-7 text-primary-700" />
           </div>
-          <h1 className="text-2xl font-bold text-stone-950">无法发布房源</h1>
-          <p className="mt-3 text-sm leading-6 text-stone-500">只有房东账号可以发布房源，请登录房东账号后重试。</p>
-          <Link to="/login" onClick={close} className="mt-7 flex h-11 w-full items-center justify-center rounded-2xl bg-gradient-to-b from-slate-800 to-slate-950 text-base font-semibold text-[#f5f0e8] shadow-[0_6px_12px_rgba(15,23,42,0.32)]">
+          <h1 className="text-2xl font-bold text-white">无法发布房源</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-300/72">只有房东账号可以发布房源，请登录房东账号后重试。</p>
+          <Link to="/login" onClick={close} className="mt-7 flex h-11 w-full items-center justify-center rounded-2xl bg-gradient-to-b from-slate-800 to-slate-950 text-base font-semibold text-slate-100 shadow-[0_6px_12px_rgba(15,23,42,0.32)]">
             去登录
           </Link>
         </div>
@@ -238,16 +226,16 @@ export default function PublishListing({ onClose }) {
   }
 
   return (
-    <div className={isModal ? 'fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-stone-950/55 px-4 py-6 backdrop-blur-sm' : 'mx-auto w-full max-w-[720px] animate-fade-in'}>
-      <div className="relative w-full max-w-[720px] rounded-[1.5rem] border border-primary-600/20 p-6 shadow-[0_22px_55px_rgba(27,23,18,0.28)] animate-fade-in md:p-8" style={{ background: 'linear-gradient(180deg, rgba(245,240,232,0.98) 0%, rgba(242,236,226,0.98) 100%)' }}>
+    <div className={isModal ? 'fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-slate-950/55 px-4 py-6 backdrop-blur-sm' : 'mx-auto w-full max-w-[720px] animate-fade-in'}>
+      <div className="relative w-full max-w-[720px] rounded-[1.5rem] border border-white/10 p-6 shadow-[0_22px_55px_rgba(2,6,23,0.34)] backdrop-blur-xl animate-fade-in md:p-8" style={{ background: 'linear-gradient(180deg, rgba(15,23,42,0.82) 0%, rgba(10,15,28,0.86) 100%)' }}>
         {isModal && <CloseButton onClose={close} />}
 
         <div className="mb-6 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#fbf7ef] text-stone-950 shadow-[0_12px_30px_rgba(36,31,26,0.18)]">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/8 text-amber-200 shadow-[0_12px_30px_rgba(2,6,23,0.24)]">
             <HomeIcon className="h-7 w-7" />
           </div>
-          <h1 className="text-2xl font-bold text-stone-950">发布房源</h1>
-          <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-stone-500">发布流程：先通过钱包完成链上存证，再写入平台数据库。</p>
+          <h1 className="text-2xl font-bold text-white">发布房源</h1>
+          <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-slate-300/72">发布流程：先通过钱包完成链上存证，再写入平台数据库。</p>
         </div>
 
         <form onSubmit={handleSubmit} className={isModal ? 'max-h-[68vh] space-y-4 overflow-y-auto pr-1' : 'space-y-4'}>
@@ -277,27 +265,18 @@ export default function PublishListing({ onClose }) {
                 <Field key={key} label={label}><input type="number" min={min} className="auth-input" value={form[key]} onChange={(e) => setForm((p) => ({ ...p, [key]: parseInt(e.target.value, 10) }))} /></Field>
               ))}
             </div>
-
-            <Field label="默认条款（每行一条）">
-              <textarea
-                className="auth-input min-h-[120px] resize-y py-2"
-                value={form.clausesText}
-                onChange={(e) => setForm((p) => ({ ...p, clausesText: e.target.value }))}
-                placeholder={'例如：\n租金需在每月 1 日前支付\n禁止转租\n保持房屋设施完好'}
-              />
-            </Field>
           </Panel>
 
           <Panel>
-            <label className="block text-sm font-semibold text-stone-900">房源图片</label>
-            <p className="mt-1 text-xs text-stone-500">可选，最多 {MAX_IMAGE_COUNT} 张，仅支持 jpeg/png/webp。</p>
-            <input type="file" className="mt-3 block w-full rounded-2xl border border-stone-300 bg-[#fbf7ef] px-3 py-2 text-sm text-stone-700 file:mr-3 file:rounded-xl file:border-0 file:bg-stone-950 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-[#f5f0e8]" accept="image/jpeg,image/png,image/webp" multiple onChange={handleImageChange} />
+            <label className="block text-sm font-semibold text-slate-100">房源图片</label>
+            <p className="mt-1 text-xs text-slate-300/72">可选，最多 {MAX_IMAGE_COUNT} 张，仅支持 jpeg/png/webp。</p>
+            <input type="file" className="mt-3 block w-full rounded-2xl border border-white/10 bg-white/6 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-xl file:border-0 file:bg-stone-950 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-slate-100" accept="image/jpeg,image/png,image/webp" multiple onChange={handleImageChange} />
             {imagePreviews.length > 0 && (
               <div className="mt-3 grid grid-cols-3 gap-3 md:grid-cols-4">
                 {imagePreviews.map((url, index) => (
-                  <div key={`${url}_${index}`} className="group relative overflow-hidden rounded-2xl border border-stone-300">
+                  <div key={`${url}_${index}`} className="group relative overflow-hidden rounded-2xl border border-white/10">
                     <img src={url} alt={`preview_${index}`} className="h-24 w-full object-cover" />
-                    <button type="button" onClick={() => removeImage(index)} className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-stone-950/85 text-[#f5f0e8] shadow-sm transition-colors hover:bg-red-600" aria-label={`删除第${index + 1}张图片`}>
+                    <button type="button" onClick={() => removeImage(index)} className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-slate-950/85 text-slate-100 shadow-sm transition-colors hover:bg-red-600" aria-label={`删除第${index + 1}张图片`}>
                       <XIcon className="h-4 w-4" />
                     </button>
                   </div>
@@ -306,7 +285,7 @@ export default function PublishListing({ onClose }) {
             )}
           </Panel>
 
-          <button type="submit" disabled={submitting} className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-b from-slate-800 to-slate-950 text-base font-semibold text-[#f5f0e8] shadow-[0_6px_12px_rgba(15,23,42,0.32)] transition-transform hover:-translate-y-0.5 disabled:opacity-60">
+          <button type="submit" disabled={submitting} className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-b from-slate-800 to-slate-950 text-base font-semibold text-slate-100 shadow-[0_6px_12px_rgba(15,23,42,0.32)] transition-transform hover:-translate-y-0.5 disabled:opacity-60">
             {submitting ? <LoaderIcon className="h-5 w-5 animate-spin" /> : <PlusCircleIcon className="h-5 w-5" />}
             <span>{submitting ? '提交中...' : '发布房源（钱包确认）'}</span>
           </button>
@@ -317,21 +296,21 @@ export default function PublishListing({ onClose }) {
 }
 
 function Panel({ children }) {
-  return <section className="space-y-3 rounded-2xl border border-stone-300 bg-[#fbf7ef] p-4">{children}</section>;
+  return <section className="space-y-3 rounded-2xl border border-white/10 bg-white/6 p-4">{children}</section>;
 }
 
 function Field({ label, children }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs font-semibold text-stone-500">{label}</span>
-      <span className="flex min-h-[40px] items-center rounded-2xl border border-stone-300 bg-[#f5f0e8] px-3 focus-within:border-primary-600/80">{children}</span>
+      <span className="mb-1.5 block text-xs font-semibold text-slate-300/72">{label}</span>
+      <span className="flex min-h-[40px] items-center rounded-2xl border border-white/10 bg-white/6 px-3 focus-within:border-primary-600/80">{children}</span>
     </label>
   );
 }
 
 function CloseButton({ onClose }) {
   return (
-    <button type="button" onClick={onClose} className="absolute right-4 top-4 rounded-full p-1.5 text-stone-400 transition-colors hover:bg-stone-900/5 hover:text-stone-700" aria-label="关闭">
+    <button type="button" onClick={onClose} className="absolute right-4 top-4 rounded-full p-1.5 text-slate-400 transition-colors hover:bg-stone-900/5 hover:text-slate-200" aria-label="关闭">
       <XIcon className="h-4 w-4" />
     </button>
   );

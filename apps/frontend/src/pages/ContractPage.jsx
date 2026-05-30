@@ -161,6 +161,18 @@ function resolveContractEndAtMs(contract) {
   return Number.isNaN(endAt.getTime()) ? 0 : endAt.getTime();
 }
 
+function normalizePublicComment(text) {
+  return String(text || '').replace(/\r\n/g, '\n').trim();
+}
+
+function buildReviewCommentHash(text) {
+  return ethers.keccak256(ethers.toUtf8Bytes(normalizePublicComment(text)));
+}
+
+function renderStars(rating) {
+  return '★'.repeat(Math.max(0, Number(rating || 0))) + '☆'.repeat(Math.max(0, 5 - Number(rating || 0)));
+}
+
 function toDeadlineEpoch(value) {
   const raw = String(value || '').trim();
   const d = new Date(raw.includes('T') ? raw : raw.replace(' ', 'T'));
@@ -225,6 +237,9 @@ export default function ContractPage() {
   const [reviewReason, setReviewReason] = useState('');
   const [proposing, setProposing] = useState(false);
   const [listingChainState, setListingChainState] = useState(null);
+  const [reviewRating, setReviewRating] = useState(0);
+  const [reviewComment, setReviewComment] = useState('');
+  const [submittingReview, setSubmittingReview] = useState(false);
 
   const initialAmount = resolveInitialAmount(content);
   const selectedNetwork = NETWORK_OPTIONS.find((x) => x.key === preferredNetwork) || NETWORK_OPTIONS[0];
@@ -757,6 +772,57 @@ export default function ContractPage() {
     }
   };
 
+  const handleSubmitRentalReview = async () => {
+    if (!window.ethereum) { toast.error('请先安装 MetaMask 钱包'); return; }
+    if (!reviewRating || reviewRating < 1 || reviewRating > 5) { toast.error('请选择 1 到 5 星评分'); return; }
+    const normalizedComment = normalizePublicComment(reviewComment);
+    if (!normalizedComment) { toast.error('请填写评价内容'); return; }
+    const selected = NETWORK_OPTIONS.find((x) => x.key === preferredNetwork) || NETWORK_OPTIONS[0];
+    const contractAddr = String(CONTRACT_ADDR_MAP[selected.key] || '').trim();
+    if (!ethers.isAddress(contractAddr)) {
+      toast.error(`VITE_CONTRACT_ADDRESS_${selected.key.toUpperCase()} 未配置或格式无效`);
+      return;
+    }
+    setSubmittingReview(true);
+    try {
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const net = await provider.getNetwork();
+      if (Number(net.chainId) !== selected.chainId) {
+        await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: selected.chainIdHex }] });
+      }
+      const signer = await provider.getSigner();
+      const signerAddress = String((await signer.getAddress()) || '').trim();
+      const boundAddress = expectedWallet('tenant');
+      if (boundAddress && signerAddress.toLowerCase() !== boundAddress) {
+        toast.error(`当前钱包与合同绑定租客地址不一致：${boundAddress}`);
+        return;
+      }
+      const chainContract = new ethers.Contract(contractAddr, RentalChainABI, signer);
+      const commentHash = buildReviewCommentHash(normalizedComment);
+      await chainContract.submitRentalReview.staticCall(id, commentHash, reviewRating);
+      const estimatedGas = await chainContract.submitRentalReview.estimateGas(id, commentHash, reviewRating);
+      const tx = await chainContract.submitRentalReview(id, commentHash, reviewRating, {
+        gasLimit: (estimatedGas * 120n) / 100n,
+      });
+      await tx.wait();
+      setLastTxHash(String(tx.hash || ''));
+      await apiPost(`/contracts/${id}/review/onchain`, {
+        txHash: String(tx.hash || ''),
+        rating: reviewRating,
+        commentText: normalizedComment,
+        commentHash,
+      });
+      toast.success('租后评价已提交');
+      setReviewRating(0);
+      setReviewComment('');
+      await loadContract();
+    } catch (err) {
+      toast.error(err?.response?.data?.error || getErrorMessage(err) || '租后评价提交失败');
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
+
   const parseClausesFromText = (text) => String(text || '')
     .split('\n')
     .map((line) => line.trim())
@@ -878,6 +944,9 @@ export default function ContractPage() {
     && contract?.gas_auth?.status === 'active'
     && !contract?.landlord_signed_at
     && (isTenant || isLandlord);
+  const rentalReview = contract?.rental_review || null;
+  const reviewState = contract?.review_state || {};
+  const canSubmitRentalReview = !!(isTenant && reviewState.can_review_as_current_user);
   const cancelActionLabel = canRefundExpiredGas ? '取回 gas 预付' : '取消合同';
   const cancelBusyLabel = canRefundExpiredGas ? '正在取回 gas 预付...' : '正在撤销授权并取消合同...';
   const shouldWarnListingChainBlocked = ['pending', 'tenant_signed'].includes(String(contract?.status || '').trim())
@@ -1183,6 +1252,73 @@ export default function ContractPage() {
             <button onClick={handleCancel} disabled={isActionBusy} className="btn-secondary w-full">
               {cancelling ? cancelBusyLabel : cancelActionLabel}
             </button>
+          )}
+        </div>
+
+        <div className="mt-6 rounded-lg border border-gray-700 bg-gray-900/40 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-lg font-semibold text-gray-100">租后评价</p>
+              <p className="mt-1 text-xs text-gray-500">仅真实租客可在合同结束后提交一次公开评价。评分公开展示，并参与房源正式加权平均分。</p>
+            </div>
+            {rentalReview && <span className="badge-green">已提交</span>}
+          </div>
+
+          {rentalReview ? (
+            <div className="mt-4 rounded-lg border border-gray-800 bg-black/20 p-4">
+              <p className="text-lg font-medium text-primary-300">{renderStars(rentalReview.rating)} <span className="ml-2 text-sm text-gray-400">权重 {rentalReview.weight}</span></p>
+              <p className="mt-2 break-all font-mono text-xs text-gray-500">地址：{rentalReview.tenant_wallet || '未知地址'}</p>
+              <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-gray-200">{rentalReview.comment_text}</p>
+              <p className="mt-3 text-xs text-gray-500">提交时间：{rentalReview.created_at || '-'}</p>
+            </div>
+          ) : (
+            <div className="mt-4 rounded-lg border border-gray-800 bg-black/20 p-4">
+              <p className="text-sm text-gray-400">
+                {canSubmitRentalReview
+                  ? `当前可评价窗口截止到：${reviewState.review_window_end_at || '-'}`
+                  : reviewState.review_window_end_at
+                    ? `当前不可评价。评价窗口截止到：${reviewState.review_window_end_at}`
+                    : '当前合同暂不满足租后评价条件。'}
+              </p>
+
+              {canSubmitRentalReview && (
+                <>
+                  <div className="mt-4">
+                    <p className="mb-2 text-sm font-medium text-gray-200">为房源打分</p>
+                    <div className="flex items-center gap-2">
+                      {[1, 2, 3, 4, 5].map((value) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => setReviewRating(value)}
+                          className={`text-3xl transition-colors ${value <= reviewRating ? 'text-amber-400' : 'text-gray-600 hover:text-amber-300'}`}
+                        >
+                          ★
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <label className="mb-2 block text-sm font-medium text-gray-200">写几句评价（公开）</label>
+                    <textarea
+                      className="input-field min-h-[140px]"
+                      value={reviewComment}
+                      onChange={(e) => setReviewComment(e.target.value)}
+                      placeholder="公开描述房源实际情况、居住体验和沟通体验。"
+                      disabled={submittingReview}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSubmitRentalReview}
+                    disabled={submittingReview}
+                    className="btn-primary mt-4 w-full"
+                  >
+                    {submittingReview ? '提交中...' : '提交评价'}
+                  </button>
+                </>
+              )}
+            </div>
           )}
         </div>
       </div>
