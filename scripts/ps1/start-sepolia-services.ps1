@@ -2,7 +2,7 @@
 # Starts auth(3005) + backend(sepolia:3000) + frontend(3001)
 
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent $PSScriptRoot
+$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $backend = Join-Path $root 'apps\backend'
 $frontend = Join-Path $root 'apps\frontend'
 

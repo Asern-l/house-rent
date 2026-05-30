@@ -9,7 +9,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$projectRoot = Split-Path -Parent $scriptDir
+$projectRoot = Split-Path -Parent (Split-Path -Parent $scriptDir)
 $backendDbPath = Join-Path $projectRoot ("apps\backend\data\database.{0}.sqlite" -f $ChainEnv)
 $userDbPath = Join-Path $projectRoot ("apps\backend\data\users.{0}.sqlite" -f $ChainEnv)
 $logPath = Join-Path $projectRoot "logs\sign-flow-error.log"
