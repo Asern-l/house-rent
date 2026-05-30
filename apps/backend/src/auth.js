@@ -6,6 +6,10 @@ const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
 
+function resolveChainEnv() {
+  return String(process.env.CHAIN_ENV || 'sepolia').trim().toLowerCase() === 'local' ? 'local' : 'sepolia';
+}
+
 // 函数 1: 校验登录令牌并挂载用户信息（钱包地址 + id + role）。
 function authMiddleware(req, res, next) {
   const raw = req.headers.authorization || '';
@@ -14,6 +18,11 @@ function authMiddleware(req, res, next) {
   }
   try {
     req.user = jwt.verify(raw.slice(7), JWT_SECRET);
+    const tokenNetwork = String(req.user?.preferredNetwork || '').trim().toLowerCase();
+    const isAuthRoute = String(req.baseUrl || '').startsWith('/api/auth');
+    if (tokenNetwork && !isAuthRoute && tokenNetwork !== resolveChainEnv()) {
+      return res.status(401).json({ error: '登录网络与当前后端不一致，请切换网络后重新登录' });
+    }
     next();
   } catch (error) {
     return res.status(401).json({ error: '登录令牌无效，请重新登录' });

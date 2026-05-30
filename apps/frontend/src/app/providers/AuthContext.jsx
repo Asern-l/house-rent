@@ -8,6 +8,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import axios from 'axios';
 import { ethers } from 'ethers';
 import toast from 'react-hot-toast';
+import { createLoginMessage } from '../../shared/loginMessage';
 
 const AuthContext = createContext(null);
 const DEFAULT_NETWORK = String(import.meta.env.VITE_DEFAULT_NETWORK || 'sepolia').trim().toLowerCase();
@@ -155,7 +156,10 @@ export function AuthProvider({ children }) {
   }, [refreshWalletInfo]);
 
     // 函数 6: 钱包签名登录（自动判断新老用户）。
-  const walletLogin = async (walletAddress, signature, message, timestamp, nonce, role = 'tenant', nickname = '', phone = '') => {
+  const walletLogin = async (walletAddress, signature, message, timestamp, nonce, role = 'tenant', nickname = '', phone = '', networkOverride = '') => {
+    const targetNetwork = NETWORK_CONFIG[String(networkOverride || '').trim().toLowerCase()]
+      ? String(networkOverride || '').trim().toLowerCase()
+      : preferredNetwork;
     const res = await axios.post(`${AUTH_API_BASE}/auth/login`, {
       walletAddress,
       signature,
@@ -165,15 +169,48 @@ export function AuthProvider({ children }) {
       role,
       nickname,
       phone,
+      preferredNetwork: targetNetwork,
     });
     const { token, user: userData } = res.data.data;
-    const keys = storageKeys(preferredNetwork);
+    const keys = storageKeys(targetNetwork);
     localStorage.setItem(keys.token, token);
     localStorage.setItem(keys.user, JSON.stringify(userData));
-    axios.defaults.headers.common.Authorization = `Bearer ${token}`;
-    setUser(userData);
+    if (targetNetwork === preferredNetwork) {
+      axios.defaults.headers.common.Authorization = `Bearer ${token}`;
+      setUser(userData);
+    }
     return userData;
   };
+
+  // 函数 7: 对指定网络执行一次重新签名登录，确保切换网络时同步建立对应会话。
+  const reloginForNetwork = useCallback(async (networkKey, profile = null) => {
+    if (!window.ethereum) return null;
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const accounts = await provider.send('eth_accounts', []);
+    if (!accounts.length) return null;
+    const walletAddress = String(accounts[0] || '').trim();
+    if (!isWalletAddress(walletAddress)) return null;
+    const nonceRes = await fetch(`${AUTH_API_BASE}/auth/nonce`);
+    if (!nonceRes.ok) throw new Error(`认证服务异常 (${nonceRes.status})`);
+    const nonceData = await nonceRes.json();
+    const nonce = nonceData?.data?.nonce;
+    if (!nonce) throw new Error('获取登录凭证失败，请刷新重试');
+    const timestamp = Date.now();
+    const message = createLoginMessage(walletAddress, timestamp, nonce);
+    const signer = await provider.getSigner();
+    const signature = await signer.signMessage(message);
+    return walletLogin(
+      walletAddress,
+      signature,
+      message,
+      timestamp,
+      nonce,
+      profile?.role || 'tenant',
+      String(profile?.nickname || '').trim(),
+      String(profile?.phone || '').trim(),
+      networkKey,
+    );
+  }, [preferredNetwork]);
 
   const updateProfile = async ({ nickname, phone }) => {
     const keys = storageKeys(preferredNetwork);
@@ -242,6 +279,11 @@ export function AuthProvider({ children }) {
       toast.error(`不支持的网络：${networkKey}`);
       return;
     }
+    const currentProfile = user ? {
+      role: user.role,
+      nickname: user.nickname || '',
+      phone: user.phone || '',
+    } : null;
     setPreferredNetwork(networkKey);
     localStorage.setItem('preferredNetwork', networkKey);
     loadSessionForNetwork(networkKey);
@@ -266,13 +308,31 @@ export function AuthProvider({ children }) {
             params: [{ chainId: cfg.chainIdHex }],
           });
           await refreshWalletInfo();
-          return;
         } catch {
           toast.error(`切换到 ${networkName(cfg.chainIdDec)} 失败`);
           return;
         }
       }
       toast.error(`切换到 ${networkName(cfg.chainIdDec)} 失败`);
+      return;
+    }
+    try {
+      const nextUser = await reloginForNetwork(networkKey, currentProfile);
+      if (nextUser) {
+        const keys = storageKeys(networkKey);
+        const token = localStorage.getItem(keys.token);
+        if (token) {
+          axios.defaults.headers.common.Authorization = `Bearer ${token}`;
+        }
+        setUser(nextUser);
+        toast.success(`已切换到 ${networkName(cfg.chainIdDec)} 并重新登录`);
+      }
+    } catch (error) {
+      if (error?.code === 'ACTION_REJECTED') {
+        toast.error('已切换网络，但你取消了重新登录签名');
+      } else {
+        toast.error(error?.response?.data?.error || error?.message || '切换网络后的重新登录失败');
+      }
     }
   };
 

@@ -45,6 +45,13 @@ function getPreferredNetwork() {
   return NETWORK_OPTIONS[key] ? key : 'sepolia';
 }
 
+function parseClausesText(text) {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 // 函数 1: 切换钱包到当前前端所选网络。
 async function ensureWalletNetwork(provider, networkKey) {
   const target = NETWORK_OPTIONS[networkKey] || NETWORK_OPTIONS.sepolia;
@@ -67,6 +74,7 @@ export default function PublishListing({ onClose }) {
     title: '', description: '', address: '', district: '',
     rentAmount: '', minLeaseMonths: 1,
     bedrooms: 1, livingrooms: 1, bathrooms: 1, area: '',
+    clausesText: '',
   });
   const [submitting, setSubmitting] = useState(false);
   const [imageFiles, setImageFiles] = useState([]);
@@ -141,7 +149,11 @@ export default function PublishListing({ onClose }) {
           : [];
       }
 
-      const prepare = await apiPost('/listings/prepare-create', { ...form, imageUrls: uploadedImageUrls });
+      const prepare = await apiPost('/listings/prepare-create', {
+        ...form,
+        clauses: parseClausesText(form.clausesText),
+        imageUrls: uploadedImageUrls,
+      });
       const draft = prepare?.data?.draft;
       const chainAnchor = prepare?.data?.chainAnchor;
       if (!draft || !chainAnchor?.listingId) throw new Error('预创建返回数据无效');
@@ -265,6 +277,15 @@ export default function PublishListing({ onClose }) {
                 <Field key={key} label={label}><input type="number" min={min} className="auth-input" value={form[key]} onChange={(e) => setForm((p) => ({ ...p, [key]: parseInt(e.target.value, 10) }))} /></Field>
               ))}
             </div>
+
+            <Field label="默认条款（每行一条）">
+              <textarea
+                className="auth-input min-h-[120px] resize-y py-2"
+                value={form.clausesText}
+                onChange={(e) => setForm((p) => ({ ...p, clausesText: e.target.value }))}
+                placeholder={'例如：\n租金需在每月 1 日前支付\n禁止转租\n保持房屋设施完好'}
+              />
+            </Field>
           </Panel>
 
           <Panel>

@@ -11,7 +11,7 @@ $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
 $backendDbPath = Join-Path $projectRoot ("apps\backend\data\database.{0}.sqlite" -f $ChainEnv)
-$userDbPath = Join-Path $projectRoot "apps\backend\data\users.shared.sqlite"
+$userDbPath = Join-Path $projectRoot ("apps\backend\data\users.{0}.sqlite" -f $ChainEnv)
 $logPath = Join-Path $projectRoot "logs\sign-flow-error.log"
 $blockchainDir = Join-Path $projectRoot "blockchain"
 $deployJsonPath = Join-Path $blockchainDir "deployments-rental-sepolia.json"
@@ -60,4 +60,3 @@ $abiJson = $artifact.abi | ConvertTo-Json -Depth 100
 Set-Content -LiteralPath $abiTargetPath -Value $abiJson -Encoding UTF8
 
 Write-Log "Reset and redeploy completed"
-

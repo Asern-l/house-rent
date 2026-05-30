@@ -9,8 +9,15 @@ const path = require('path');
 const { ethers } = require('ethers');
 const { getDb, saveDb, parseResult, CHAIN_ENV } = require('../db');
 const { getUserDb, parseResult: parseUserResult } = require('../user-db');
+const { getLatestOnchainStatus } = require('../onchain-operations');
+const {
+  normalizeListingBodyStatus,
+  resolveListingPublicState,
+} = require('../listing-public-state');
 
 const RENTAL_CHAIN_ABI = require('../../../frontend/src/shared/blockchain/RentalChainABI.json');
+const LISTING_ONCHAIN_KINDS = ['listing.create', 'listing.status', 'listing.terms'];
+const CONTRACT_ONCHAIN_KINDS = ['contract.create'];
 
 const router = express.Router();
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -50,6 +57,15 @@ function toWeiString(amountStr) {
   const frac18 = `${fracPart}000000000000000000`.slice(0, 18);
   const wei = (BigInt(intPart) * (10n ** 18n)) + BigInt(frac18);
   return wei > 0n ? wei.toString() : null;
+}
+
+function formatWeiToEthString(value) {
+  try {
+    const formatted = ethers.formatEther(BigInt(value || 0));
+    return formatted.replace(/(\.\d*?[1-9])0+$/u, '$1').replace(/\.0+$/u, '').trim();
+  } catch {
+    return '';
+  }
 }
 
 function calcImageRootHash(imageHashes) {
@@ -117,19 +133,13 @@ async function readOnchainListing(listingId) {
     nonce: Number(data.nonce || 0),
     createdAt: Number(data.createdAt || 0),
     updatedAt: Number(data.updatedAt || 0),
-    chainHeadContractId: String(await runtime.contract.getActiveContractByListing(listingId) || ''),
+    chainHeadContractId: String(await runtime.contract.getContractChainHeadByListing(listingId) || ''),
     currentEffectiveContractId: String(await runtime.contract.getCurrentEffectiveContractByListing(listingId) || ''),
   };
 }
 
-function isDbListingOccupying(listing) {
-  return String(listing.status || '').trim().toLowerCase() === 'rented';
-}
-
 function expectedListingBodyStatusEnum(listing) {
-  const status = String(listing.status || '').trim().toLowerCase();
-  if (status === 'rented') return LISTING_STATUS_TEXT_TO_ENUM.available;
-  return LISTING_STATUS_TEXT_TO_ENUM[status];
+  return LISTING_STATUS_TEXT_TO_ENUM[normalizeListingBodyStatus(listing.status)];
 }
 
 function resolveDbListingContractMapping(db, listingId) {
@@ -141,27 +151,18 @@ function resolveDbListingContractMapping(db, listingId) {
     [listingId]
   ))[0] || null;
   const contracts = parseResult(db.exec(
-    `SELECT id, status, content_json FROM contracts
+    `SELECT id, status, content_json, expires_at, payment_deadline FROM contracts
      WHERE listing_id = ? AND status NOT IN ('cancelled', 'expired', 'ended')
-     ORDER BY created_at DESC`,
+      ORDER BY created_at DESC`,
     [listingId]
   ));
-  const now = Date.now();
-  const currentEffective = contracts.find((item) => {
-    if (String(item.status || '') !== 'active') return false;
-    const content = item.content_json || {};
-    const startDate = String(content?.terms?.startDate || '').trim();
-    const endDate = String(content?.terms?.endDate || '').trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return false;
-    const startMs = new Date(`${startDate}T00:00:00+08:00`).getTime();
-    const endMs = new Date(`${endDate}T23:59:59+08:00`).getTime();
-    return Number.isFinite(startMs) && Number.isFinite(endMs) && startMs <= now && now < endMs;
-  }) || null;
+  const state = resolveListingPublicState({ status: 'available' }, contracts);
   return {
     chainHeadContractId: chainHead?.id || '',
     chainHeadContractStatus: chainHead?.status || '',
-    currentEffectiveContractId: currentEffective?.id || '',
-    currentEffectiveContractStatus: currentEffective?.status || '',
+    currentEffectiveContractId: state.activeContract?.id || '',
+    currentEffectiveContractStatus: state.activeContract?.status || '',
+    publicStatus: state.publicStatus,
   };
 }
 
@@ -177,6 +178,92 @@ function parseSignMessage(message) {
 function buildMessageHash(message) {
   const raw = String(message || '').trim();
   return raw ? ethers.keccak256(ethers.toUtf8Bytes(raw)) : '';
+}
+
+function normalizeDateOnly(value) {
+  const s = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+}
+
+function parseContractStartAtMsFromContent(content = {}) {
+  const exact = Number(content?.renewal?.startAtMs || 0);
+  if (Number.isFinite(exact) && exact > 0) return exact;
+  const dateOnly = normalizeDateOnly(content?.terms?.startDate);
+  if (!dateOnly) return 0;
+  const d = new Date(`${dateOnly}T00:00:00+08:00`);
+  return Number.isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+function parseContractEndAtMsFromContent(content = {}) {
+  const dateOnly = normalizeDateOnly(content?.terms?.endDate);
+  if (!dateOnly) return 0;
+  const d = new Date(`${dateOnly}T23:59:59+08:00`);
+  return Number.isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+function deriveDbContractSemanticState(contract, content, hasInitialPayment, nowMs = Date.now()) {
+  const status = String(contract?.status || '').trim().toLowerCase();
+  const startAtMs = parseContractStartAtMsFromContent(content);
+  const endAtMs = parseContractEndAtMsFromContent(content);
+  const signDeadline = computeContractDeadlineMs(contract);
+  const paymentDeadline = new Date(String(contract?.payment_deadline || '').trim().replace(' ', 'T')).getTime();
+  const beforeStart = startAtMs > 0 && nowMs < startAtMs;
+  const inRange = startAtMs > 0 && endAtMs > 0 && startAtMs <= nowMs && nowMs < endAtMs;
+  const expiredByTime = endAtMs > 0 && nowMs >= endAtMs;
+
+  let semanticState = 'inactive';
+  if (status === 'pending' || status === 'tenant_signed') {
+    semanticState = signDeadline > nowMs ? 'signing' : 'expired';
+  } else if (status === 'pending_payment') {
+    semanticState = Number.isFinite(paymentDeadline) && paymentDeadline > nowMs ? 'pending_payment' : 'expired';
+  } else if (hasInitialPayment || status === 'active' || status === 'ended') {
+    if (expiredByTime) semanticState = 'expired';
+    else if (beforeStart) semanticState = 'future_reserved';
+    else if (inRange) semanticState = 'effective';
+  } else if (status === 'expired') {
+    semanticState = 'expired';
+  }
+
+  return {
+    semanticState,
+    currentEffective: semanticState === 'effective',
+    startAtMs: String(startAtMs || ''),
+    endAtMs: String(endAtMs || ''),
+  };
+}
+
+function deriveOnchainContractSemanticState(onchain, nowMs = Date.now()) {
+  if (!onchain?.exists) {
+    return {
+      semanticState: 'missing',
+      currentEffective: false,
+      startAtMs: String(onchain?.startAtMs || ''),
+      endAtMs: String(onchain?.endAtMs || ''),
+    };
+  }
+  const status = String(onchain.status || '').trim().toLowerCase();
+  const startAtMs = Number(onchain.startAtMs || 0);
+  const endAtMs = Number(onchain.endAtMs || 0);
+  const beforeStart = startAtMs > 0 && nowMs < startAtMs;
+  const inRange = startAtMs > 0 && endAtMs > 0 && startAtMs <= nowMs && nowMs < endAtMs;
+  const expiredByTime = endAtMs > 0 && nowMs >= endAtMs;
+
+  let semanticState = 'inactive';
+  if (status === 'created') semanticState = 'pending_payment';
+  else if (status === 'paid' || status === 'active') {
+    if (expiredByTime) semanticState = 'expired';
+    else if (beforeStart) semanticState = 'future_reserved';
+    else if (inRange) semanticState = 'effective';
+  } else if (status === 'completed' || status === 'cancelled') {
+    semanticState = expiredByTime ? 'expired' : 'inactive';
+  }
+
+  return {
+    semanticState,
+    currentEffective: semanticState === 'effective',
+    startAtMs: String(startAtMs || ''),
+    endAtMs: String(endAtMs || ''),
+  };
 }
 
 function normalizeIndexedStringHash(value) {
@@ -292,10 +379,10 @@ async function readOnchainContractVerification(contractId, txHash) {
 router.get('/listing/:id', asyncHandler(async (req, res) => {
   const db = await getDb();
   const userDb = await getUserDb();
-  const rows = parseResult(db.exec('SELECT * FROM listings WHERE id = ?', [req.params.id]));
+  let rows = parseResult(db.exec('SELECT * FROM listings WHERE id = ?', [req.params.id]));
   if (!rows.length) return res.json({ success: true, data: { exists: false, message: '房源不存在' } });
 
-  const listing = rows[0];
+  let listing = rows[0];
   const landlordRows = parseUserResult(userDb.exec('SELECT wallet_address FROM users WHERE id = ?', [listing.landlord_id]));
   const landlordWallet = String(landlordRows[0]?.wallet_address || '').trim().toLowerCase();
   const imageHashes = parseJsonArray(listing.image_hashes);
@@ -311,21 +398,76 @@ router.get('/listing/:id', asyncHandler(async (req, res) => {
     listing.content_hash = rebuiltContentHash;
   }
 
-  let onchain = null;
+let onchain = null;
   try {
     onchain = await readOnchainListing(listing.id);
   } catch (error) {
     onchain = { readable: false, reason: error?.message || '读取链上房源失败' };
   }
+  if (onchain?.exists) {
+    const nextStatus = String(onchain.status || '').trim().toLowerCase();
+    const nextRentAmount = formatWeiToEthString(onchain.rentAmountWei);
+    const nextMinLeaseMonths = Number(onchain.minLeaseMonths || 0);
+    const nextContentHash = String(onchain.contentHash || '').trim().toLowerCase();
+    const nextVersion = Number(onchain.version || 0);
+    const nextNonce = Number(onchain.nonce || 0);
+    const shouldSync =
+      nextVersion > Number(listing.chain_version || 0) ||
+      nextNonce > Number(listing.chain_nonce || 0) ||
+      nextStatus !== String(listing.status || '').trim().toLowerCase() ||
+      (nextRentAmount && nextRentAmount !== String(listing.rent_amount || '').trim()) ||
+      (nextMinLeaseMonths > 0 && nextMinLeaseMonths !== Number(listing.min_lease_months || 0)) ||
+      (nextContentHash && nextContentHash !== String(listing.content_hash || '').trim().toLowerCase());
+    if (shouldSync) {
+      db.run(
+        `UPDATE listings
+         SET status = ?,
+             rent_amount = CASE WHEN ? <> '' THEN ? ELSE rent_amount END,
+             min_lease_months = CASE WHEN ? > 0 THEN ? ELSE min_lease_months END,
+             content_hash = CASE WHEN ? <> '' THEN ? ELSE content_hash END,
+             chain_version = CASE WHEN ? > chain_version THEN ? ELSE chain_version END,
+             chain_nonce = CASE WHEN ? > chain_nonce THEN ? ELSE chain_nonce END,
+             updated_at = datetime('now', '+8 hours')
+         WHERE id = ?`,
+        [
+          nextStatus,
+          nextRentAmount,
+          nextRentAmount,
+          nextMinLeaseMonths,
+          nextMinLeaseMonths,
+          nextContentHash,
+          nextContentHash,
+          nextVersion,
+          nextVersion,
+          nextNonce,
+          nextNonce,
+          listing.id,
+        ]
+      );
+      saveDb();
+      rows = parseResult(db.exec('SELECT * FROM listings WHERE id = ?', [req.params.id]));
+      listing = rows[0];
+    }
+  }
+  const syncedImageHashes = parseJsonArray(listing.image_hashes);
+  const syncedImageUrls = parseJsonArray(listing.image_urls);
+  const syncedRentAmountWei = toWeiString(listing.rent_amount) || '';
+  const syncedImageRootHash = calcImageRootHash(syncedImageHashes);
+  const syncedRebuiltContentHash = calcListingContentHash({ listingId: listing.id, landlordWallet, listing });
+  const syncedDbContentHash = String(listing.content_hash || '').trim().toLowerCase() || syncedRebuiltContentHash;
+  const syncedDbContractMapping = resolveDbListingContractMapping(db, listing.id);
+  const listingOnchainStatus = getLatestOnchainStatus(db, 'listing', listing.id, LISTING_ONCHAIN_KINDS);
   const comparisons = onchain?.exists ? {
     listingIdMatch: String(onchain.listingId || '') === String(listing.id || ''),
     landlordMatch: !landlordWallet || String(onchain.landlord || '') === landlordWallet,
-    contentHashMatch: String(onchain.contentHash || '') === dbContentHash,
-    rentAmountWeiMatch: String(onchain.rentAmountWei || '') === String(expectedRentAmountWei || ''),
+    contentHashMatch: String(onchain.contentHash || '') === syncedDbContentHash,
+    rentAmountWeiMatch: String(onchain.rentAmountWei || '') === String(syncedRentAmountWei || ''),
     minLeaseMonthsMatch: Number(onchain.minLeaseMonths || 0) === Number(listing.min_lease_months || 0),
-    imageRootHashMatch: String(onchain.imageRootHash || '') === String(expectedImageRootHash || '').toLowerCase(),
+    imageRootHashMatch: String(onchain.imageRootHash || '') === String(syncedImageRootHash || '').toLowerCase(),
     listingStatusMatch: Number(onchain.statusEnum || 0) === Number(expectedListingBodyStatusEnum(listing) ?? -1),
-    occupancyMatch: isDbListingOccupying(listing) ? Boolean(String(onchain.currentEffectiveContractId || '').trim()) : true,
+    occupancyMatch: syncedDbContractMapping.publicStatus === 'rented'
+      ? String(onchain.currentEffectiveContractId || '').trim() === String(syncedDbContractMapping.currentEffectiveContractId || '').trim()
+      : !String(onchain.currentEffectiveContractId || '').trim(),
     versionMatch: Number(onchain.version || 0) === Number(listing.chain_version || 0),
     nonceMatch: Number(onchain.nonce || 0) === Number(listing.chain_nonce || 0),
   } : null;
@@ -348,20 +490,21 @@ router.get('/listing/:id', asyncHandler(async (req, res) => {
         listingId: listing.id,
         landlordWallet,
         status: listing.status,
-        contentHash: dbContentHash,
+        publicStatus: syncedDbContractMapping.publicStatus,
+        contentHash: syncedDbContentHash,
         rentAmount: listing.rent_amount,
-        rentAmountWei: expectedRentAmountWei,
+        rentAmountWei: syncedRentAmountWei,
         minLeaseMonths: Number(listing.min_lease_months || 0),
-        imageCount: imageUrls.length,
-        imageHashes,
-        imageRootHash: expectedImageRootHash,
+        imageCount: syncedImageUrls.length,
+        imageHashes: syncedImageHashes,
+        imageRootHash: syncedImageRootHash,
         txHash: listing.tx_hash || '',
-        onchainStatus: listing.onchain_status,
+        onchainState: listingOnchainStatus.status,
         chainVersion: Number(listing.chain_version || 0),
         chainNonce: Number(listing.chain_nonce || 0),
         chainBlockNumber: Number(listing.chain_block_number || 0),
         chainBlockTime: Number(listing.chain_block_time || 0),
-        contractMapping: dbContractMapping,
+        contractMapping: syncedDbContractMapping,
         createdAt: listing.created_at,
         updatedAt: listing.updated_at,
       },
@@ -379,6 +522,7 @@ router.get('/contract/:id', asyncHandler(async (req, res) => {
   if (!rows.length) return res.json({ success: true, data: { exists: false, message: '合同不存在' } });
 
   const contract = rows[0];
+  const contractOnchainStatus = getLatestOnchainStatus(db, 'contract', contract.id, CONTRACT_ONCHAIN_KINDS);
   const content = typeof contract.content_json === 'string' ? JSON.parse(contract.content_json) : contract.content_json || {};
   const contentStr = typeof contract.content_json === 'string' ? contract.content_json : JSON.stringify(contract.content_json, null, 2);
   const currentHash = `0x${crypto.createHash('sha256').update(contentStr).digest('hex')}`;
@@ -431,6 +575,22 @@ router.get('/contract/:id', asyncHandler(async (req, res) => {
   ));
   const initialPayment = payments.find((item) => item.pay_type === 'initial' && item.status === 'confirmed') || null;
   const isEffectiveByPayment = Boolean(initialPayment);
+  const dbSemantic = deriveDbContractSemanticState(contract, content, isEffectiveByPayment);
+  const onchainSemantic = deriveOnchainContractSemanticState(onchain);
+  const semanticMatch = !onchain?.exists || dbSemantic.semanticState === onchainSemantic.semanticState;
+  const lazyReleaseState = Boolean(
+    onchain?.exists
+    && String(contract.status || '').trim().toLowerCase() === 'ended'
+    && String(onchain?.status || '').trim().toLowerCase() === 'active'
+    && dbSemantic.semanticState === 'expired'
+    && onchainSemantic.semanticState === 'expired'
+  );
+  const verificationPassed = Boolean(
+    hashMatch
+    && signatureVerification.allSignaturesValid
+    && (onchainAnchored || !contract.tx_hash)
+    && semanticMatch
+  );
 
   res.json({
     success: true,
@@ -440,7 +600,7 @@ router.get('/contract/:id', asyncHandler(async (req, res) => {
       contractId: contract.id,
       listingId: contract.listing_id || '',
       status: contract.status,
-      onchainStatus: contract.onchain_status,
+      onchainState: contractOnchainStatus.status,
       storedHash: contract.content_hash,
       currentHash,
       hashMatch,
@@ -451,6 +611,16 @@ router.get('/contract/:id', asyncHandler(async (req, res) => {
       onchain,
       onchainComparisons,
       onchainAnchored,
+      semanticVerification: {
+        dbSemanticState: dbSemantic.semanticState,
+        onchainSemanticState: onchainSemantic.semanticState,
+        semanticMatch,
+        lazyReleaseState,
+        dbCurrentEffective: dbSemantic.currentEffective,
+        onchainCurrentEffective: onchainSemantic.currentEffective,
+        startAtMs: dbSemantic.startAtMs || onchainSemantic.startAtMs,
+        endAtMs: dbSemantic.endAtMs || onchainSemantic.endAtMs,
+      },
       initialPayment: initialPayment ? {
         id: initialPayment.id,
         amount: initialPayment.amount,
@@ -461,9 +631,11 @@ router.get('/contract/:id', asyncHandler(async (req, res) => {
       paymentCount: payments.length,
       createdAt: contract.created_at,
       updatedAt: contract.updated_at,
-      conclusion: hashMatch && signatureVerification.allSignaturesValid && (onchainAnchored || !contract.tx_hash)
-        ? '合同内容、双方签名与链上锚定校验通过'
-        : '合同验真存在未通过项，请复核哈希、签名或链上锚定',
+      conclusion: verificationPassed
+        ? (lazyReleaseState
+          ? '合同哈希、签名与链上锚定均通过；当前属于懒释放状态，数据库已结束、链上仍为 Active，但按时间语义双方一致视为已过期'
+          : '合同内容、双方签名、链上锚定与时间语义校验通过')
+        : '合同哈希、签名、链上锚定或时间语义存在不一致，请人工复核',
     },
   });
 }));

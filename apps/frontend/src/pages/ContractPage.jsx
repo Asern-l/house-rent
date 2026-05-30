@@ -35,6 +35,11 @@ const NETWORK_OPTIONS = [
 ];
 
 const TX_EXPLORER_BASE = { sepolia: 'https://sepolia.etherscan.io/tx/', local: '' };
+const LISTING_CHAIN_STATUS_MAP = {
+  0: { key: 'active', label: '链上可用' },
+  1: { key: 'offline', label: '链上下架' },
+  2: { key: 'closed', label: '链上关闭' },
+};
 
 function getErrorMessage(error) {
   return String(
@@ -85,6 +90,28 @@ function resolveGasAuthErrorMessage(error) {
   if (message.includes('user rejected')) return '你已取消本次钱包操作。';
   if (message.includes('insufficient funds')) return '钱包余额不足，无法完成 gas 锁仓或撤销。';
   return message || error?.response?.data?.error || '操作失败';
+}
+
+function resolveLandlordOnchainErrorMessage(error, listingChainState) {
+  const message = getErrorMessage(error);
+  if (listingChainState?.key === 'offline') return '当前房源已链上下架，合同不可上链。';
+  if (listingChainState?.key === 'closed') return '当前房源已链上关闭，合同不可上链。';
+  if (listingChainState?.key === 'missing') return '当前房源尚未链上发布，合同不可上链。';
+  if (message.includes('listing not active')) return '当前房源不是链上可用状态，合同不可上链。';
+  if (message.includes('listing not found')) return '当前房源尚未链上发布，合同不可上链。';
+  return resolveGasAuthErrorMessage(error);
+}
+
+function hasGasCompRevokedLog(receipt, contractInterface) {
+  for (const log of receipt?.logs || []) {
+    try {
+      const parsed = contractInterface.parseLog(log);
+      if (parsed?.name === 'GasCompRevoked') return true;
+    } catch {
+      // ignore unrelated logs
+    }
+  }
+  return false;
 }
 
 function resolveInitialAmount(content) {
@@ -152,6 +179,34 @@ const STATUS_MAP = {
   expired:         { label: '已过期', color: 'badge-gray' },
 };
 
+function getNegotiationDisplayState({ contract, content, versions, user }) {
+  const isLocked = !!contract?.tenant_signed_at || !!contract?.landlord_signed_at || contract?.status !== 'pending';
+  const latestDraft = versions.find((item) => item.status === 'draft' && item.proposer_id === user?.id);
+  const openProposal = versions.find((item) => item.status === 'proposed');
+  const latestRejected = versions.find((item) => item.status === 'rejected');
+  const reviewAction = String(content?.negotiation?.reviewAction || '').trim();
+
+  if (isLocked) {
+    return { label: '协商已冻结', tone: 'text-gray-200', note: '任一方开始签署后，条款协商立即冻结。' };
+  }
+  if (latestDraft) {
+    return { label: '租客草稿', tone: 'text-gray-200', note: '这是租客尚未提交给房东审核的草稿版本。' };
+  }
+  if (openProposal) {
+    return { label: '待房东审核', tone: 'text-yellow-300', note: '当前存在租客提议，等待房东处理。' };
+  }
+  if (reviewAction === 'approved_with_edits') {
+    return { label: '房东修改后确认', tone: 'text-emerald-300', note: content?.negotiation?.note || '房东已在租客提议基础上修改并确认当前版本。' };
+  }
+  if (reviewAction === 'approved_as_is') {
+    return { label: '房东确认', tone: 'text-emerald-300', note: content?.negotiation?.note || '房东已确认租客提议为当前版本。' };
+  }
+  if (latestRejected) {
+    return { label: '已退回修改', tone: 'text-rose-300', note: latestRejected.change_note || '房东已退回上一版提议，租客可继续修改并重新提交。' };
+  }
+  return { label: '默认版本', tone: 'text-gray-200', note: '当前为默认条款版本，租客可发起第一版提议。' };
+}
+
 export default function ContractPage() {
   const { id } = useParams();
   const { user, preferredNetwork } = useAuth();
@@ -161,6 +216,7 @@ export default function ContractPage() {
   const [loading, setLoading] = useState(true);
   const [signing, setSigning] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [payments, setPayments] = useState([]);
   const [versions, setVersions] = useState([]);
   const [lastTxHash, setLastTxHash] = useState('');
@@ -168,10 +224,12 @@ export default function ContractPage() {
   const [changeNote, setChangeNote] = useState('');
   const [reviewReason, setReviewReason] = useState('');
   const [proposing, setProposing] = useState(false);
+  const [listingChainState, setListingChainState] = useState(null);
 
   const initialAmount = resolveInitialAmount(content);
   const selectedNetwork = NETWORK_OPTIONS.find((x) => x.key === preferredNetwork) || NETWORK_OPTIONS[0];
   const txExplorerBase = TX_EXPLORER_BASE[selectedNetwork.key] || '';
+  const isActionBusy = signing || paying || proposing || cancelling;
 
   const loadContract = async () => {
     const d = await apiGet(`/contracts/${id}`);
@@ -191,25 +249,58 @@ export default function ContractPage() {
     setVersions(versionResp?.data || []);
   };
 
+  const loadListingChainState = async (contractData) => {
+    const listingId = String(contractData?.listing_id || '').trim();
+    const contractAddr = String(CONTRACT_ADDR_MAP[selectedNetwork.key] || '').trim();
+    const rpcUrl = selectedNetwork?.addParams?.rpcUrls?.[0] || '';
+    if (!listingId || !ethers.isAddress(contractAddr) || !rpcUrl) {
+      setListingChainState(null);
+      return;
+    }
+    try {
+      const provider = new ethers.JsonRpcProvider(rpcUrl);
+      const readContract = new ethers.Contract(contractAddr, RentalChainABI, provider);
+      const record = await readContract.getListing(listingId);
+      if (!record?.exists) {
+        setListingChainState({ key: 'missing', label: '房源未上链' });
+        return;
+      }
+      const numericStatus = Number(record.status ?? -1);
+      const mapped = LISTING_CHAIN_STATUS_MAP[numericStatus] || { key: 'unknown', label: '链上状态未知' };
+      setListingChainState(mapped);
+    } catch {
+      setListingChainState(null);
+    }
+  };
+
   useEffect(() => {
     loadContract().catch(() => toast.error('加载合同失败')).finally(() => setLoading(false));
   }, [id]);
 
   useEffect(() => {
-    const latestProposal = versions.find((item) => item.status === 'proposed');
-    if (!latestProposal) return;
-    try {
-      const proposalContent = typeof latestProposal.content_json === 'string'
-        ? JSON.parse(latestProposal.content_json)
-        : latestProposal.content_json;
-      const proposalClauses = Array.isArray(proposalContent?.clauses) ? proposalContent.clauses : [];
-      if (proposalClauses.length > 0) {
-        setClausesText(proposalClauses.join('\n'));
-      }
-    } catch {
-      // ignore invalid proposal content_json
+    if (!contract) return;
+    if (!['pending', 'tenant_signed'].includes(String(contract.status || '').trim())) {
+      setListingChainState(null);
+      return;
     }
-  }, [versions]);
+    loadListingChainState(contract).catch(() => setListingChainState(null));
+  }, [contract?.id, contract?.listing_id, contract?.status, preferredNetwork]);
+
+  useEffect(() => {
+    const latestProposal = versions.find((item) => item.status === 'proposed');
+    const latestDraft = versions.find((item) => item.status === 'draft' && item.proposer_id === user?.id);
+    const target = latestProposal || latestDraft;
+    if (!target) return;
+    try {
+      const targetContent = typeof target.content_json === 'string'
+        ? JSON.parse(target.content_json)
+        : target.content_json;
+      const targetClauses = Array.isArray(targetContent?.clauses) ? targetContent.clauses : [];
+      setClausesText(targetClauses.join('\n'));
+    } catch {
+      // ignore invalid content_json
+    }
+  }, [versions, user?.id]);
 
   const expectedWallet = (type) => {
     const addr = type === 'tenant' ? content?.tenant?.walletAddress : content?.landlord?.walletAddress;
@@ -385,6 +476,18 @@ export default function ContractPage() {
         }
         try {
           const chainContract = new ethers.Contract(contractAddr, RentalChainABI, signer);
+          const listingRecord = await chainContract.getListing(String(contract?.listing_id || ''));
+          if (!listingRecord?.exists) {
+            setListingChainState({ key: 'missing', label: '房源未上链' });
+            toast.error('当前房源尚未链上发布，合同不可上链。');
+            return;
+          }
+          const currentListingChainState = LISTING_CHAIN_STATUS_MAP[Number(listingRecord.status ?? -1)] || { key: 'unknown', label: '链上状态未知' };
+          setListingChainState(currentListingChainState);
+          if (currentListingChainState.key !== 'active') {
+            toast.error(`当前房源${currentListingChainState.label}，合同不可上链。`);
+            return;
+          }
           const tenantMessage = String(contract?.tenant_signature_message || '').trim();
           const tenantSignature = String(contract?.tenant_signature || '').trim();
           const tenantSignedAt = parseSignedAtMs(contract?.tenant_signed_at);
@@ -435,7 +538,7 @@ export default function ContractPage() {
             contractAddress: contractAddr,
             pageUrl: window.location.href,
           });
-          toast.error(`房东上链失败：${resolveGasAuthErrorMessage(landlordOnchainErr)}`);
+          toast.error(`房东上链失败：${resolveLandlordOnchainErrorMessage(landlordOnchainErr, listingChainState)}`);
           return;
         }
       }
@@ -476,8 +579,10 @@ export default function ContractPage() {
   };
 
   const handleCancel = async () => {
-    if (!confirm('确认要取消这份合同吗？')) return;
+    if (!confirm(canRefundExpiredGas ? '确认要取回这份已结束合同的 gas 预付吗？' : '确认要取消这份合同吗？')) return;
+    setCancelling(true);
     try {
+      let gasRefundConfirmed = contract?.gas_auth?.status !== 'active';
       if (contract?.gas_auth?.status === 'active' && contract?.gas_auth?.lock_tx_hash && !contract?.landlord_signed_at) {
         if (!window.ethereum) { toast.error('请先安装 MetaMask 钱包'); return; }
         const selected = NETWORK_OPTIONS.find((x) => x.key === preferredNetwork) || NETWORK_OPTIONS[0];
@@ -501,28 +606,52 @@ export default function ContractPage() {
         const tenantContract = new ethers.Contract(contractAddr, RentalChainABI, signer);
         try {
           const tenantAddress = String(contract?.gas_auth?.tenant_address || content?.tenant?.walletAddress || '').trim();
-          const revokeTx = await tenantContract.cancelPendingGasAuthorization(
-            id,
-            tenantAddress,
-            String(contract.gas_auth.nonce || ''),
-          );
-          await revokeTx.wait();
-          await apiPost(`/contracts/${id}/gas-authorization/revoke`, { txHash: String(revokeTx.hash || '') });
+          const nonce = String(contract.gas_auth.nonce || '');
+          const revokeTx = isTenant
+            ? await tenantContract.revokeGasCompensationAuthorization(id, tenantAddress, nonce)
+            : await tenantContract.cancelPendingGasAuthorization(id, tenantAddress, nonce);
+          const revokeReceipt = await revokeTx.wait();
+          const hasRevokedEvent = hasGasCompRevokedLog(revokeReceipt, tenantContract.interface);
+          gasRefundConfirmed = hasRevokedEvent;
+          if (hasRevokedEvent) {
+            await apiPost(`/contracts/${id}/gas-authorization/revoke`, { txHash: String(revokeTx.hash || '') });
+          }
           setLastTxHash(String(revokeTx.hash || ''));
+          if (!hasRevokedEvent) {
+            toast(canRefundExpiredGas ? '链上授权未产生撤销事件，当前未取回 gas 预付' : '链上授权未产生撤销事件，按当前状态继续取消合同', { icon: 'ℹ️' });
+          }
         } catch (revokeErr) {
           const revokeMsg = getErrorMessage(revokeErr);
-          if (!revokeMsg.includes('only active authorization can revoke') && !revokeMsg.includes('authorization not found')) {
+          const revokeCode = String(revokeErr?.response?.data?.code || '').trim();
+          if (
+            revokeCode !== 'GAS_AUTH_REVOKE_EVENT_MISSING'
+            && revokeCode !== 'GAS_AUTH_REVOKE_METHOD_MISMATCH'
+            && !revokeMsg.includes('only active authorization can revoke')
+            && !revokeMsg.includes('authorization not found')
+          ) {
             throw revokeErr;
           }
         }
       }
-      await apiPost(`/contracts/${id}/cancel`);
-      toast.success('合同已取消');
-      navigate('/contracts');
+      if (canRefundExpiredGas) {
+        toast.success('gas 预付已处理');
+        await loadContract();
+      } else {
+        await apiPost(`/contracts/${id}/cancel`);
+        if (gasRefundConfirmed) {
+          toast.success('合同已取消');
+          navigate('/contracts');
+        } else {
+          toast.success('合同已取消，请继续取回 gas 预付');
+          await loadContract();
+        }
+      }
     } catch (err) {
       const requestId = genRequestId();
-      await apiPost(`/contracts/${id}/sign-client-report`, { type: 'cancel', preferredNetwork, message: err?.message || '取消合同失败', apiStatus: err.response?.status || null, apiError: err.response?.data || null, walletAddress: '', chainId: '', pageUrl: window.location.href }, { headers: { 'X-Request-Id': requestId } }).catch(() => {});
-      toast.error(err.response?.data?.error || '取消失败');
+      await apiPost(`/contracts/${id}/sign-client-report`, { type: canRefundExpiredGas ? 'refund_gas' : 'cancel', preferredNetwork, message: err?.message || (canRefundExpiredGas ? '取回 gas 预付失败' : '取消合同失败'), apiStatus: err.response?.status || null, apiError: err.response?.data || null, walletAddress: '', chainId: '', pageUrl: window.location.href }, { headers: { 'X-Request-Id': requestId } }).catch(() => {});
+      toast.error(err.response?.data?.error || (canRefundExpiredGas ? '取回 gas 预付失败' : '取消失败'));
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -670,10 +799,10 @@ export default function ContractPage() {
     try {
       await apiPost(`/contracts/${id}/clauses/review`, {
         decision,
-        reason: decision === 'reject' ? reviewReason : '',
-        clauses: decision === 'reject' ? parseClausesFromText(clausesText) : undefined,
+        note: reviewReason,
+        clauses: decision === 'approve' ? parseClausesFromText(clausesText) : undefined,
       });
-      toast.success(decision === 'approve' ? '条款已审核通过并定稿' : '房东已回传最终条款');
+      toast.success(decision === 'approve' ? '房东已确认当前条款版本' : '房东已退回该提议');
       setReviewReason('');
       await loadContract();
     } catch (err) {
@@ -738,11 +867,22 @@ export default function ContractPage() {
   const isTenant = contract.tenant_id === user?.id;
   const isLandlord = contract.landlord_id === user?.id;
   const hasRenewalChild = !!contract?.renewal_child_contract?.id;
-  const canNegotiate = contract.status === 'pending' && (isTenant || isLandlord);
+  const isNegotiationLocked = !!contract.tenant_signed_at || !!contract.landlord_signed_at || contract.status !== 'pending';
+  const canNegotiate = !isNegotiationLocked && (isTenant || isLandlord);
   const openProposal = versions.find((item) => item.status === 'proposed');
   const clausesPreview = Array.isArray(content?.clauses) ? content.clauses : [];
-  const isLandlordFinal = content?.negotiation?.mode === 'landlord_final';
-  const tenantCanEditClauses = isTenant && !isLandlordFinal && !contract.tenant_signed_at && !contract.landlord_signed_at;
+  const tenantCanEditClauses = isTenant && !isNegotiationLocked;
+  const negotiationDisplay = getNegotiationDisplayState({ contract, content, versions, user });
+  const canCancelContract = ['pending', 'tenant_signed'].includes(contract.status) && (isTenant || isLandlord);
+  const canRefundExpiredGas = ['expired', 'cancelled'].includes(contract.status)
+    && contract?.gas_auth?.status === 'active'
+    && !contract?.landlord_signed_at
+    && (isTenant || isLandlord);
+  const cancelActionLabel = canRefundExpiredGas ? '取回 gas 预付' : '取消合同';
+  const cancelBusyLabel = canRefundExpiredGas ? '正在取回 gas 预付...' : '正在撤销授权并取消合同...';
+  const shouldWarnListingChainBlocked = ['pending', 'tenant_signed'].includes(String(contract?.status || '').trim())
+    && listingChainState
+    && listingChainState.key !== 'active';
 
   return (
     <div className="max-w-3xl mx-auto animate-fade-in">
@@ -762,6 +902,12 @@ export default function ContractPage() {
           <span className={`${derivedStatusInfo.color} text-sm`}>{derivedStatusInfo.label}</span>
         </div>
 
+        {shouldWarnListingChainBlocked && (
+          <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-3 text-sm text-amber-100">
+            当前房源{listingChainState.label}，这份合同目前不可上链。你仍可保留合同文本，但房东签署并上链会被拒绝。
+          </div>
+        )}
+
         <div className="mb-4 rounded-lg border border-gray-700 bg-gray-800/50 px-3 py-2 text-sm">
           <span className="text-gray-500">合同ID：</span>
           <span className="font-mono text-gray-200 break-all">{contract.id}</span>
@@ -780,7 +926,8 @@ export default function ContractPage() {
         <div className="mb-4 grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
           <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-3">
             <p className="text-gray-500">协商状态</p>
-            <p className="font-medium text-gray-200">{isLandlordFinal ? '房东最终版待租客确认' : contract.negotiation_status === 'finalized' ? '已定稿' : contract.negotiation_status === 'proposed' ? '待审核' : '草稿协商中'}</p>
+            <p className={`font-medium ${negotiationDisplay.tone}`}>{negotiationDisplay.label}</p>
+            <p className="mt-1 text-xs text-gray-500">{negotiationDisplay.note}</p>
           </div>
           <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-3">
             <p className="text-gray-500">合同版本</p>
@@ -788,7 +935,7 @@ export default function ContractPage() {
           </div>
           <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-3">
             <p className="text-gray-500">上链状态</p>
-            <p className="font-medium text-gray-200">{contract.onchain_status === 'confirmed' ? '已确认' : contract.onchain_status === 'failed' ? '待重试' : contract.onchain_status === 'pending' ? '处理中' : '未开始'}</p>
+            <p className="font-medium text-gray-200">{contract.onchain_state === 'confirmed' ? '已确认' : contract.onchain_state === 'failed' ? '待重试' : contract.onchain_state === 'pending' ? '处理中' : '未开始'}</p>
           </div>
         </div>
 
@@ -859,7 +1006,7 @@ export default function ContractPage() {
           <div className="mb-6 rounded-lg border border-gray-700 p-4">
             <div className="mb-3">
               <p className="font-medium text-gray-200">条款协商（仅 clauses）</p>
-              <p className="mt-1 text-xs text-gray-500">流程：租客起草/提交，房东审核通过或退回。</p>
+              <p className="mt-1 text-xs text-gray-500">流程：租客可反复提议；房东仅在存在租客提议时处理，可修改后确认或退回；任一方开始签署后立即冻结。</p>
             </div>
 
             <div className="mb-3 rounded-lg border border-gray-700 bg-gray-900/40 p-3">
@@ -875,32 +1022,78 @@ export default function ContractPage() {
               )}
             </div>
 
+            <div className="mb-3 rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+              <p className="mb-2 text-xs text-gray-500">最新协商结果</p>
+              {(() => {
+                const latestRejected = versions.find((item) => item.status === 'rejected');
+                if (openProposal) {
+                  return (
+                    <div className="text-sm text-yellow-300">
+                      <p className="font-medium">待房东审核</p>
+                      <p className="mt-1 text-xs text-gray-400">提议版本：v{openProposal.version}</p>
+                      <p className="mt-1 text-xs text-gray-400">备注：{openProposal.change_note || '无'}</p>
+                    </div>
+                  );
+                }
+                if (String(content?.negotiation?.reviewAction || '') === 'approved_with_edits') {
+                  return (
+                    <div className="text-sm text-emerald-300">
+                      <p className="font-medium">房东修改后确认</p>
+                      <p className="mt-1 text-xs text-gray-400">当前正文已切到房东确认版</p>
+                      <p className="mt-1 text-xs text-gray-400">备注：{content?.negotiation?.note || '无'}</p>
+                    </div>
+                  );
+                }
+                if (String(content?.negotiation?.reviewAction || '') === 'approved_as_is') {
+                  return (
+                    <div className="text-sm text-emerald-300">
+                      <p className="font-medium">房东确认</p>
+                      <p className="mt-1 text-xs text-gray-400">当前正文已切到房东确认版</p>
+                      <p className="mt-1 text-xs text-gray-400">备注：{content?.negotiation?.note || '无'}</p>
+                    </div>
+                  );
+                }
+                if (latestRejected) {
+                  return (
+                    <div className="text-sm text-rose-300">
+                      <p className="font-medium">已退回修改</p>
+                      <p className="mt-1 text-xs text-gray-400">提议版本：v{latestRejected.version}</p>
+                      <p className="mt-1 text-xs text-gray-400">备注：{latestRejected.change_note || '无'}</p>
+                    </div>
+                  );
+                }
+                return <p className="text-sm text-gray-400">当前为默认条款版本，尚无已提交的租客提议</p>;
+              })()}
+            </div>
+
             {tenantCanEditClauses && (
               <div className="space-y-3">
                 <div>
                   <label className="mb-1 block text-xs text-gray-500">条款（每行一条）</label>
-                  <textarea
-                    className="input-field min-h-[120px]"
-                    value={clausesText}
-                    onChange={(e) => setClausesText(e.target.value)}
-                    placeholder={'示例：\n禁养宠物\n物业费由房东承担'}
-                  />
+                    <textarea
+                      className="input-field min-h-[120px]"
+                      value={clausesText}
+                      onChange={(e) => setClausesText(e.target.value)}
+                      disabled={isActionBusy}
+                      placeholder={'示例：\n禁养宠物\n物业费由房东承担'}
+                    />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">修改备注（可选）</label>
-                  <input
-                    className="input-field"
-                    value={changeNote}
-                    onChange={(e) => setChangeNote(e.target.value)}
-                    placeholder="例如：补充了物业费与噪音约束"
-                  />
+                  <label className="mb-1 block text-xs text-gray-500">提议备注（可选）</label>
+                    <input
+                      className="input-field"
+                      value={changeNote}
+                      onChange={(e) => setChangeNote(e.target.value)}
+                      disabled={isActionBusy}
+                      placeholder="例如：补充了物业费与噪音约束"
+                    />
                 </div>
                 <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                  <button type="button" onClick={handleSaveDraft} disabled={proposing} className="btn-secondary">
-                    {proposing ? '处理中...' : '保存草稿'}
+                  <button type="button" onClick={handleSaveDraft} disabled={isActionBusy} className="btn-secondary">
+                    {proposing ? '处理中...' : cancelling ? '取消中...' : '保存租客草稿'}
                   </button>
-                  <button type="button" onClick={handleSubmitClauses} disabled={proposing} className="btn-primary">
-                    {proposing ? '处理中...' : '提交审核'}
+                  <button type="button" onClick={handleSubmitClauses} disabled={isActionBusy} className="btn-primary">
+                    {proposing ? '处理中...' : cancelling ? '取消中...' : '提交租客提议'}
                   </button>
                 </div>
               </div>
@@ -930,67 +1123,66 @@ export default function ContractPage() {
                   })()}
                 </div>
                 <div className="mt-2">
-                  <label className="mb-1 block text-xs text-yellow-100/80">房东最终条款（退回时会以此版本回传）</label>
+                  <label className="mb-1 block text-xs text-yellow-100/80">房东确认版条款（可在租客提议基础上修改）</label>
                   <textarea
                     className="input-field min-h-[120px]"
                     value={clausesText}
                     onChange={(e) => setClausesText(e.target.value)}
+                    disabled={isActionBusy}
                     placeholder={'示例：\n禁养宠物\n物业费由房东承担'}
                   />
                 </div>
                 <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
-                  <button type="button" onClick={() => handleReviewClauses('approve')} disabled={proposing} className="btn-primary">
-                    {proposing ? '处理中...' : '审核通过并定稿'}
+                  <button type="button" onClick={() => handleReviewClauses('approve')} disabled={isActionBusy} className="btn-primary">
+                    {proposing ? '处理中...' : cancelling ? '取消中...' : '房东确认当前版本'}
                   </button>
-                  <button type="button" onClick={() => handleReviewClauses('reject')} disabled={proposing} className="btn-secondary">
-                    {proposing ? '处理中...' : '退回修改'}
+                  <button type="button" onClick={() => handleReviewClauses('reject')} disabled={isActionBusy} className="btn-secondary">
+                    {proposing ? '处理中...' : cancelling ? '取消中...' : '房东退回修改'}
                   </button>
                 </div>
                 <div className="mt-2">
-                  <label className="mb-1 block text-xs text-yellow-100/80">退回理由（退回时建议填写）</label>
+                  <label className="mb-1 block text-xs text-yellow-100/80">房东处理备注（确认或退回都支持；退回时必填）</label>
                   <input
                     className="input-field"
                     value={reviewReason}
                     onChange={(e) => setReviewReason(e.target.value)}
+                    disabled={isActionBusy}
                     placeholder="例如：第2条约束过宽，请细化"
                   />
                 </div>
               </div>
             )}
 
-            {isTenant && isLandlordFinal && (
-              <div className="mt-3 rounded-lg border border-blue-800/50 bg-blue-900/20 p-3 text-sm text-blue-100">
-                房东已回传最终条款。你现在只能选择“租客签署”或“取消合同”。
-              </div>
-            )}
           </div>
         )}
 
         <div className="space-y-3">
           <button onClick={handleDownloadPdf} className="btn-secondary w-full">下载合同 PDF</button>
-          {contract.status === 'pending' && contract.negotiation_status === 'finalized' && isTenant && (
-            <button onClick={() => handleSign('tenant')} disabled={signing} className="btn-primary w-full flex items-center justify-center space-x-2">
+          {contract.status === 'pending' && contract.negotiation_status !== 'proposed' && isTenant && (
+            <button onClick={() => handleSign('tenant')} disabled={isActionBusy} className="btn-primary w-full flex items-center justify-center space-x-2">
               {signing ? <LoaderIcon className="w-5 h-5 animate-spin" /> : <CheckCircleIcon className="w-5 h-5" />}
-              <span>{signing ? '签署中...' : '租客签署'}</span>
+              <span>{signing ? '签署中...' : cancelling ? '取消中...' : '租客签署'}</span>
             </button>
           )}
           {contract.status === 'tenant_signed' && isLandlord && !contract.landlord_signed_at && (
-            <button onClick={() => handleSign('landlord')} disabled={signing} className="btn-primary w-full flex items-center justify-center space-x-2">
+            <button onClick={() => handleSign('landlord')} disabled={isActionBusy} className="btn-primary w-full flex items-center justify-center space-x-2">
               {signing ? <LoaderIcon className="w-5 h-5 animate-spin" /> : <CheckCircleIcon className="w-5 h-5" />}
-              <span>{signing ? '签署并上链中...' : '房东签署并上链'}</span>
+              <span>{signing ? '签署并上链中...' : cancelling ? '取消中...' : '房东签署并上链'}</span>
             </button>
           )}
           {contract.status === 'pending_payment' && isTenant && (
-            <button onClick={handleInitialPayment} disabled={paying} className="btn-primary w-full flex items-center justify-center space-x-2">
+            <button onClick={handleInitialPayment} disabled={isActionBusy} className="btn-primary w-full flex items-center justify-center space-x-2">
               {paying ? <LoaderIcon className="w-5 h-5 animate-spin" /> : <CheckCircleIcon className="w-5 h-5" />}
-              <span>{paying ? '支付中...' : `一次性支付 ${initialAmount || ''} ETH 并激活合同`}</span>
+              <span>{paying ? '支付中...' : cancelling ? '取消中...' : `一次性支付 ${initialAmount || ''} ETH 并激活合同`}</span>
             </button>
           )}
           {contract.status === 'active' && isTenant && !hasRenewalChild && (
-            <button onClick={handleCreateRenewal} className="btn-secondary w-full">申请续约</button>
+            <button onClick={handleCreateRenewal} disabled={isActionBusy} className="btn-secondary w-full">{cancelling ? '取消中...' : '申请续约'}</button>
           )}
-          {['pending', 'tenant_signed'].includes(contract.status) && (isTenant || isLandlord) && (
-            <button onClick={handleCancel} className="btn-secondary w-full">取消合同</button>
+          {(canCancelContract || canRefundExpiredGas) && (
+            <button onClick={handleCancel} disabled={isActionBusy} className="btn-secondary w-full">
+              {cancelling ? cancelBusyLabel : cancelActionLabel}
+            </button>
           )}
         </div>
       </div>

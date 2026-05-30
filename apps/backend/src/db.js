@@ -77,21 +77,38 @@ function assertRequiredColumns(d, tableName, requiredColumns) {
   }
 }
 
-// 函数 6-1: 若字段缺失则自动补齐（用于受控演进，不做跨版本语义兼容）。
-function ensureColumn(d, tableName, columnName, alterSql) {
-  const actual = parseResult(d.exec(`PRAGMA table_info(${tableName})`)).map((c) => c.name);
-  if (!actual.includes(columnName)) {
-    d.run(alterSql);
-  }
+function getTableCreateSql(d, tableName) {
+  const rows = parseResult(d.exec(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+    [tableName]
+  ));
+  return String(rows[0]?.sql || '');
 }
 
-// 函数 7: 严格校验关键业务表结构（不做兼容迁移）。
+function tableSqlContainsAll(sql, fragments) {
+  return fragments.every((fragment) => String(sql).includes(fragment));
+}
+
+function ensureIndexes(d) {
+  d.run('CREATE INDEX IF NOT EXISTS idx_contracts_tenant ON contracts(tenant_id)');
+  d.run('CREATE INDEX IF NOT EXISTS idx_contracts_landlord ON contracts(landlord_id)');
+  d.run('CREATE INDEX IF NOT EXISTS idx_listings_landlord ON listings(landlord_id)');
+  d.run('CREATE INDEX IF NOT EXISTS idx_payments_contract ON payments(contract_id)');
+  d.run('CREATE INDEX IF NOT EXISTS idx_contract_gas_auth_contract ON contract_gas_authorizations(contract_id)');
+  d.run('CREATE INDEX IF NOT EXISTS idx_contract_gas_prepare_contract ON contract_gas_authorization_prepares(contract_id)');
+  d.run('CREATE INDEX IF NOT EXISTS idx_contract_versions_contract ON contract_versions(contract_id)');
+  d.run('CREATE INDEX IF NOT EXISTS idx_contract_terminations_contract ON contract_terminations(contract_id)');
+  d.run('CREATE INDEX IF NOT EXISTS idx_listing_operation_logs_listing ON listing_operation_logs(listing_id)');
+  d.run('CREATE INDEX IF NOT EXISTS idx_onchain_operations_entity ON onchain_operations(entity_type, entity_id)');
+  d.run('CREATE INDEX IF NOT EXISTS idx_onchain_operations_status ON onchain_operations(status, operation_kind)');
+}
+
+// 函数 7: 严格校验关键业务表结构。
 function assertStrictSchema(d) {
   assertRequiredColumns(d, 'listings', [
     'id', 'landlord_id', 'title', 'description', 'address', 'district', 'rent_amount', 'rent_cycle',
     'min_lease_months', 'bedrooms', 'livingrooms', 'bathrooms', 'area', 'clauses_template_json', 'image_urls',
-    'image_hashes', 'content_hash', 'tx_hash', 'onchain_status', 'onchain_attempts', 'onchain_error',
-    'onchain_next_retry_at', 'onchain_last_attempt_at', 'status', 'created_at', 'updated_at',
+    'image_hashes', 'content_hash', 'tx_hash', 'status', 'created_at', 'updated_at',
     'chain_version', 'chain_nonce', 'chain_block_number', 'chain_block_time'
   ]);
 
@@ -101,7 +118,6 @@ function assertStrictSchema(d) {
     'tenant_signature', 'landlord_signature', 'tenant_signature_message', 'landlord_signature_message',
     'tenant_sign_ip', 'landlord_sign_ip', 'tenant_sign_user_agent', 'landlord_sign_user_agent',
     'tenant_sign_request_id', 'landlord_sign_request_id', 'payment_deadline',
-    'onchain_status', 'onchain_attempts', 'onchain_error', 'onchain_next_retry_at', 'onchain_last_attempt_at',
     'negotiation_status', 'version', 'parent_contract_id', 'finalized_at',
     'tenant_finalized_at', 'landlord_finalized_at', 'tx_hash', 'created_at'
   ]);
@@ -117,9 +133,25 @@ function assertStrictSchema(d) {
     'mark_tx_hash', 'revoke_tx_hash', 'status', 'settle_tx_hash', 'created_at', 'updated_at'
   ]);
 
-  assertRequiredColumns(d, 'listing_chain_operations', [
-    'op_id', 'listing_id', 'action', 'tx_hash', 'status', 'request_id', 'detail_json', 'created_at', 'updated_at'
+  assertRequiredColumns(d, 'contract_gas_authorization_prepares', [
+    'id', 'contract_id', 'tenant_address', 'landlord_address', 'cap_wei', 'deadline_epoch_ms',
+    'nonce', 'digest', 'chain_id', 'contract_address', 'created_at', 'updated_at'
   ]);
+
+
+  assertRequiredColumns(d, 'onchain_operations', [
+    'op_id', 'entity_type', 'entity_id', 'operation_kind', 'tx_hash', 'status',
+    'request_id', 'payload_json', 'result_json', 'error_message', 'created_at', 'updated_at'
+  ]);
+
+  const contractsSql = getTableCreateSql(d, 'contracts');
+  if (!tableSqlContainsAll(contractsSql, ["'draft'", "'proposed'", "'finalized'", "'locked'"])) {
+    throw new Error('[DB_SCHEMA_MISMATCH] contracts.negotiation_status 约束未包含 locked');
+  }
+  const contractVersionsSql = getTableCreateSql(d, 'contract_versions');
+  if (!tableSqlContainsAll(contractVersionsSql, ["'draft'", "'proposed'", "'accepted'", "'rejected'", "'superseded'"])) {
+    throw new Error('[DB_SCHEMA_MISMATCH] contract_versions.status 约束未包含 draft/superseded');
+  }
 }
 
 // 函数 8: 执行数据库表结构初始化与严格校验。
@@ -144,11 +176,6 @@ async function migrate() {
     image_hashes TEXT DEFAULT '[]',
     content_hash TEXT NOT NULL DEFAULT '',
     tx_hash TEXT,
-    onchain_status TEXT NOT NULL DEFAULT 'not_started' CHECK(onchain_status IN ('not_started','pending','confirmed','failed')),
-    onchain_attempts INTEGER NOT NULL DEFAULT 0,
-    onchain_error TEXT DEFAULT '',
-    onchain_next_retry_at TEXT DEFAULT '',
-    onchain_last_attempt_at TEXT DEFAULT '',
     status TEXT NOT NULL DEFAULT 'available' CHECK(status IN ('available','rented','offline','closed')),
     chain_version INTEGER NOT NULL DEFAULT 0,
     chain_nonce INTEGER NOT NULL DEFAULT 0,
@@ -182,12 +209,7 @@ async function migrate() {
     tenant_sign_request_id TEXT DEFAULT '',
     landlord_sign_request_id TEXT DEFAULT '',
     payment_deadline TEXT DEFAULT '',
-    onchain_status TEXT NOT NULL DEFAULT 'not_started' CHECK(onchain_status IN ('not_started','pending','confirmed','failed')),
-    onchain_attempts INTEGER NOT NULL DEFAULT 0,
-    onchain_error TEXT DEFAULT '',
-    onchain_next_retry_at TEXT DEFAULT '',
-    onchain_last_attempt_at TEXT DEFAULT '',
-    negotiation_status TEXT NOT NULL DEFAULT 'draft' CHECK(negotiation_status IN ('draft','proposed','finalized')),
+    negotiation_status TEXT NOT NULL DEFAULT 'draft' CHECK(negotiation_status IN ('draft','proposed','finalized','locked')),
     version INTEGER NOT NULL DEFAULT 1,
     parent_contract_id TEXT DEFAULT '',
     finalized_at TEXT,
@@ -212,9 +234,6 @@ async function migrate() {
     FOREIGN KEY(contract_id) REFERENCES contracts(id)
   )`);
 
-  // 函数 8-1: 统一清理已废弃状态，迁移到当前手动上链流程。
-  d.run("UPDATE contracts SET status = 'pending_payment' WHERE status = 'active_pending_onchain'");
-
   d.run(`CREATE TABLE IF NOT EXISTS contract_gas_authorizations (
     id TEXT PRIMARY KEY,
     contract_id TEXT NOT NULL UNIQUE,
@@ -237,6 +256,22 @@ async function migrate() {
     FOREIGN KEY(contract_id) REFERENCES contracts(id)
   )`);
 
+  d.run(`CREATE TABLE IF NOT EXISTS contract_gas_authorization_prepares (
+    id TEXT PRIMARY KEY,
+    contract_id TEXT NOT NULL UNIQUE,
+    tenant_address TEXT NOT NULL,
+    landlord_address TEXT NOT NULL,
+    cap_wei TEXT NOT NULL,
+    deadline_epoch_ms TEXT NOT NULL,
+    nonce TEXT NOT NULL UNIQUE,
+    digest TEXT NOT NULL,
+    chain_id TEXT NOT NULL,
+    contract_address TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+    FOREIGN KEY(contract_id) REFERENCES contracts(id)
+  )`);
+
   d.run(`CREATE TABLE IF NOT EXISTS contract_versions (
     id TEXT PRIMARY KEY,
     contract_id TEXT NOT NULL,
@@ -245,7 +280,7 @@ async function migrate() {
     content_json TEXT NOT NULL,
     content_hash TEXT NOT NULL,
     change_note TEXT DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'proposed' CHECK(status IN ('proposed','accepted','rejected')),
+    status TEXT NOT NULL DEFAULT 'proposed' CHECK(status IN ('draft','proposed','accepted','rejected','superseded')),
     created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
     decided_at TEXT,
     decided_by TEXT DEFAULT '',
@@ -278,40 +313,29 @@ async function migrate() {
     created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
   )`);
 
-  d.run(`CREATE TABLE IF NOT EXISTS listing_chain_operations (
+
+  d.run(`CREATE TABLE IF NOT EXISTS onchain_operations (
     op_id TEXT PRIMARY KEY,
-    listing_id TEXT NOT NULL,
-    action TEXT NOT NULL CHECK(action IN ('create','status','terms','reconcile')),
+    entity_type TEXT NOT NULL CHECK(entity_type IN ('listing','contract','payment','gas_auth')),
+    entity_id TEXT NOT NULL,
+    operation_kind TEXT NOT NULL,
     tx_hash TEXT NOT NULL UNIQUE,
     status TEXT NOT NULL CHECK(status IN ('pending','confirmed','failed')),
     request_id TEXT DEFAULT '',
-    detail_json TEXT DEFAULT '{}',
+    payload_json TEXT DEFAULT '{}',
+    result_json TEXT DEFAULT '{}',
+    error_message TEXT DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
   )`);
 
-  d.run('CREATE INDEX IF NOT EXISTS idx_contracts_tenant ON contracts(tenant_id)');
-  d.run('CREATE INDEX IF NOT EXISTS idx_contracts_landlord ON contracts(landlord_id)');
-  d.run('CREATE INDEX IF NOT EXISTS idx_listings_landlord ON listings(landlord_id)');
-  d.run('CREATE INDEX IF NOT EXISTS idx_payments_contract ON payments(contract_id)');
-  d.run('CREATE INDEX IF NOT EXISTS idx_contract_gas_auth_contract ON contract_gas_authorizations(contract_id)');
-  d.run('CREATE INDEX IF NOT EXISTS idx_contract_versions_contract ON contract_versions(contract_id)');
-  d.run('CREATE INDEX IF NOT EXISTS idx_contract_terminations_contract ON contract_terminations(contract_id)');
-  d.run('CREATE INDEX IF NOT EXISTS idx_listing_operation_logs_listing ON listing_operation_logs(listing_id)');
-  d.run('CREATE INDEX IF NOT EXISTS idx_listing_chain_operations_listing ON listing_chain_operations(listing_id)');
-
-  // 受控字段演进：确保关键字段存在。
-  ensureColumn(d, 'listings', 'content_hash', "ALTER TABLE listings ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''");
-  ensureColumn(d, 'listings', 'clauses_template_json', "ALTER TABLE listings ADD COLUMN clauses_template_json TEXT DEFAULT '[]'");
-  ensureColumn(d, 'contract_gas_authorizations', 'lock_tx_hash', "ALTER TABLE contract_gas_authorizations ADD COLUMN lock_tx_hash TEXT DEFAULT ''");
-  ensureColumn(d, 'contract_gas_authorizations', 'mark_tx_hash', "ALTER TABLE contract_gas_authorizations ADD COLUMN mark_tx_hash TEXT DEFAULT ''");
-  ensureColumn(d, 'contract_gas_authorizations', 'revoke_tx_hash', "ALTER TABLE contract_gas_authorizations ADD COLUMN revoke_tx_hash TEXT DEFAULT ''");
+  ensureIndexes(d);
 
   try {
     assertStrictSchema(d);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`[DB_SCHEMA_MISMATCH] 当前数据库结构不受支持（已禁用兼容迁移）。请删除后重建：${DB_PATH}。详细原因：${reason}`);
+    throw new Error(`[DB_SCHEMA_MISMATCH] 当前数据库结构不受支持，请删除后重建：${DB_PATH}。详细原因：${reason}`);
   }
 
   saveDb();

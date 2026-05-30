@@ -1,6 +1,6 @@
 /**
  * 文件说明：认证独立服务入口。
- * 仅承载账号登录相关接口，避免受业务网络后端可用性影响。
+ * 认证服务按请求网络选择用户库，不再使用共享账号库。
  */
 require('dotenv').config();
 const express = require('express');
@@ -8,12 +8,11 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
-const { getUserDb, USER_DB_PATH } = require('./user-db');
+const { getUserDb, getUserDbPath } = require('./user-db');
 
 const app = express();
 const AUTH_PORT = Number(process.env.AUTH_PORT || 3005);
 
-// 函数 1: 安装认证服务中间件。
 function setupMiddlewares() {
   app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
   app.use(cors({
@@ -33,7 +32,6 @@ function setupMiddlewares() {
   }));
 }
 
-// 函数 2: 注册认证路由与健康检查。
 function setupRoutes() {
   app.use('/api/auth', require('./routes/auth'));
   app.get('/api/health', (req, res) => {
@@ -42,13 +40,15 @@ function setupRoutes() {
       status: 'ok',
       service: 'auth',
       authPort: AUTH_PORT,
-      userDbFile: USER_DB_PATH,
+      userDbFiles: {
+        sepolia: getUserDbPath('sepolia'),
+        local: getUserDbPath('local'),
+      },
       now: new Date().toISOString(),
     });
   });
 }
 
-// 函数 3: 注册认证服务兜底异常处理。
 function setupErrorHandlers() {
   app.use((req, res) => {
     res.status(404).json({ error: '接口不存在' });
@@ -59,13 +59,14 @@ function setupErrorHandlers() {
   });
 }
 
-// 函数 4: 启动认证服务。
 async function startAuthServer() {
   try {
-    await getUserDb();
+    await getUserDb('sepolia');
+    await getUserDb('local');
     app.listen(AUTH_PORT, () => {
       console.log(`认证服务启动成功: http://localhost:${AUTH_PORT}`);
-      console.log(`共享账号库: ${USER_DB_PATH}`);
+      console.log(`Sepolia 账号库: ${getUserDbPath('sepolia')}`);
+      console.log(`Local 账号库: ${getUserDbPath('local')}`);
     });
   } catch (error) {
     console.error('认证服务启动失败:', error);
@@ -77,4 +78,3 @@ setupMiddlewares();
 setupRoutes();
 setupErrorHandlers();
 startAuthServer();
-

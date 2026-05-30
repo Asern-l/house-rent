@@ -1,1147 +1,1202 @@
-[
-  {
-    "inputs": [
-      {
-        "internalType": "uint256",
-        "name": "paymentWindowMs_",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable",
-    "type": "constructor"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "listingId",
-        "type": "string"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "landlord",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "address",
-        "name": "tenant",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "bytes32",
-        "name": "contentHash",
-        "type": "bytes32"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "blockTime",
-        "type": "uint256"
-      }
-    ],
-    "name": "ContractCreated",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "signer",
-        "type": "address"
-      },
-      {
-        "indexed": true,
-        "internalType": "bytes32",
-        "name": "messageHash",
-        "type": "bytes32"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint8",
-        "name": "role",
-        "type": "uint8"
-      },
-      {
-        "indexed": false,
-        "internalType": "bytes",
-        "name": "signature",
-        "type": "bytes"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "signedAt",
-        "type": "uint256"
-      }
-    ],
-    "name": "ContractSignatureAnchored",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "listingId",
-        "type": "string"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint8",
-        "name": "oldStatus",
-        "type": "uint8"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint8",
-        "name": "newStatus",
-        "type": "uint8"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "blockTime",
-        "type": "uint256"
-      }
-    ],
-    "name": "ContractStatusChanged",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "bytes32",
-        "name": "authId",
-        "type": "bytes32"
-      },
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "tenant",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "address",
-        "name": "landlord",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "capWei",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "deadlineMs",
-        "type": "uint256"
-      }
-    ],
-    "name": "GasCompEscrowLocked",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "bytes32",
-        "name": "authId",
-        "type": "bytes32"
-      },
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "tenant",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "refundedWei",
-        "type": "uint256"
-      }
-    ],
-    "name": "GasCompRevoked",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "bytes32",
-        "name": "authId",
-        "type": "bytes32"
-      },
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "landlord",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "compensationWei",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "refundWei",
-        "type": "uint256"
-      }
-    ],
-    "name": "GasCompSettledOnCreate",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "listingId",
-        "type": "string"
-      },
-      {
-        "indexed": false,
-        "internalType": "bytes32",
-        "name": "newContentHash",
-        "type": "bytes32"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "newRentAmountWei",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint16",
-        "name": "newMinLeaseMonths",
-        "type": "uint16"
-      },
-      {
-        "indexed": false,
-        "internalType": "bytes32",
-        "name": "newImageRootHash",
-        "type": "bytes32"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint64",
-        "name": "version",
-        "type": "uint64"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint64",
-        "name": "nonce",
-        "type": "uint64"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "operator",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "blockTime",
-        "type": "uint256"
-      }
-    ],
-    "name": "ListingContentUpdated",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "listingId",
-        "type": "string"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "landlord",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "bytes32",
-        "name": "contentHash",
-        "type": "bytes32"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "rentAmountWei",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint16",
-        "name": "minLeaseMonths",
-        "type": "uint16"
-      },
-      {
-        "indexed": false,
-        "internalType": "bytes32",
-        "name": "imageRootHash",
-        "type": "bytes32"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint64",
-        "name": "version",
-        "type": "uint64"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint64",
-        "name": "nonce",
-        "type": "uint64"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "blockTime",
-        "type": "uint256"
-      }
-    ],
-    "name": "ListingCreated",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "listingId",
-        "type": "string"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint8",
-        "name": "oldStatus",
-        "type": "uint8"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint8",
-        "name": "newStatus",
-        "type": "uint8"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint64",
-        "name": "version",
-        "type": "uint64"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint64",
-        "name": "nonce",
-        "type": "uint64"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "operator",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "blockTime",
-        "type": "uint256"
-      }
-    ],
-    "name": "ListingStatusChanged",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "parentContractId",
-        "type": "string"
-      },
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "childContractId",
-        "type": "string"
-      },
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "listingId",
-        "type": "string"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "blockTime",
-        "type": "uint256"
-      }
-    ],
-    "name": "RenewalChildLinked",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "payer",
-        "type": "address"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "landlord",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "amountWei",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "string",
-        "name": "orderNo",
-        "type": "string"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "paidAt",
-        "type": "uint256"
-      }
-    ],
-    "name": "RentPaymentRecorded",
-    "type": "event"
-  },
-  {
-    "inputs": [],
-    "name": "GAS_REIMBURSE_ESTIMATED_UNITS",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "GAS_REIMBURSE_MULTIPLIER",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      }
-    ],
-    "name": "completeExpiredContract",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "components": [
-          {
-            "internalType": "string",
-            "name": "contractId",
-            "type": "string"
-          },
-          {
-            "internalType": "string",
-            "name": "listingId",
-            "type": "string"
-          },
-          {
-            "internalType": "string",
-            "name": "parentContractId",
-            "type": "string"
-          },
-          {
-            "internalType": "address",
-            "name": "tenant",
-            "type": "address"
-          },
-          {
-            "internalType": "address",
-            "name": "landlord",
-            "type": "address"
-          },
-          {
-            "internalType": "bytes32",
-            "name": "contentHash",
-            "type": "bytes32"
-          },
-          {
-            "internalType": "bytes32",
-            "name": "gasAuthNonce",
-            "type": "bytes32"
-          },
-          {
-            "internalType": "uint256",
-            "name": "initialAmountWei",
-            "type": "uint256"
-          },
-          {
-            "internalType": "uint256",
-            "name": "startAtMs",
-            "type": "uint256"
-          },
-          {
-            "internalType": "uint256",
-            "name": "endAtMs",
-            "type": "uint256"
-          },
-          {
-            "internalType": "bytes32",
-            "name": "tenantMessageHash",
-            "type": "bytes32"
-          },
-          {
-            "internalType": "bytes32",
-            "name": "landlordMessageHash",
-            "type": "bytes32"
-          },
-          {
-            "internalType": "uint256",
-            "name": "tenantSignedAt",
-            "type": "uint256"
-          },
-          {
-            "internalType": "uint256",
-            "name": "landlordSignedAt",
-            "type": "uint256"
-          },
-          {
-            "internalType": "bytes",
-            "name": "tenantSignature",
-            "type": "bytes"
-          },
-          {
-            "internalType": "bytes",
-            "name": "landlordSignature",
-            "type": "bytes"
-          }
-        ],
-        "internalType": "struct RentalChain.CreateContractParams",
-        "name": "p",
-        "type": "tuple"
-      }
-    ],
-    "name": "createContractRecord",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "listingId",
-        "type": "string"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "contentHash",
-        "type": "bytes32"
-      },
-      {
-        "internalType": "uint256",
-        "name": "rentAmountWei",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint16",
-        "name": "minLeaseMonths",
-        "type": "uint16"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "imageRootHash",
-        "type": "bytes32"
-      }
-    ],
-    "name": "createListing",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "listingId",
-        "type": "string"
-      }
-    ],
-    "name": "getActiveContractByListing",
-    "outputs": [
-      {
-        "internalType": "string",
-        "name": "headContractId",
-        "type": "string"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      }
-    ],
-    "name": "getContractRecord",
-    "outputs": [
-      {
-        "components": [
-          {
-            "internalType": "string",
-            "name": "contractId",
-            "type": "string"
-          },
-          {
-            "internalType": "string",
-            "name": "listingId",
-            "type": "string"
-          },
-          {
-            "internalType": "string",
-            "name": "parentContractId",
-            "type": "string"
-          },
-          {
-            "internalType": "string",
-            "name": "renewalChildContractId",
-            "type": "string"
-          },
-          {
-            "internalType": "address",
-            "name": "tenant",
-            "type": "address"
-          },
-          {
-            "internalType": "address",
-            "name": "landlord",
-            "type": "address"
-          },
-          {
-            "internalType": "bytes32",
-            "name": "contentHash",
-            "type": "bytes32"
-          },
-          {
-            "internalType": "uint256",
-            "name": "initialAmountWei",
-            "type": "uint256"
-          },
-          {
-            "internalType": "uint256",
-            "name": "startAtMs",
-            "type": "uint256"
-          },
-          {
-            "internalType": "uint256",
-            "name": "endAtMs",
-            "type": "uint256"
-          },
-          {
-            "internalType": "uint256",
-            "name": "createdAt",
-            "type": "uint256"
-          },
-          {
-            "internalType": "bytes32",
-            "name": "tenantMessageHash",
-            "type": "bytes32"
-          },
-          {
-            "internalType": "bytes32",
-            "name": "landlordMessageHash",
-            "type": "bytes32"
-          },
-          {
-            "internalType": "uint256",
-            "name": "tenantSignedAt",
-            "type": "uint256"
-          },
-          {
-            "internalType": "uint256",
-            "name": "landlordSignedAt",
-            "type": "uint256"
-          },
-          {
-            "internalType": "enum RentalChain.ContractStatus",
-            "name": "status",
-            "type": "uint8"
-          },
-          {
-            "internalType": "bool",
-            "name": "exists",
-            "type": "bool"
-          }
-        ],
-        "internalType": "struct RentalChain.ContractRecord",
-        "name": "record",
-        "type": "tuple"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "listingId",
-        "type": "string"
-      }
-    ],
-    "name": "getCurrentEffectiveContractByListing",
-    "outputs": [
-      {
-        "internalType": "string",
-        "name": "currentContractId",
-        "type": "string"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
-      {
-        "internalType": "address",
-        "name": "tenant",
-        "type": "address"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "nonce",
-        "type": "bytes32"
-      }
-    ],
-    "name": "getGasAuthorization",
-    "outputs": [
-      {
-        "internalType": "address",
-        "name": "outTenant",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "outLandlord",
-        "type": "address"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "outContractContentHash",
-        "type": "bytes32"
-      },
-      {
-        "internalType": "uint256",
-        "name": "capWei",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "deadlineMs",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "lockedWei",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint8",
-        "name": "status",
-        "type": "uint8"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "listingId",
-        "type": "string"
-      }
-    ],
-    "name": "getListing",
-    "outputs": [
-      {
-        "components": [
-          {
-            "internalType": "string",
-            "name": "listingId",
-            "type": "string"
-          },
-          {
-            "internalType": "address",
-            "name": "landlord",
-            "type": "address"
-          },
-          {
-            "internalType": "bytes32",
-            "name": "contentHash",
-            "type": "bytes32"
-          },
-          {
-            "internalType": "uint256",
-            "name": "rentAmountWei",
-            "type": "uint256"
-          },
-          {
-            "internalType": "uint16",
-            "name": "minLeaseMonths",
-            "type": "uint16"
-          },
-          {
-            "internalType": "bytes32",
-            "name": "imageRootHash",
-            "type": "bytes32"
-          },
-          {
-            "internalType": "enum RentalChain.ListingStatus",
-            "name": "status",
-            "type": "uint8"
-          },
-          {
-            "internalType": "uint64",
-            "name": "version",
-            "type": "uint64"
-          },
-          {
-            "internalType": "uint64",
-            "name": "nonce",
-            "type": "uint64"
-          },
-          {
-            "internalType": "uint256",
-            "name": "createdAt",
-            "type": "uint256"
-          },
-          {
-            "internalType": "uint256",
-            "name": "updatedAt",
-            "type": "uint256"
-          },
-          {
-            "internalType": "bool",
-            "name": "exists",
-            "type": "bool"
-          }
-        ],
-        "internalType": "struct RentalChain.ListingRecord",
-        "name": "record",
-        "type": "tuple"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "getListingCount",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "contractContentHash",
-        "type": "bytes32"
-      },
-      {
-        "internalType": "address",
-        "name": "tenant",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "landlord",
-        "type": "address"
-      },
-      {
-        "internalType": "uint256",
-        "name": "capWei",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "deadlineMs",
-        "type": "uint256"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "nonce",
-        "type": "bytes32"
-      },
-      {
-        "internalType": "bytes",
-        "name": "signature",
-        "type": "bytes"
-      }
-    ],
-    "name": "lockGasCompensationEscrow",
-    "outputs": [],
-    "stateMutability": "payable",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "paymentWindowMs",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
-      {
-        "internalType": "address",
-        "name": "landlord",
-        "type": "address"
-      },
-      {
-        "internalType": "string",
-        "name": "orderNo",
-        "type": "string"
-      }
-    ],
-    "name": "recordInitialRentPayment",
-    "outputs": [],
-    "stateMutability": "payable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "contractId",
-        "type": "string"
-      },
-      {
-        "internalType": "address",
-        "name": "tenant",
-        "type": "address"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "nonce",
-        "type": "bytes32"
-      }
-    ],
-    "name": "revokeGasCompensationAuthorization",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "listingId",
-        "type": "string"
-      },
-      {
-        "internalType": "enum RentalChain.ListingStatus",
-        "name": "newStatus",
-        "type": "uint8"
-      },
-      {
-        "internalType": "uint64",
-        "name": "expectedVersion",
-        "type": "uint64"
-      },
-      {
-        "internalType": "uint64",
-        "name": "expectedNonce",
-        "type": "uint64"
-      }
-    ],
-    "name": "setListingStatus",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "listingId",
-        "type": "string"
-      }
-    ],
-    "name": "storeListing",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "listingId",
-        "type": "string"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "newContentHash",
-        "type": "bytes32"
-      },
-      {
-        "internalType": "uint256",
-        "name": "newRentAmountWei",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint16",
-        "name": "newMinLeaseMonths",
-        "type": "uint16"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "newImageRootHash",
-        "type": "bytes32"
-      },
-      {
-        "internalType": "uint64",
-        "name": "expectedVersion",
-        "type": "uint64"
-      },
-      {
-        "internalType": "uint64",
-        "name": "expectedNonce",
-        "type": "uint64"
-      }
-    ],
-    "name": "updateListingTerms",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  }
+﻿[
+    {
+        "inputs":  [
+                       {
+                           "internalType":  "uint256",
+                           "name":  "paymentWindowMs_",
+                           "type":  "uint256"
+                       }
+                   ],
+        "stateMutability":  "nonpayable",
+        "type":  "constructor"
+    },
+    {
+        "anonymous":  false,
+        "inputs":  [
+                       {
+                           "indexed":  true,
+                           "internalType":  "string",
+                           "name":  "contractId",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "string",
+                           "name":  "listingId",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "address",
+                           "name":  "landlord",
+                           "type":  "address"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "address",
+                           "name":  "tenant",
+                           "type":  "address"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "bytes32",
+                           "name":  "contentHash",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint256",
+                           "name":  "blockTime",
+                           "type":  "uint256"
+                       }
+                   ],
+        "name":  "ContractCreated",
+        "type":  "event"
+    },
+    {
+        "anonymous":  false,
+        "inputs":  [
+                       {
+                           "indexed":  true,
+                           "internalType":  "string",
+                           "name":  "contractId",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "address",
+                           "name":  "signer",
+                           "type":  "address"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "bytes32",
+                           "name":  "messageHash",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint8",
+                           "name":  "role",
+                           "type":  "uint8"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "bytes",
+                           "name":  "signature",
+                           "type":  "bytes"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint256",
+                           "name":  "signedAt",
+                           "type":  "uint256"
+                       }
+                   ],
+        "name":  "ContractSignatureAnchored",
+        "type":  "event"
+    },
+    {
+        "anonymous":  false,
+        "inputs":  [
+                       {
+                           "indexed":  true,
+                           "internalType":  "string",
+                           "name":  "contractId",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "string",
+                           "name":  "listingId",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint8",
+                           "name":  "oldStatus",
+                           "type":  "uint8"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint8",
+                           "name":  "newStatus",
+                           "type":  "uint8"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint256",
+                           "name":  "blockTime",
+                           "type":  "uint256"
+                       }
+                   ],
+        "name":  "ContractStatusChanged",
+        "type":  "event"
+    },
+    {
+        "anonymous":  false,
+        "inputs":  [
+                       {
+                           "indexed":  true,
+                           "internalType":  "bytes32",
+                           "name":  "authId",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "string",
+                           "name":  "contractId",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "address",
+                           "name":  "tenant",
+                           "type":  "address"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "address",
+                           "name":  "landlord",
+                           "type":  "address"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint256",
+                           "name":  "capWei",
+                           "type":  "uint256"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint256",
+                           "name":  "deadlineMs",
+                           "type":  "uint256"
+                       }
+                   ],
+        "name":  "GasCompEscrowLocked",
+        "type":  "event"
+    },
+    {
+        "anonymous":  false,
+        "inputs":  [
+                       {
+                           "indexed":  true,
+                           "internalType":  "bytes32",
+                           "name":  "authId",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "string",
+                           "name":  "contractId",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "address",
+                           "name":  "tenant",
+                           "type":  "address"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint256",
+                           "name":  "refundedWei",
+                           "type":  "uint256"
+                       }
+                   ],
+        "name":  "GasCompRevoked",
+        "type":  "event"
+    },
+    {
+        "anonymous":  false,
+        "inputs":  [
+                       {
+                           "indexed":  true,
+                           "internalType":  "bytes32",
+                           "name":  "authId",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "string",
+                           "name":  "contractId",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "address",
+                           "name":  "landlord",
+                           "type":  "address"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint256",
+                           "name":  "compensationWei",
+                           "type":  "uint256"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint256",
+                           "name":  "refundWei",
+                           "type":  "uint256"
+                       }
+                   ],
+        "name":  "GasCompSettledOnCreate",
+        "type":  "event"
+    },
+    {
+        "anonymous":  false,
+        "inputs":  [
+                       {
+                           "indexed":  true,
+                           "internalType":  "string",
+                           "name":  "listingId",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "bytes32",
+                           "name":  "newContentHash",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint256",
+                           "name":  "newRentAmountWei",
+                           "type":  "uint256"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint16",
+                           "name":  "newMinLeaseMonths",
+                           "type":  "uint16"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "bytes32",
+                           "name":  "newImageRootHash",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint64",
+                           "name":  "version",
+                           "type":  "uint64"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint64",
+                           "name":  "nonce",
+                           "type":  "uint64"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "address",
+                           "name":  "operator",
+                           "type":  "address"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint256",
+                           "name":  "blockTime",
+                           "type":  "uint256"
+                       }
+                   ],
+        "name":  "ListingContentUpdated",
+        "type":  "event"
+    },
+    {
+        "anonymous":  false,
+        "inputs":  [
+                       {
+                           "indexed":  true,
+                           "internalType":  "string",
+                           "name":  "listingId",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "address",
+                           "name":  "landlord",
+                           "type":  "address"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "bytes32",
+                           "name":  "contentHash",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint256",
+                           "name":  "rentAmountWei",
+                           "type":  "uint256"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint16",
+                           "name":  "minLeaseMonths",
+                           "type":  "uint16"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "bytes32",
+                           "name":  "imageRootHash",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint64",
+                           "name":  "version",
+                           "type":  "uint64"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint64",
+                           "name":  "nonce",
+                           "type":  "uint64"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint256",
+                           "name":  "blockTime",
+                           "type":  "uint256"
+                       }
+                   ],
+        "name":  "ListingCreated",
+        "type":  "event"
+    },
+    {
+        "anonymous":  false,
+        "inputs":  [
+                       {
+                           "indexed":  true,
+                           "internalType":  "string",
+                           "name":  "listingId",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint8",
+                           "name":  "oldStatus",
+                           "type":  "uint8"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint8",
+                           "name":  "newStatus",
+                           "type":  "uint8"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint64",
+                           "name":  "version",
+                           "type":  "uint64"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint64",
+                           "name":  "nonce",
+                           "type":  "uint64"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "address",
+                           "name":  "operator",
+                           "type":  "address"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint256",
+                           "name":  "blockTime",
+                           "type":  "uint256"
+                       }
+                   ],
+        "name":  "ListingStatusChanged",
+        "type":  "event"
+    },
+    {
+        "anonymous":  false,
+        "inputs":  [
+                       {
+                           "indexed":  true,
+                           "internalType":  "string",
+                           "name":  "parentContractId",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "string",
+                           "name":  "childContractId",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "string",
+                           "name":  "listingId",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint256",
+                           "name":  "blockTime",
+                           "type":  "uint256"
+                       }
+                   ],
+        "name":  "RenewalChildLinked",
+        "type":  "event"
+    },
+    {
+        "anonymous":  false,
+        "inputs":  [
+                       {
+                           "indexed":  true,
+                           "internalType":  "string",
+                           "name":  "contractId",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "address",
+                           "name":  "payer",
+                           "type":  "address"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "address",
+                           "name":  "landlord",
+                           "type":  "address"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint256",
+                           "name":  "amountWei",
+                           "type":  "uint256"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "string",
+                           "name":  "orderNo",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint256",
+                           "name":  "paidAt",
+                           "type":  "uint256"
+                       }
+                   ],
+        "name":  "RentPaymentRecorded",
+        "type":  "event"
+    },
+    {
+        "inputs":  [
+
+                   ],
+        "name":  "GAS_REIMBURSE_ESTIMATED_UNITS",
+        "outputs":  [
+                        {
+                            "internalType":  "uint256",
+                            "name":  "",
+                            "type":  "uint256"
+                        }
+                    ],
+        "stateMutability":  "view",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+
+                   ],
+        "name":  "GAS_REIMBURSE_MULTIPLIER",
+        "outputs":  [
+                        {
+                            "internalType":  "uint256",
+                            "name":  "",
+                            "type":  "uint256"
+                        }
+                    ],
+        "stateMutability":  "view",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+                       {
+                           "internalType":  "string",
+                           "name":  "contractId",
+                           "type":  "string"
+                       },
+                       {
+                           "internalType":  "address",
+                           "name":  "tenant",
+                           "type":  "address"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "nonce",
+                           "type":  "bytes32"
+                       }
+                   ],
+        "name":  "cancelPendingGasAuthorization",
+        "outputs":  [
+
+                    ],
+        "stateMutability":  "nonpayable",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+                       {
+                           "internalType":  "string",
+                           "name":  "contractId",
+                           "type":  "string"
+                       }
+                   ],
+        "name":  "completeExpiredContract",
+        "outputs":  [
+
+                    ],
+        "stateMutability":  "nonpayable",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+                       {
+                           "components":  [
+                                              {
+                                                  "internalType":  "string",
+                                                  "name":  "contractId",
+                                                  "type":  "string"
+                                              },
+                                              {
+                                                  "internalType":  "string",
+                                                  "name":  "listingId",
+                                                  "type":  "string"
+                                              },
+                                              {
+                                                  "internalType":  "string",
+                                                  "name":  "parentContractId",
+                                                  "type":  "string"
+                                              },
+                                              {
+                                                  "internalType":  "address",
+                                                  "name":  "tenant",
+                                                  "type":  "address"
+                                              },
+                                              {
+                                                  "internalType":  "address",
+                                                  "name":  "landlord",
+                                                  "type":  "address"
+                                              },
+                                              {
+                                                  "internalType":  "bytes32",
+                                                  "name":  "contentHash",
+                                                  "type":  "bytes32"
+                                              },
+                                              {
+                                                  "internalType":  "bytes32",
+                                                  "name":  "gasAuthNonce",
+                                                  "type":  "bytes32"
+                                              },
+                                              {
+                                                  "internalType":  "uint256",
+                                                  "name":  "initialAmountWei",
+                                                  "type":  "uint256"
+                                              },
+                                              {
+                                                  "internalType":  "uint256",
+                                                  "name":  "startAtMs",
+                                                  "type":  "uint256"
+                                              },
+                                              {
+                                                  "internalType":  "uint256",
+                                                  "name":  "endAtMs",
+                                                  "type":  "uint256"
+                                              },
+                                              {
+                                                  "internalType":  "bytes32",
+                                                  "name":  "tenantMessageHash",
+                                                  "type":  "bytes32"
+                                              },
+                                              {
+                                                  "internalType":  "bytes32",
+                                                  "name":  "landlordMessageHash",
+                                                  "type":  "bytes32"
+                                              },
+                                              {
+                                                  "internalType":  "uint256",
+                                                  "name":  "tenantSignedAt",
+                                                  "type":  "uint256"
+                                              },
+                                              {
+                                                  "internalType":  "uint256",
+                                                  "name":  "landlordSignedAt",
+                                                  "type":  "uint256"
+                                              },
+                                              {
+                                                  "internalType":  "bytes",
+                                                  "name":  "tenantSignature",
+                                                  "type":  "bytes"
+                                              },
+                                              {
+                                                  "internalType":  "bytes",
+                                                  "name":  "landlordSignature",
+                                                  "type":  "bytes"
+                                              }
+                                          ],
+                           "internalType":  "struct RentalChain.CreateContractParams",
+                           "name":  "p",
+                           "type":  "tuple"
+                       }
+                   ],
+        "name":  "createContractRecord",
+        "outputs":  [
+
+                    ],
+        "stateMutability":  "nonpayable",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+                       {
+                           "internalType":  "string",
+                           "name":  "listingId",
+                           "type":  "string"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "contentHash",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "internalType":  "uint256",
+                           "name":  "rentAmountWei",
+                           "type":  "uint256"
+                       },
+                       {
+                           "internalType":  "uint16",
+                           "name":  "minLeaseMonths",
+                           "type":  "uint16"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "imageRootHash",
+                           "type":  "bytes32"
+                       }
+                   ],
+        "name":  "createListing",
+        "outputs":  [
+
+                    ],
+        "stateMutability":  "nonpayable",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+                       {
+                           "internalType":  "string",
+                           "name":  "listingId",
+                           "type":  "string"
+                       }
+                   ],
+        "name":  "getActiveContractByListing",
+        "outputs":  [
+                        {
+                            "internalType":  "string",
+                            "name":  "headContractId",
+                            "type":  "string"
+                        }
+                    ],
+        "stateMutability":  "view",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+                       {
+                           "internalType":  "string",
+                           "name":  "listingId",
+                           "type":  "string"
+                       }
+                   ],
+        "name":  "getContractChainHeadByListing",
+        "outputs":  [
+                        {
+                            "internalType":  "string",
+                            "name":  "headContractId",
+                            "type":  "string"
+                        }
+                    ],
+        "stateMutability":  "view",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+                       {
+                           "internalType":  "string",
+                           "name":  "contractId",
+                           "type":  "string"
+                       }
+                   ],
+        "name":  "getContractRecord",
+        "outputs":  [
+                        {
+                            "components":  [
+                                               {
+                                                   "internalType":  "string",
+                                                   "name":  "contractId",
+                                                   "type":  "string"
+                                               },
+                                               {
+                                                   "internalType":  "string",
+                                                   "name":  "listingId",
+                                                   "type":  "string"
+                                               },
+                                               {
+                                                   "internalType":  "string",
+                                                   "name":  "parentContractId",
+                                                   "type":  "string"
+                                               },
+                                               {
+                                                   "internalType":  "string",
+                                                   "name":  "renewalChildContractId",
+                                                   "type":  "string"
+                                               },
+                                               {
+                                                   "internalType":  "address",
+                                                   "name":  "tenant",
+                                                   "type":  "address"
+                                               },
+                                               {
+                                                   "internalType":  "address",
+                                                   "name":  "landlord",
+                                                   "type":  "address"
+                                               },
+                                               {
+                                                   "internalType":  "bytes32",
+                                                   "name":  "contentHash",
+                                                   "type":  "bytes32"
+                                               },
+                                               {
+                                                   "internalType":  "uint256",
+                                                   "name":  "initialAmountWei",
+                                                   "type":  "uint256"
+                                               },
+                                               {
+                                                   "internalType":  "uint256",
+                                                   "name":  "startAtMs",
+                                                   "type":  "uint256"
+                                               },
+                                               {
+                                                   "internalType":  "uint256",
+                                                   "name":  "endAtMs",
+                                                   "type":  "uint256"
+                                               },
+                                               {
+                                                   "internalType":  "uint256",
+                                                   "name":  "createdAt",
+                                                   "type":  "uint256"
+                                               },
+                                               {
+                                                   "internalType":  "bytes32",
+                                                   "name":  "tenantMessageHash",
+                                                   "type":  "bytes32"
+                                               },
+                                               {
+                                                   "internalType":  "bytes32",
+                                                   "name":  "landlordMessageHash",
+                                                   "type":  "bytes32"
+                                               },
+                                               {
+                                                   "internalType":  "uint256",
+                                                   "name":  "tenantSignedAt",
+                                                   "type":  "uint256"
+                                               },
+                                               {
+                                                   "internalType":  "uint256",
+                                                   "name":  "landlordSignedAt",
+                                                   "type":  "uint256"
+                                               },
+                                               {
+                                                   "internalType":  "enum RentalChain.ContractStatus",
+                                                   "name":  "status",
+                                                   "type":  "uint8"
+                                               },
+                                               {
+                                                   "internalType":  "bool",
+                                                   "name":  "exists",
+                                                   "type":  "bool"
+                                               }
+                                           ],
+                            "internalType":  "struct RentalChain.ContractRecord",
+                            "name":  "record",
+                            "type":  "tuple"
+                        }
+                    ],
+        "stateMutability":  "view",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+                       {
+                           "internalType":  "string",
+                           "name":  "listingId",
+                           "type":  "string"
+                       }
+                   ],
+        "name":  "getCurrentEffectiveContractByListing",
+        "outputs":  [
+                        {
+                            "internalType":  "string",
+                            "name":  "currentContractId",
+                            "type":  "string"
+                        }
+                    ],
+        "stateMutability":  "view",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+                       {
+                           "internalType":  "string",
+                           "name":  "contractId",
+                           "type":  "string"
+                       },
+                       {
+                           "internalType":  "address",
+                           "name":  "tenant",
+                           "type":  "address"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "nonce",
+                           "type":  "bytes32"
+                       }
+                   ],
+        "name":  "getGasAuthorization",
+        "outputs":  [
+                        {
+                            "internalType":  "address",
+                            "name":  "outTenant",
+                            "type":  "address"
+                        },
+                        {
+                            "internalType":  "address",
+                            "name":  "outLandlord",
+                            "type":  "address"
+                        },
+                        {
+                            "internalType":  "bytes32",
+                            "name":  "outContractContentHash",
+                            "type":  "bytes32"
+                        },
+                        {
+                            "internalType":  "uint256",
+                            "name":  "capWei",
+                            "type":  "uint256"
+                        },
+                        {
+                            "internalType":  "uint256",
+                            "name":  "deadlineMs",
+                            "type":  "uint256"
+                        },
+                        {
+                            "internalType":  "uint256",
+                            "name":  "lockedWei",
+                            "type":  "uint256"
+                        },
+                        {
+                            "internalType":  "uint8",
+                            "name":  "status",
+                            "type":  "uint8"
+                        }
+                    ],
+        "stateMutability":  "view",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+                       {
+                           "internalType":  "string",
+                           "name":  "listingId",
+                           "type":  "string"
+                       }
+                   ],
+        "name":  "getListing",
+        "outputs":  [
+                        {
+                            "components":  [
+                                               {
+                                                   "internalType":  "string",
+                                                   "name":  "listingId",
+                                                   "type":  "string"
+                                               },
+                                               {
+                                                   "internalType":  "address",
+                                                   "name":  "landlord",
+                                                   "type":  "address"
+                                               },
+                                               {
+                                                   "internalType":  "bytes32",
+                                                   "name":  "contentHash",
+                                                   "type":  "bytes32"
+                                               },
+                                               {
+                                                   "internalType":  "uint256",
+                                                   "name":  "rentAmountWei",
+                                                   "type":  "uint256"
+                                               },
+                                               {
+                                                   "internalType":  "uint16",
+                                                   "name":  "minLeaseMonths",
+                                                   "type":  "uint16"
+                                               },
+                                               {
+                                                   "internalType":  "bytes32",
+                                                   "name":  "imageRootHash",
+                                                   "type":  "bytes32"
+                                               },
+                                               {
+                                                   "internalType":  "enum RentalChain.ListingStatus",
+                                                   "name":  "status",
+                                                   "type":  "uint8"
+                                               },
+                                               {
+                                                   "internalType":  "uint64",
+                                                   "name":  "version",
+                                                   "type":  "uint64"
+                                               },
+                                               {
+                                                   "internalType":  "uint64",
+                                                   "name":  "nonce",
+                                                   "type":  "uint64"
+                                               },
+                                               {
+                                                   "internalType":  "uint256",
+                                                   "name":  "createdAt",
+                                                   "type":  "uint256"
+                                               },
+                                               {
+                                                   "internalType":  "uint256",
+                                                   "name":  "updatedAt",
+                                                   "type":  "uint256"
+                                               },
+                                               {
+                                                   "internalType":  "bool",
+                                                   "name":  "exists",
+                                                   "type":  "bool"
+                                               }
+                                           ],
+                            "internalType":  "struct RentalChain.ListingRecord",
+                            "name":  "record",
+                            "type":  "tuple"
+                        }
+                    ],
+        "stateMutability":  "view",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+
+                   ],
+        "name":  "getListingCount",
+        "outputs":  [
+                        {
+                            "internalType":  "uint256",
+                            "name":  "",
+                            "type":  "uint256"
+                        }
+                    ],
+        "stateMutability":  "view",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+                       {
+                           "internalType":  "string",
+                           "name":  "contractId",
+                           "type":  "string"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "contractContentHash",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "internalType":  "address",
+                           "name":  "tenant",
+                           "type":  "address"
+                       },
+                       {
+                           "internalType":  "address",
+                           "name":  "landlord",
+                           "type":  "address"
+                       },
+                       {
+                           "internalType":  "uint256",
+                           "name":  "capWei",
+                           "type":  "uint256"
+                       },
+                       {
+                           "internalType":  "uint256",
+                           "name":  "deadlineMs",
+                           "type":  "uint256"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "nonce",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "internalType":  "bytes",
+                           "name":  "signature",
+                           "type":  "bytes"
+                       }
+                   ],
+        "name":  "lockGasCompensationEscrow",
+        "outputs":  [
+
+                    ],
+        "stateMutability":  "payable",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+
+                   ],
+        "name":  "paymentWindowMs",
+        "outputs":  [
+                        {
+                            "internalType":  "uint256",
+                            "name":  "",
+                            "type":  "uint256"
+                        }
+                    ],
+        "stateMutability":  "view",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+                       {
+                           "internalType":  "string",
+                           "name":  "contractId",
+                           "type":  "string"
+                       },
+                       {
+                           "internalType":  "address",
+                           "name":  "landlord",
+                           "type":  "address"
+                       },
+                       {
+                           "internalType":  "string",
+                           "name":  "orderNo",
+                           "type":  "string"
+                       }
+                   ],
+        "name":  "recordInitialRentPayment",
+        "outputs":  [
+
+                    ],
+        "stateMutability":  "payable",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+                       {
+                           "internalType":  "string",
+                           "name":  "contractId",
+                           "type":  "string"
+                       },
+                       {
+                           "internalType":  "address",
+                           "name":  "tenant",
+                           "type":  "address"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "nonce",
+                           "type":  "bytes32"
+                       }
+                   ],
+        "name":  "revokeGasCompensationAuthorization",
+        "outputs":  [
+
+                    ],
+        "stateMutability":  "nonpayable",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+                       {
+                           "internalType":  "string",
+                           "name":  "listingId",
+                           "type":  "string"
+                       },
+                       {
+                           "internalType":  "enum RentalChain.ListingStatus",
+                           "name":  "newStatus",
+                           "type":  "uint8"
+                       },
+                       {
+                           "internalType":  "uint64",
+                           "name":  "expectedVersion",
+                           "type":  "uint64"
+                       },
+                       {
+                           "internalType":  "uint64",
+                           "name":  "expectedNonce",
+                           "type":  "uint64"
+                       }
+                   ],
+        "name":  "setListingStatus",
+        "outputs":  [
+
+                    ],
+        "stateMutability":  "nonpayable",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+                       {
+                           "internalType":  "string",
+                           "name":  "listingId",
+                           "type":  "string"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "newContentHash",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "internalType":  "uint256",
+                           "name":  "newRentAmountWei",
+                           "type":  "uint256"
+                       },
+                       {
+                           "internalType":  "uint16",
+                           "name":  "newMinLeaseMonths",
+                           "type":  "uint16"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "newImageRootHash",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "internalType":  "uint64",
+                           "name":  "expectedVersion",
+                           "type":  "uint64"
+                       },
+                       {
+                           "internalType":  "uint64",
+                           "name":  "expectedNonce",
+                           "type":  "uint64"
+                       }
+                   ],
+        "name":  "updateListingTerms",
+        "outputs":  [
+
+                    ],
+        "stateMutability":  "nonpayable",
+        "type":  "function"
+    }
 ]

@@ -13,5 +13,8 @@
     "dotenv": "^16.6.1",
     "ganache": "^7.9.2",
     "hardhat": "^2.22.10"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^4.9.6"
   }
 }

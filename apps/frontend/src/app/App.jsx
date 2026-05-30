@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { Suspense, lazy, useState, useEffect } from 'react';
 import { Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './providers/AuthContext';
 import {
@@ -7,16 +7,24 @@ import {
   MenuIcon, XIcon, ArrowRightIcon,
 } from 'lucide-react';
 
-import HomePage from '../pages/HomePage';
-import LoginPage from '../pages/LoginPage';
-import ListingsPage from '../pages/ListingsPage';
-import ListingDetail from '../pages/ListingDetail';
-import PublishListing from '../pages/PublishListing';
-import ContractPage from '../pages/ContractPage';
-import MyContracts from '../pages/MyContracts';
-import MyListings from '../pages/MyListings';
-import ProfilePage from '../pages/ProfilePage';
-import VerifyPage from '../pages/VerifyPage';
+const HomePage = lazy(() => import('../pages/HomePage'));
+const LoginPage = lazy(() => import('../pages/LoginPage'));
+const ListingsPage = lazy(() => import('../pages/ListingsPage'));
+const ListingDetail = lazy(() => import('../pages/ListingDetail'));
+const PublishListing = lazy(() => import('../pages/PublishListing'));
+const ContractPage = lazy(() => import('../pages/ContractPage'));
+const MyContracts = lazy(() => import('../pages/MyContracts'));
+const MyListings = lazy(() => import('../pages/MyListings'));
+const ProfilePage = lazy(() => import('../pages/ProfilePage'));
+const VerifyPage = lazy(() => import('../pages/VerifyPage'));
+
+function PageFallback() {
+  return (
+    <div className="flex min-h-[240px] items-center justify-center rounded-3xl border border-stone-200 bg-[#f5f0e8] text-sm font-medium text-stone-500">
+      页面加载中...
+    </div>
+  );
+}
 
 export default function App() {
   const { user, logout, connectWallet, walletInfo, preferredNetwork, updatePreferredNetwork } = useAuth();
@@ -253,28 +261,34 @@ export default function App() {
 
       {/* ── Page content ── */}
       <main className="flex-1 overflow-y-auto bg-gray-950 p-6">
-        <Routes>
-          <Route path="/"           element={<HomePage />} />
-          <Route path="/login"      element={<HomePage />} />
-          <Route path="/listings"   element={<ListingsPage />} />
-          <Route path="/listing/:id" element={<ListingDetail />} />
-          <Route path="/publish"    element={<PublishListing />} />
-          <Route path="/contract/:id" element={<ContractPage />} />
-          <Route path="/contracts"  element={<MyContracts />} />
-          <Route path="/my-listings" element={<MyListings />} />
-          <Route path="/profile"    element={<HomePage />} />
-          <Route path="/verify"     element={<VerifyPage />} />
-        </Routes>
+        <Suspense fallback={<PageFallback />}>
+          <Routes>
+            <Route path="/"           element={<HomePage />} />
+            <Route path="/login"      element={<HomePage />} />
+            <Route path="/listings"   element={<ListingsPage />} />
+            <Route path="/listing/:id" element={<ListingDetail />} />
+            <Route path="/publish"    element={<PublishListing />} />
+            <Route path="/contract/:id" element={<ContractPage />} />
+            <Route path="/contracts"  element={<MyContracts />} />
+            <Route path="/my-listings" element={<MyListings />} />
+            <Route path="/profile"    element={<HomePage />} />
+            <Route path="/verify"     element={<VerifyPage />} />
+          </Routes>
+        </Suspense>
       </main>
 
       {authModal && (
-        <LoginPage
-          initialMode={authModal}
-          onClose={() => setAuthModal(null)}
-        />
+        <Suspense fallback={null}>
+          <LoginPage
+            initialMode={authModal}
+            onClose={() => setAuthModal(null)}
+          />
+        </Suspense>
       )}
       {profileModalOpen && (
-        <ProfilePage onClose={closeProfileModal} />
+        <Suspense fallback={null}>
+          <ProfilePage onClose={closeProfileModal} />
+        </Suspense>
       )}
     </div>
   );

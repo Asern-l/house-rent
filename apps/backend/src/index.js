@@ -13,10 +13,17 @@ const fs = require('fs');
 const { ethers } = require('ethers');
 const RENTAL_CHAIN_ABI = require('../../frontend/src/shared/blockchain/RentalChainABI.json');
 const { migrate, getDb, parseResult, saveDb, CHAIN_ENV, DB_PATH } = require('./db');
-const { getUserDb, saveUserDb, USER_DB_PATH } = require('./user-db');
+const { getUserDb, saveUserDb, getUserDbPath } = require('./user-db');
 const { logApiError, logSystemError, logRiskEvent } = require('./logger');
+const {
+  upsertOnchainOperation,
+  markOnchainOperationConfirmed,
+  markOnchainOperationFailed,
+} = require('./onchain-operations');
+const { parseContractEndAtMs } = require('./listing-public-state');
 const contractRoutes = require('./routes/contracts');
 const listingRoutes = require('./routes/listings');
+const { AppError, error: buildError } = require('./app-error');
 const iface = new ethers.Interface(RENTAL_CHAIN_ABI);
 
 const app = express();
@@ -102,8 +109,9 @@ function setupRoutes() {
       listings: parseResult(db.exec('SELECT COUNT(*) AS count FROM listings'))[0]?.count || 0,
       contracts: parseResult(db.exec('SELECT COUNT(*) AS count FROM contracts'))[0]?.count || 0,
       payments: parseResult(db.exec('SELECT COUNT(*) AS count FROM payments'))[0]?.count || 0,
-      pendingOnchainContracts: parseResult(db.exec("SELECT COUNT(*) AS count FROM contracts WHERE status = 'pending_payment' AND tx_hash IS NULL"))[0]?.count || 0,
-      pendingOnchainListings: parseResult(db.exec("SELECT COUNT(*) AS count FROM listings WHERE tx_hash IS NULL AND onchain_status IN ('pending','failed')"))[0]?.count || 0,
+      pendingOnchainOperations: parseResult(db.exec("SELECT COUNT(*) AS count FROM onchain_operations WHERE status = 'pending'"))[0]?.count || 0,
+      pendingOnchainContracts: parseResult(db.exec("SELECT COUNT(*) AS count FROM onchain_operations WHERE entity_type = 'contract' AND status = 'pending'"))[0]?.count || 0,
+      pendingOnchainListings: parseResult(db.exec("SELECT COUNT(*) AS count FROM onchain_operations WHERE entity_type = 'listing' AND status = 'pending'"))[0]?.count || 0,
     };
     res.json({
       success: true,
@@ -186,6 +194,9 @@ function setupErrorHandlers() {
       message: err?.message || 'unknown_error',
       stack: err?.stack || '',
     });
+    if (err instanceof AppError) {
+      return res.status(err.status).json(buildError(err.code, err.message, err.extra));
+    }
     res.status(500).json({ error: '服务端内部错误' });
   });
 }
@@ -207,102 +218,729 @@ function getChainRuntime() {
   return { rpcUrl, contractAddress };
 }
 
-// 函数 6-2: 链上补偿任务（修复 pending 操作和缺失区块元数据）。
-async function reconcileListingOnchainData() {
-  const { rpcUrl, contractAddress } = getChainRuntime();
-  if (!rpcUrl || !ethers.isAddress(contractAddress)) return;
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
-  const db = await getDb();
+function normalizeWalletAddress(value) {
+  const addr = String(value || '').trim();
+  if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) return '';
+  return ethers.getAddress(addr);
+}
 
+function toLowerHex(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function indexedStringHash(value) {
+  if (typeof value === 'string') return '';
+  const hash = String(value?.hash || value?._hash || '').trim();
+  return /^0x[a-fA-F0-9]{64}$/.test(hash) ? hash.toLowerCase() : '';
+}
+
+function eventIndexedStringMatches(actualValue, expectedValue) {
+  const expected = String(expectedValue || '').trim();
+  if (!expected) return false;
+  if (typeof actualValue === 'string') return actualValue === expected;
+  const actualHash = indexedStringHash(actualValue);
+  if (!actualHash) return false;
+  return actualHash === ethers.id(expected).toLowerCase();
+}
+
+function normalizeDateOnly(value) {
+  const s = String(value || '').trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  const d = new Date(`${s}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  return s;
+}
+
+function safeParseJsonObject(raw, fallback = {}) {
+  if (!raw) return fallback;
+  if (typeof raw === 'object') return raw;
+  try {
+    const parsed = JSON.parse(String(raw || ''));
+    return parsed && typeof parsed === 'object' ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeEventArgs(args) {
+  const obj = typeof args?.toObject === 'function' ? args.toObject() : (args || {});
+  const result = {};
+  for (const [key, value] of Object.entries(obj)) {
+    result[key] = (value && typeof value === 'object' && value._isIndexed) ? String(value.hash) : value;
+  }
+  return result;
+}
+
+async function loadConfirmedOnchainTx(provider, contractAddress, txHash) {
+  const receipt = await provider.getTransactionReceipt(txHash);
+  if (!receipt) return { pending: true };
+  if (receipt.status !== 1) return { failed: true, reason: 'onchain_tx_reverted', receipt };
+  const tx = await provider.getTransaction(txHash);
+  if (!tx) return { failed: true, reason: 'onchain_tx_missing', receipt };
+  if (toLowerHex(tx.to) !== toLowerHex(contractAddress)) {
+    return { failed: true, reason: 'onchain_tx_target_invalid', receipt, tx };
+  }
+  const block = await provider.getBlock(receipt.blockNumber);
+  const parsedLogs = [];
+  for (const log of receipt.logs || []) {
+    if (toLowerHex(log.address) !== toLowerHex(contractAddress)) continue;
+    try {
+      const parsedLog = iface.parseLog({ topics: log.topics, data: log.data });
+      parsedLogs.push({ name: parsedLog.name, args: normalizeEventArgs(parsedLog.args) });
+    } catch {
+      // ignore unrelated logs
+    }
+  }
+  return {
+    pending: false,
+    failed: false,
+    receipt,
+    tx,
+    block,
+    parsedLogs,
+  };
+}
+
+// 函数 6-2: 链上补偿任务（修复 pending 操作和缺失区块元数据）。
+async function reconcileUnifiedOnchainOperations() {
+  const db = await getDb();
   const pendingOps = parseResult(db.exec(
-    `SELECT op_id, listing_id, action, tx_hash
-     FROM listing_chain_operations
+    `SELECT op_id, entity_type, entity_id, operation_kind, tx_hash, payload_json, status
+     FROM onchain_operations
      WHERE status = 'pending'
      ORDER BY created_at ASC
-     LIMIT 50`
+     LIMIT 80`
   ));
+  if (pendingOps.length === 0) return;
+
+  const { rpcUrl, contractAddress } = getChainRuntime();
+  const hasRuntime = rpcUrl && ethers.isAddress(contractAddress);
+  const provider = hasRuntime ? new ethers.JsonRpcProvider(rpcUrl) : null;
+  const contract = hasRuntime ? new ethers.Contract(contractAddress, RENTAL_CHAIN_ABI, provider) : null;
+
   for (const op of pendingOps) {
     try {
+      if (String(op.operation_kind || '').startsWith('listing.')) {
+        if (!hasRuntime) continue;
+        const payload = safeParseJsonObject(op.payload_json, {});
+        const loaded = await loadConfirmedOnchainTx(provider, contractAddress, op.tx_hash);
+        if (loaded.pending) continue;
+        if (loaded.failed) {
+          markOnchainOperationFailed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            errorMessage: loaded.reason || 'listing onchain operation failed',
+          });
+          continue;
+        }
+        const boundWallet = toLowerHex(payload.landlordWallet);
+        if (boundWallet && toLowerHex(loaded.tx.from) !== boundWallet) {
+          markOnchainOperationFailed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            errorMessage: 'listing_signer_mismatch',
+          });
+          continue;
+        }
+        if (op.operation_kind === 'listing.create') {
+          const draft = payload.draft || {};
+          const chainAnchor = payload.chainAnchor || {};
+          const createdLog = loaded.parsedLogs.find((log) =>
+            log.name === 'ListingCreated'
+            && String(log.args?.listingId || '').toLowerCase() === ethers.id(String(draft.listingId || '')).toLowerCase()
+          );
+          const expectedWei = String(chainAnchor.rentAmountWei || '');
+          const expectedImageRootHash = toLowerHex(chainAnchor.imageRootHash);
+          if (
+            !createdLog
+            || toLowerHex(createdLog.args?.landlord) !== boundWallet
+            || toLowerHex(createdLog.args?.contentHash) !== toLowerHex(chainAnchor.contentHash)
+            || String(createdLog.args?.rentAmountWei || '') !== expectedWei
+            || Number(createdLog.args?.minLeaseMonths || 0) !== Number(chainAnchor.minLeaseMonths || 0)
+            || toLowerHex(createdLog.args?.imageRootHash) !== expectedImageRootHash
+          ) {
+            markOnchainOperationFailed(db, {
+              opId: op.op_id,
+              entityType: op.entity_type,
+              entityId: op.entity_id,
+              operationKind: op.operation_kind,
+              txHash: op.tx_hash,
+              errorMessage: 'listing_create_event_mismatch',
+            });
+            continue;
+          }
+
+          const existed = parseResult(db.exec('SELECT id, tx_hash FROM listings WHERE id = ?', [payload.listingId || op.entity_id]))[0];
+          if (!existed) {
+            db.run(`INSERT INTO listings (
+              id, landlord_id, title, description, address, district, rent_amount,
+              rent_cycle, min_lease_months, bedrooms, livingrooms, bathrooms, area,
+              clauses_template_json, image_urls, image_hashes, tx_hash, status,
+              chain_version, chain_nonce, chain_block_number, chain_block_time, content_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?, ?, ?, ?)`, [
+              draft.listingId,
+              payload.landlordId || '',
+              draft.title || '',
+              draft.description || '',
+              draft.address || '',
+              draft.district || '',
+              draft.rentAmount || '',
+              draft.rentCycle || 'month',
+              Number(draft.minLeaseMonths || 1),
+              Number(draft.bedrooms || 1),
+              Number(draft.livingrooms || 1),
+              Number(draft.bathrooms || 1),
+              Number(draft.area || 0),
+              JSON.stringify(Array.isArray(draft.clauses) ? draft.clauses : []),
+              JSON.stringify(Array.isArray(draft.imageUrls) ? draft.imageUrls : []),
+              JSON.stringify(Array.isArray(draft.imageHashes) ? draft.imageHashes : []),
+              op.tx_hash,
+              Number(createdLog.args?.version || 0),
+              Number(createdLog.args?.nonce || 0),
+              Number(loaded.receipt.blockNumber || 0),
+              Number(loaded.block?.timestamp || 0),
+              String(chainAnchor.contentHash || ''),
+            ]);
+          } else {
+            db.run(
+                `UPDATE listings
+                 SET tx_hash = ?,
+                    chain_version = ?,
+                    chain_nonce = ?,
+                    chain_block_number = ?,
+                   chain_block_time = ?,
+                   content_hash = CASE WHEN COALESCE(content_hash, '') = '' THEN ? ELSE content_hash END,
+                   updated_at = datetime('now', '+8 hours')
+               WHERE id = ?`,
+              [
+                op.tx_hash,
+                Number(createdLog.args?.version || 0),
+                Number(createdLog.args?.nonce || 0),
+                Number(loaded.receipt.blockNumber || 0),
+                Number(loaded.block?.timestamp || 0),
+                String(chainAnchor.contentHash || ''),
+                payload.listingId || op.entity_id,
+              ]
+            );
+          }
+          markOnchainOperationConfirmed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            result: {
+              eventName: 'ListingCreated',
+              blockNumber: Number(loaded.receipt.blockNumber || 0),
+              blockTime: Number(loaded.block?.timestamp || 0),
+            },
+          });
+          continue;
+        }
+
+        if (op.operation_kind === 'listing.status') {
+          const statusLog = loaded.parsedLogs.find((log) =>
+            log.name === 'ListingStatusChanged'
+            && String(log.args?.listingId || '').toLowerCase() === ethers.id(String(payload.listingId || op.entity_id)).toLowerCase()
+          );
+          const nextStatus = String(payload.nextStatus || '').trim();
+          const nextStatusEnum = { available: 0, offline: 1, closed: 2 }[nextStatus];
+          if (
+            !statusLog
+            || Number(statusLog.args?.oldStatus ?? -1) !== Number(payload.oldStatusEnum ?? -1)
+            || Number(statusLog.args?.newStatus ?? -1) !== Number(nextStatusEnum ?? -1)
+            || Number(statusLog.args?.version || 0) !== Number(payload.expectedVersion || 0) + 1
+            || Number(statusLog.args?.nonce || 0) !== Number(payload.expectedNonce || 0) + 1
+          ) {
+            markOnchainOperationFailed(db, {
+              opId: op.op_id,
+              entityType: op.entity_type,
+              entityId: op.entity_id,
+              operationKind: op.operation_kind,
+              txHash: op.tx_hash,
+              errorMessage: 'listing_status_event_mismatch',
+            });
+            continue;
+          }
+          db.run(
+            `UPDATE listings
+             SET status = ?,
+                 tx_hash = ?,
+                 chain_version = ?,
+                 chain_nonce = ?,
+                 chain_block_number = ?,
+                 chain_block_time = ?,
+                 updated_at = datetime('now', '+8 hours')
+             WHERE id = ?`,
+            [
+              nextStatus,
+              op.tx_hash,
+              Number(statusLog.args?.version || 0),
+              Number(statusLog.args?.nonce || 0),
+              Number(loaded.receipt.blockNumber || 0),
+              Number(loaded.block?.timestamp || 0),
+              payload.listingId || op.entity_id,
+            ]
+          );
+          markOnchainOperationConfirmed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            result: { eventName: 'ListingStatusChanged', toStatus: nextStatus },
+          });
+          continue;
+        }
+
+        if (op.operation_kind === 'listing.terms') {
+          const termsLog = loaded.parsedLogs.find((log) =>
+            log.name === 'ListingContentUpdated'
+            && String(log.args?.listingId || '').toLowerCase() === ethers.id(String(payload.listingId || op.entity_id)).toLowerCase()
+          );
+          if (
+            !termsLog
+            || toLowerHex(termsLog.args?.newContentHash) !== toLowerHex(payload.contentHash)
+            || String(termsLog.args?.newRentAmountWei || '') !== String(payload.expectedRentAmountWei || '')
+            || Number(termsLog.args?.newMinLeaseMonths || 0) !== Number(payload.minLeaseMonths || 0)
+            || toLowerHex(termsLog.args?.newImageRootHash) !== toLowerHex(payload.expectedImageRootHash)
+            || Number(termsLog.args?.version || 0) !== Number(payload.expectedVersion || 0) + 1
+            || Number(termsLog.args?.nonce || 0) !== Number(payload.expectedNonce || 0) + 1
+          ) {
+            markOnchainOperationFailed(db, {
+              opId: op.op_id,
+              entityType: op.entity_type,
+              entityId: op.entity_id,
+              operationKind: op.operation_kind,
+              txHash: op.tx_hash,
+              errorMessage: 'listing_terms_event_mismatch',
+            });
+            continue;
+          }
+          db.run(
+            `UPDATE listings
+             SET rent_amount = ?,
+                 min_lease_months = ?,
+                 clauses_template_json = ?,
+                 image_urls = ?,
+                 image_hashes = ?,
+                 tx_hash = ?,
+                 chain_version = ?,
+                 chain_nonce = ?,
+                 chain_block_number = ?,
+                 chain_block_time = ?,
+                 updated_at = datetime('now', '+8 hours')
+             WHERE id = ?`,
+            [
+              String(payload.rentAmount || ''),
+              Number(payload.minLeaseMonths || 1),
+              JSON.stringify(Array.isArray(payload.clauses) ? payload.clauses : []),
+              JSON.stringify(Array.isArray(payload.imageUrls) ? payload.imageUrls : []),
+              JSON.stringify(Array.isArray(payload.imageHashes) ? payload.imageHashes : []),
+              op.tx_hash,
+              Number(termsLog.args?.version || 0),
+              Number(termsLog.args?.nonce || 0),
+              Number(loaded.receipt.blockNumber || 0),
+              Number(loaded.block?.timestamp || 0),
+              payload.listingId || op.entity_id,
+            ]
+          );
+          markOnchainOperationConfirmed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            result: { eventName: 'ListingContentUpdated' },
+          });
+          continue;
+        }
+        continue;
+      }
+
+      if (op.operation_kind === 'contract.create') {
+        if (!hasRuntime) continue;
+        const payload = safeParseJsonObject(op.payload_json, {});
+        const contractRow = parseResult(db.exec(
+          `SELECT id, listing_id, parent_contract_id, content_hash, tenant_signature, status, payment_deadline
+           FROM contracts
+           WHERE id = ?
+           LIMIT 1`,
+          [op.entity_id]
+        ))[0];
+        if (!contractRow) continue;
+        if (['pending_payment', 'active'].includes(String(contractRow.status || '')) && String(contractRow.payment_deadline || '').trim()) {
+          markOnchainOperationConfirmed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            result: { contractStatusAfter: contractRow.status, paymentDeadline: contractRow.payment_deadline || '' },
+          });
+          continue;
+        }
+        const loaded = await loadConfirmedOnchainTx(provider, contractAddress, op.tx_hash);
+        if (loaded.pending) continue;
+        if (loaded.failed) {
+          markOnchainOperationFailed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            errorMessage: loaded.reason || 'contract create reconcile failed',
+          });
+          continue;
+        }
+        let parsedTx;
+        try {
+          parsedTx = contract.interface.parseTransaction({ data: loaded.tx.data, value: loaded.tx.value });
+        } catch {
+          parsedTx = null;
+        }
+        if (!parsedTx || parsedTx.name !== 'createContractRecord') {
+          markOnchainOperationFailed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            errorMessage: 'onchain_tx_method_invalid',
+          });
+          continue;
+        }
+        const args = parsedTx.args?.[0];
+        if (
+          !args
+          || String(args.contractId || '') !== String(contractRow.id)
+          || String(args.listingId || '') !== String(contractRow.listing_id || '')
+          || String(args.parentContractId || '') !== String(payload.parentContractId || '')
+          || toLowerHex(args.tenant) !== toLowerHex(payload.tenantAddress)
+          || toLowerHex(args.landlord) !== toLowerHex(payload.landlordAddress)
+          || toLowerHex(args.contentHash) !== toLowerHex(contractRow.content_hash)
+          || toLowerHex(args.gasAuthNonce) !== toLowerHex(String(payload.gasAuthNonce || ''))
+          || BigInt(args.initialAmountWei || 0) !== BigInt(String(payload.initialAmountWei || '0'))
+          || BigInt(args.startAtMs || 0) !== BigInt(Number(payload.startAtMs || 0))
+          || BigInt(args.endAtMs || 0) !== BigInt(Number(payload.endAtMs || 0))
+          || toLowerHex(args.tenantMessageHash) !== toLowerHex(payload.tenantMessageHash)
+          || toLowerHex(args.landlordMessageHash) !== toLowerHex(payload.messageHash)
+          || BigInt(args.tenantSignedAt || 0) !== BigInt(Number(payload.tenantSignedAt || 0))
+          || String(args.tenantSignature || '') !== String(payload.tenantSignature || contractRow.tenant_signature || '')
+          || String(args.landlordSignature || '') !== String(payload.signature || '')
+        ) {
+          markOnchainOperationFailed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            errorMessage: 'onchain_calldata_mismatch',
+          });
+          continue;
+        }
+        const createdEvent = loaded.parsedLogs.find((log) =>
+          log.name === 'ContractCreated' && eventIndexedStringMatches(log.args?.contractId, contractRow.id)
+        );
+        const tenantAnchored = loaded.parsedLogs.find((log) =>
+          log.name === 'ContractSignatureAnchored'
+          && eventIndexedStringMatches(log.args?.contractId, contractRow.id)
+          && Number(log.args?.role || 0) === 1
+          && toLowerHex(log.args?.signer) === toLowerHex(payload.tenantAddress)
+        );
+        const landlordAnchored = loaded.parsedLogs.find((log) =>
+          log.name === 'ContractSignatureAnchored'
+          && eventIndexedStringMatches(log.args?.contractId, contractRow.id)
+          && Number(log.args?.role || 0) === 2
+          && toLowerHex(log.args?.signer) === toLowerHex(payload.landlordAddress)
+        );
+        if (!createdEvent || !tenantAnchored || !landlordAnchored) {
+          markOnchainOperationFailed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            errorMessage: 'onchain_event_missing',
+          });
+          continue;
+        }
+        const landlordSignedAtMs = Number(landlordAnchored.args?.signedAt || 0) || (Number(loaded.block?.timestamp || 0) * 1000);
+        const paymentDeadline = getCnDateTime(new Date(landlordSignedAtMs + PAYMENT_WINDOW_MS));
+        db.run(
+          `UPDATE contracts
+           SET landlord_signed_at = ?,
+               landlord_signer_address = ?,
+               landlord_signature = ?,
+               landlord_signature_message = ?,
+               tx_hash = ?,
+               payment_deadline = ?,
+               status = CASE WHEN status = 'tenant_signed' THEN 'pending_payment' ELSE status END,
+               updated_at = datetime('now', '+8 hours')
+           WHERE id = ?`,
+          [
+            getCnDateTime(new Date(landlordSignedAtMs)),
+            String(payload.signerAddress || payload.landlordAddress || ''),
+            String(payload.signature || ''),
+            String(payload.message || ''),
+            op.tx_hash,
+            paymentDeadline,
+            contractRow.id,
+          ]
+        );
+        db.run(
+          `UPDATE contract_gas_authorizations
+           SET status = 'consumed',
+               settle_tx_hash = ?,
+               updated_at = datetime('now', '+8 hours')
+           WHERE contract_id = ?
+             AND status = 'active'`,
+          [op.tx_hash, contractRow.id]
+        );
+        markOnchainOperationConfirmed(db, {
+          opId: op.op_id,
+          entityType: op.entity_type,
+          entityId: op.entity_id,
+          operationKind: op.operation_kind,
+          txHash: op.tx_hash,
+          result: { contractStatusAfter: 'pending_payment', paymentDeadline },
+        });
+        continue;
+      }
+
+      if (!provider || !contract) continue;
       const receipt = await provider.getTransactionReceipt(op.tx_hash);
       if (!receipt) continue;
       if (receipt.status !== 1) {
-        db.run("UPDATE listing_chain_operations SET status = 'failed', updated_at = datetime('now', '+8 hours') WHERE op_id = ?", [op.op_id]);
+        markOnchainOperationFailed(db, {
+          opId: op.op_id,
+          entityType: op.entity_type,
+          entityId: op.entity_id,
+          operationKind: op.operation_kind,
+          txHash: op.tx_hash,
+          errorMessage: 'onchain transaction reverted',
+        });
         continue;
       }
-      const block = await provider.getBlock(receipt.blockNumber);
-      db.run(
-        `UPDATE listing_chain_operations
-         SET status = 'confirmed', detail_json = ?, updated_at = datetime('now', '+8 hours')
-         WHERE op_id = ?`,
-        [JSON.stringify({ blockNumber: Number(receipt.blockNumber || 0), blockTime: Number(block?.timestamp || 0) }), op.op_id]
-      );
-      if (op.listing_id) {
-        db.run(
-          `UPDATE listings
-           SET chain_block_number = CASE WHEN chain_block_number = 0 THEN ? ELSE chain_block_number END,
-               chain_block_time = CASE WHEN chain_block_time = 0 THEN ? ELSE chain_block_time END
-           WHERE id = ?`,
-          [Number(receipt.blockNumber || 0), Number(block?.timestamp || 0), op.listing_id]
-        );
+      const tx = await provider.getTransaction(op.tx_hash);
+      if (!tx || toLowerHex(tx.to) !== toLowerHex(contractAddress)) {
+        markOnchainOperationFailed(db, {
+          opId: op.op_id,
+          entityType: op.entity_type,
+          entityId: op.entity_id,
+          operationKind: op.operation_kind,
+          txHash: op.tx_hash,
+          errorMessage: 'onchain target contract mismatch',
+        });
+        continue;
       }
-      logRiskEvent('listing.onchain.reconcile.confirmed', {
-        listingId: op.listing_id,
-        opId: op.op_id,
-        txHash: op.tx_hash,
-        blockNumber: Number(receipt.blockNumber || 0),
-      });
-    } catch (error) {
-      logSystemError('reconcile.listing-op.exception', {
-        opId: op.op_id,
-        txHash: op.tx_hash,
-        message: error?.message || 'reconcile_failed',
-      });
-    }
-  }
-
-  const needBackfill = parseResult(db.exec(
-    `SELECT id, tx_hash
-     FROM listings
-     WHERE tx_hash IS NOT NULL AND tx_hash <> ''
-       AND (chain_block_number = 0 OR chain_block_time = 0)
-     ORDER BY updated_at DESC
-     LIMIT 50`
-  ));
-  for (const row of needBackfill) {
-    try {
-      const receipt = await provider.getTransactionReceipt(row.tx_hash);
-      if (!receipt || receipt.status !== 1) continue;
-      const block = await provider.getBlock(receipt.blockNumber);
-      db.run(
-        `UPDATE listings
-         SET chain_block_number = ?, chain_block_time = ?
-         WHERE id = ?`,
-        [Number(receipt.blockNumber || 0), Number(block?.timestamp || 0), row.id]
-      );
-      const parsedEvents = [];
+      const parsedTx = contract.interface.parseTransaction({ data: tx.data, value: tx.value });
+      const parsedLogs = [];
       for (const log of receipt.logs || []) {
-        if (String(log.address || '').toLowerCase() !== contractAddress.toLowerCase()) continue;
+        if (toLowerHex(log.address) !== toLowerHex(contractAddress)) continue;
         try {
-          const event = iface.parseLog({ topics: log.topics, data: log.data });
-          parsedEvents.push(event?.name || '');
+          parsedLogs.push(contract.interface.parseLog({ topics: log.topics, data: log.data }));
         } catch {
           // ignore
         }
       }
-      logRiskEvent('listing.onchain.reconcile.backfill', {
-        listingId: row.id,
-        txHash: row.tx_hash,
-        blockNumber: Number(receipt.blockNumber || 0),
-        events: parsedEvents,
-      });
+
+      if (op.operation_kind === 'payment.initial') {
+        const paymentRow = parseResult(db.exec('SELECT id FROM payments WHERE tx_hash = ?', [op.tx_hash]))[0];
+        if (paymentRow) {
+          markOnchainOperationConfirmed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            result: { paymentId: paymentRow.id },
+          });
+          continue;
+        }
+        const contractRow = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [op.entity_id]))[0];
+        if (!contractRow) {
+          markOnchainOperationFailed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            errorMessage: 'contract not found for payment reconcile',
+          });
+          continue;
+        }
+        const content = typeof contractRow.content_json === 'string' ? JSON.parse(contractRow.content_json) : (contractRow.content_json || {});
+        const tenantAddress = normalizeWalletAddress(content?.tenant?.walletAddress || '');
+        const landlordAddress = normalizeWalletAddress(content?.landlord?.walletAddress || '');
+        const expectedAmountWei = ethers.parseEther(String(content?.oneTimeAmount || '0'));
+        if (!parsedTx || parsedTx.name !== 'recordInitialRentPayment') {
+          markOnchainOperationFailed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            errorMessage: 'payment method mismatch',
+          });
+          continue;
+        }
+        if (toLowerHex(tx.from) !== toLowerHex(tenantAddress) || BigInt(tx.value || 0) !== expectedAmountWei) {
+          markOnchainOperationFailed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            errorMessage: 'payment payer or amount mismatch',
+          });
+          continue;
+        }
+        if (String(parsedTx.args?.[0] || '') !== String(contractRow.id) || toLowerHex(parsedTx.args?.[1] || '') !== toLowerHex(landlordAddress)) {
+          markOnchainOperationFailed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            errorMessage: 'payment calldata mismatch',
+          });
+          continue;
+        }
+        const paymentEvent = parsedLogs.find((log) =>
+          log.name === 'RentPaymentRecorded'
+          && eventIndexedStringMatches(log.args?.contractId, contractRow.id)
+          && toLowerHex(log.args?.payer) === toLowerHex(tenantAddress)
+          && toLowerHex(log.args?.landlord) === toLowerHex(landlordAddress)
+          && BigInt(log.args?.amountWei || 0) === expectedAmountWei
+        );
+        if (!paymentEvent) {
+          markOnchainOperationFailed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            errorMessage: 'payment event missing',
+          });
+          continue;
+        }
+        const payload = safeParseJsonObject(op.payload_json, {});
+        const paymentId = `pay_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        db.run(
+          `INSERT INTO payments (id, contract_id, payer_id, pay_type, amount, period, tx_hash, status, paid_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', datetime('now', '+8 hours'))`,
+          [
+            paymentId,
+            contractRow.id,
+            String(payload.payerId || contractRow.tenant_id || ''),
+            String(payload.payType || 'initial'),
+            String(payload.amount || content?.oneTimeAmount || ''),
+            String(payload.period || ''),
+            op.tx_hash,
+          ]
+        );
+        db.run(
+          "UPDATE contracts SET status = 'active' WHERE id = ? AND status = 'pending_payment'",
+          [contractRow.id]
+        );
+        const startDateOnly = normalizeDateOnly(content?.terms?.startDate);
+        const startAt = startDateOnly ? new Date(`${startDateOnly}T00:00:00+08:00`) : null;
+        const isFutureRenewalStart = !!(contractRow.parent_contract_id && startAt && !Number.isNaN(startAt.getTime()) && startAt.getTime() > Date.now());
+        markOnchainOperationConfirmed(db, {
+          opId: op.op_id,
+          entityType: op.entity_type,
+          entityId: op.entity_id,
+          operationKind: op.operation_kind,
+          txHash: op.tx_hash,
+          result: { paymentId, contractStatusAfter: 'active', isFutureRenewalStart },
+        });
+        continue;
+      }
+
+      if (op.operation_kind === 'gas_auth.revoke') {
+        const contractRow = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [op.entity_id]))[0];
+        const gasAuth = parseResult(db.exec('SELECT * FROM contract_gas_authorizations WHERE contract_id = ? LIMIT 1', [op.entity_id]))[0];
+        if (!contractRow || !gasAuth) {
+          markOnchainOperationFailed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            errorMessage: 'gas authorization not found',
+          });
+          continue;
+        }
+        const content = typeof contractRow.content_json === 'string' ? JSON.parse(contractRow.content_json) : (contractRow.content_json || {});
+        const tenantAddress = normalizeWalletAddress(content?.tenant?.walletAddress || '');
+        const methodName = String(parsedTx?.name || '').trim();
+        const isRevokeMethod =
+          (methodName === 'revokeGasCompensationAuthorization' || methodName === 'cancelPendingGasAuthorization')
+          && String(parsedTx.args?.[0] || '') === String(contractRow.id)
+          && toLowerHex(parsedTx.args?.[1] || '') === toLowerHex(tenantAddress)
+          && toLowerHex(parsedTx.args?.[2] || '') === toLowerHex(gasAuth.nonce);
+        if (!isRevokeMethod) {
+          markOnchainOperationFailed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            errorMessage: 'gas revoke method mismatch',
+          });
+          continue;
+        }
+        const revokedEvent = parsedLogs.find((log) =>
+          log.name === 'GasCompRevoked'
+          && eventIndexedStringMatches(log.args?.contractId, contractRow.id)
+          && toLowerHex(log.args?.tenant) === toLowerHex(tenantAddress)
+        );
+        if (!revokedEvent) {
+          markOnchainOperationFailed(db, {
+            opId: op.op_id,
+            entityType: op.entity_type,
+            entityId: op.entity_id,
+            operationKind: op.operation_kind,
+            txHash: op.tx_hash,
+            errorMessage: 'gas revoke event missing',
+          });
+          continue;
+        }
+        db.run(
+          `UPDATE contract_gas_authorizations
+           SET status = CASE WHEN status = 'active' THEN 'revoked' ELSE status END,
+               revoke_tx_hash = CASE WHEN COALESCE(revoke_tx_hash, '') = '' THEN ? ELSE revoke_tx_hash END,
+               updated_at = datetime('now', '+8 hours')
+           WHERE contract_id = ?`,
+          [op.tx_hash, contractRow.id]
+        );
+        markOnchainOperationConfirmed(db, {
+          opId: op.op_id,
+          entityType: op.entity_type,
+          entityId: op.entity_id,
+          operationKind: op.operation_kind,
+          txHash: op.tx_hash,
+          result: { gasAuthStatusAfter: 'revoked' },
+        });
+      }
     } catch (error) {
-      logSystemError('reconcile.listing-backfill.exception', {
-        listingId: row.id,
-        txHash: row.tx_hash,
-        message: error?.message || 'reconcile_backfill_failed',
+      logSystemError('reconcile.onchain-operations.exception', {
+        opId: op.op_id,
+        operationKind: op.operation_kind,
+        txHash: op.tx_hash,
+        message: error?.message || 'reconcile_onchain_operations_failed',
       });
     }
   }
+
   saveDb();
 }
 
@@ -342,19 +980,6 @@ async function expirePendingPaymentContracts() {
       console.error('未付款风控计数更新失败:', err);
     });
 
-    const sibling = parseResult(db.exec(
-      `SELECT id
-       FROM contracts
-       WHERE listing_id = ?
-         AND status NOT IN ('cancelled', 'expired', 'ended')`,
-      [item.listing_id]
-    ));
-    if (sibling.length === 0) {
-      db.run(
-        "UPDATE listings SET status = 'available', updated_at = datetime('now', '+8 hours') WHERE id = ? AND status = 'available'",
-        [item.listing_id]
-      );
-    }
   });
 
   saveDb();
@@ -377,26 +1002,6 @@ async function expireUnsignedContractsByExpiresAt() {
       [item.id]
     );
     if (db.getRowsModified() !== 1) return;
-    db.run(
-      `UPDATE contract_gas_authorizations
-       SET status = 'expired', updated_at = datetime('now', '+8 hours')
-       WHERE contract_id = ? AND status = 'active'`,
-      [item.id]
-    );
-
-    const sibling = parseResult(db.exec(
-      `SELECT id
-       FROM contracts
-       WHERE listing_id = ?
-         AND status NOT IN ('cancelled', 'expired', 'ended')`,
-      [item.listing_id]
-    ));
-    if (sibling.length === 0) {
-      db.run(
-        "UPDATE listings SET status = 'available', updated_at = datetime('now', '+8 hours') WHERE id = ? AND status = 'available'",
-        [item.listing_id]
-      );
-    }
 
     logRiskEvent('contract.auto-expire.release', {
       contractId: item.id,
@@ -411,7 +1016,7 @@ async function expireUnsignedContractsByExpiresAt() {
   saveDb();
 }
 
-// 函数 8: 处理租期到期合同（active -> ended）并释放房源（rented -> available）。
+// 函数 8: 处理租期到期合同（active -> ended）。
 async function expireActiveContractsByEndDate() {
   const db = await getDb();
   const activeContracts = parseResult(db.exec(
@@ -434,11 +1039,8 @@ async function expireActiveContractsByEndDate() {
         return;
       }
     }
-    const endDate = String(content?.terms?.endDate || '').trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return;
-
-    const endAt = new Date(`${endDate}T00:00:00`);
-    if (Number.isNaN(endAt.getTime()) || endAt > today) return;
+    const endAtMs = parseContractEndAtMs({ content_json: content });
+    if (!endAtMs || endAtMs > now.getTime()) return;
 
     db.run(
       "UPDATE contracts SET status = 'ended' WHERE id = ? AND status = 'active'",
@@ -446,20 +1048,6 @@ async function expireActiveContractsByEndDate() {
     );
     if (db.getRowsModified() !== 1) return;
     changed = true;
-
-    const sibling = parseResult(db.exec(
-      `SELECT id
-       FROM contracts
-       WHERE listing_id = ?
-         AND status NOT IN ('cancelled', 'expired', 'ended')`,
-      [item.listing_id]
-    ));
-    if (sibling.length === 0) {
-      db.run(
-        "UPDATE listings SET status = 'available', updated_at = datetime('now', '+8 hours') WHERE id = ? AND status = 'rented'",
-        [item.listing_id]
-      );
-    }
   });
 
   if (changed) {
@@ -470,7 +1058,7 @@ async function expireActiveContractsByEndDate() {
 // 函数 9: 启动服务。
 async function startServer() {
   try {
-    await getUserDb();
+    await getUserDb(CHAIN_ENV);
     await migrate();
     setInterval(() => {
       expireUnsignedContractsByExpiresAt().catch((err) => {
@@ -482,13 +1070,13 @@ async function startServer() {
       expireActiveContractsByEndDate().catch((err) => {
         logSystemError('job.expireActiveContractsByEndDate.failed', { message: err?.message || 'unknown_error', stack: err?.stack || '' });
       });
-      reconcileListingOnchainData().catch((err) => {
-        logSystemError('job.reconcileListingOnchainData.failed', { message: err?.message || 'unknown_error', stack: err?.stack || '' });
+      reconcileUnifiedOnchainOperations().catch((err) => {
+        logSystemError('job.reconcileUnifiedOnchainOperations.failed', { message: err?.message || 'unknown_error', stack: err?.stack || '' });
       });
     }, 60 * 1000);
     const server = app.listen(PORT, HOST, () => {
       console.log(`后端启动成功: http://${HOST}:${PORT} (CHAIN_ENV=${CHAIN_ENV})`);
-      console.log(`共享账号库: ${USER_DB_PATH}`);
+      console.log(`当前网络账号库: ${getUserDbPath(CHAIN_ENV)}`);
       console.log(`JSON_BODY_LIMIT=${JSON_BODY_LIMIT}`);
     });
     server.on('error', (error) => {

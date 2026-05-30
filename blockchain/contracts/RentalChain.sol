@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-contract RentalChain {
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+
+contract RentalChain is ReentrancyGuard {
     enum ListingStatus {
         Active,
         Offline,
@@ -202,23 +205,8 @@ contract RentalChain {
         return keccak256(abi.encodePacked(contractId, contractContentHash, tenant, landlord, capWei, deadlineMs, nonce, block.chainid, address(this)));
     }
 
-    function _toEthSignedMessageHash(bytes32 hash) private pure returns (bytes32) {
-        return keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash));
-    }
-
     function _recoverSigner(bytes32 digest, bytes memory signature) private pure returns (address) {
-        require(signature.length == 65, "invalid signature length");
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-        assembly {
-            r := mload(add(signature, 32))
-            s := mload(add(signature, 64))
-            v := byte(0, mload(add(signature, 96)))
-        }
-        if (v < 27) v += 27;
-        require(v == 27 || v == 28, "invalid signature v");
-        return ecrecover(_toEthSignedMessageHash(digest), v, r, s);
+        return ECDSA.recover(ECDSA.toEthSignedMessageHash(digest), signature);
     }
 
     function _isSameString(string memory a, string memory b) private pure returns (bool) {
@@ -299,7 +287,7 @@ contract RentalChain {
         require(block.timestamp * 1000 <= auth.deadlineMs, "authorization expired");
     }
 
-    function _assertContractCreateAllowed(CreateContractParams calldata p) private {
+    function _assertContractCreateAllowed(CreateContractParams calldata p) private view {
         require(p.endAtMs > p.startAtMs, "invalid contract range");
         require(_listings[p.listingId].exists, "listing not found");
         require(_listings[p.listingId].status == ListingStatus.Active, "listing not active");
@@ -408,11 +396,7 @@ contract RentalChain {
         emit ListingCreated(listingId, msg.sender, contentHash, rentAmountWei, minLeaseMonths, imageRootHash, record.version, record.nonce, block.timestamp);
     }
 
-    function storeListing(string calldata listingId) external {
-        _createListing(listingId, keccak256(abi.encodePacked(listingId, msg.sender)), 1, 1, bytes32(0));
-    }
-
-    function createContractRecord(CreateContractParams calldata p) external {
+    function createContractRecord(CreateContractParams calldata p) external nonReentrant {
         require(bytes(p.contractId).length > 0, "contractId required");
         require(bytes(p.listingId).length > 0, "listingId required");
         require(p.tenant != address(0), "invalid tenant");
@@ -423,7 +407,6 @@ contract RentalChain {
         _assertContractCreateAllowed(p);
         bytes32 authId = _assertGasAuthorizationUsable(p.contractId, p.tenant, p.landlord, p.contentHash, p.gasAuthNonce);
         _storeContractRecord(p);
-        _settleGasAuthorizationOnCreate(authId, p.contractId, p.landlord);
 
         if (bytes(p.parentContractId).length == 0) {
             _activeContractByListing[p.listingId] = p.contractId;
@@ -431,6 +414,8 @@ contract RentalChain {
             _contracts[p.parentContractId].renewalChildContractId = p.contractId;
             emit RenewalChildLinked(p.parentContractId, p.contractId, p.listingId, block.timestamp);
         }
+
+        _settleGasAuthorizationOnCreate(authId, p.contractId, p.landlord);
 
         emit ContractCreated(p.contractId, p.listingId, p.landlord, p.tenant, p.contentHash, block.timestamp);
         emit ContractStatusChanged(p.contractId, p.listingId, uint8(ContractStatus.None), uint8(ContractStatus.Created), block.timestamp);
@@ -446,9 +431,10 @@ contract RentalChain {
         bytes32 newImageRootHash,
         uint64 expectedVersion,
         uint64 expectedNonce
-    ) external onlyLandlord(listingId) {
+    ) external nonReentrant onlyLandlord(listingId) {
         ListingRecord storage record = _listings[listingId];
         require(record.status != ListingStatus.Closed, "listing already closed");
+        require(!_isContractChainBlocking(_activeContractByListing[listingId]), "listing blocked by existing contract chain");
         require(newContentHash != bytes32(0), "newContentHash required");
         require(newRentAmountWei > 0, "newRentAmountWei must > 0");
         require(newMinLeaseMonths > 0, "newMinLeaseMonths must > 0");
@@ -471,8 +457,9 @@ contract RentalChain {
         ListingStatus newStatus,
         uint64 expectedVersion,
         uint64 expectedNonce
-    ) external onlyLandlord(listingId) {
+    ) external nonReentrant onlyLandlord(listingId) {
         ListingRecord storage record = _listings[listingId];
+        require(!_isContractChainBlocking(_activeContractByListing[listingId]), "listing blocked by existing contract chain");
         require(record.version == expectedVersion, "version mismatch");
         require(record.nonce == expectedNonce, "nonce mismatch");
 
@@ -524,7 +511,7 @@ contract RentalChain {
         emit GasCompEscrowLocked(authId, contractId, tenant, landlord, capWei, deadlineMs);
     }
 
-    function revokeGasCompensationAuthorization(string calldata contractId, address tenant, bytes32 nonce) external {
+    function revokeGasCompensationAuthorization(string calldata contractId, address tenant, bytes32 nonce) external nonReentrant {
         require(msg.sender == tenant, "only tenant can revoke");
         bytes32 authId = _gasAuthId(contractId, tenant, nonce);
         GasAuthorization storage auth = _gasAuths[authId];
@@ -539,7 +526,7 @@ contract RentalChain {
         emit GasCompRevoked(authId, contractId, tenant, refundWei);
     }
 
-    function cancelPendingGasAuthorization(string calldata contractId, address tenant, bytes32 nonce) external {
+    function cancelPendingGasAuthorization(string calldata contractId, address tenant, bytes32 nonce) external nonReentrant {
         bytes32 authId = _gasAuthId(contractId, tenant, nonce);
         GasAuthorization storage auth = _gasAuths[authId];
         require(auth.tenant != address(0), "authorization not found");
@@ -561,11 +548,12 @@ contract RentalChain {
         string calldata contractId,
         address landlord,
         string calldata orderNo
-    ) external payable {
+    ) external payable nonReentrant {
         require(bytes(contractId).length > 0, "contractId required");
         require(landlord != address(0), "invalid landlord");
         ContractRecord storage record = _contracts[contractId];
         require(record.exists, "contract not found");
+        require(msg.sender == record.tenant, "only tenant can pay");
         require(record.landlord == landlord, "landlord mismatch");
         require(record.status == ContractStatus.Created, "contract not payable");
         require(msg.value == record.initialAmountWei, "invalid payment amount");
@@ -577,12 +565,12 @@ contract RentalChain {
             require(parent.status != ContractStatus.Cancelled && parent.status != ContractStatus.Completed, "parent contract unavailable");
         }
 
-        (bool ok, ) = landlord.call{value: msg.value}("");
-        require(ok, "transfer to landlord failed");
         ContractStatus nextStatus = _isParentCurrentlyEffective(record.parentContractId)
             ? ContractStatus.Paid
             : ContractStatus.Active;
         record.status = nextStatus;
+        (bool ok, ) = landlord.call{value: msg.value}("");
+        require(ok, "transfer to landlord failed");
         emit RentPaymentRecorded(contractId, msg.sender, landlord, msg.value, orderNo, block.timestamp);
         emit ContractStatusChanged(contractId, record.listingId, uint8(ContractStatus.Created), uint8(nextStatus), block.timestamp);
     }
@@ -616,6 +604,10 @@ contract RentalChain {
     }
 
     function getActiveContractByListing(string calldata listingId) external view returns (string memory headContractId) {
+        return _activeContractByListing[listingId];
+    }
+
+    function getContractChainHeadByListing(string calldata listingId) external view returns (string memory headContractId) {
         return _activeContractByListing[listingId];
     }
 

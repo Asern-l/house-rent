@@ -1,24 +1,33 @@
 /**
- * 文件说明：共享用户数据库。
- * 用于跨链环境共享账号、登录态和钱包绑定信息。
+ * 文件说明：按网络分库的用户数据库。
+ * Local 与 Sepolia 分别维护独立账号主档，仅使用 users.local.sqlite / users.sepolia.sqlite。
  */
 const initSqlJs = require('sql.js');
 const fs = require('fs');
 const path = require('path');
 
-const USER_DB_PATH = path.join(__dirname, '..', 'data', 'users.shared.sqlite');
-let userDb;
-let userDbMtimeMs = 0;
+function resolveUserNetwork(raw = '') {
+  return String(raw || '').trim().toLowerCase() === 'local' ? 'local' : 'sepolia';
+}
 
-// 函数 1: 确保用户数据库目录存在。
-function ensureUserDataDir() {
-  const dir = path.dirname(USER_DB_PATH);
+function resolveDefaultUserNetwork() {
+  return resolveUserNetwork(process.env.CHAIN_ENV || 'sepolia');
+}
+
+function getUserDbPath(network = '') {
+  const normalized = resolveUserNetwork(network || resolveDefaultUserNetwork());
+  return path.join(__dirname, '..', 'data', `users.${normalized}.sqlite`);
+}
+
+const userDbCache = new Map();
+
+function ensureUserDataDir(dbPath) {
+  const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
 }
 
-// 函数 2: 解析 sql.js 查询结果。
 function parseResult(result) {
   if (!result.length || !result[0].values.length) return [];
   const { columns, values } = result[0];
@@ -31,7 +40,6 @@ function parseResult(result) {
   });
 }
 
-// 函数 3: 初始化共享用户表（钱包地址为主键，不含邮箱/密码/头像）。
 function initUserDb(db) {
   db.run('DROP TABLE IF EXISTS users');
   db.run(`CREATE TABLE users (
@@ -46,46 +54,54 @@ function initUserDb(db) {
   )`);
 }
 
-function ensureStrictSchema(db) {
+function ensureStrictSchema(db, dbPath) {
   const columns = parseResult(db.exec('PRAGMA table_info(users)')).map((item) => item.name);
   if (!columns.includes('wallet_address') || columns.includes('email') || columns.includes('password_hash')) {
-    throw new Error('users.shared.sqlite 仍是旧结构。请删除 apps/backend/data/users.shared.sqlite 后重启服务。');
+    throw new Error(`${path.basename(dbPath)} 仍是旧结构。请删除 ${dbPath} 后重启服务。`);
   }
 }
 
-// 函数 4: 获取共享用户数据库连接（惰性初始化）。
-async function getUserDb() {
-  const fileExists = fs.existsSync(USER_DB_PATH);
-  const diskMtimeMs = fileExists ? fs.statSync(USER_DB_PATH).mtimeMs : 0;
-  if (userDb && diskMtimeMs <= userDbMtimeMs) return userDb;
+async function getUserDb(network = '') {
+  const normalized = resolveUserNetwork(network || resolveDefaultUserNetwork());
+  const dbPath = getUserDbPath(normalized);
+  const cached = userDbCache.get(dbPath);
+  const fileExists = fs.existsSync(dbPath);
+  const diskMtimeMs = fileExists ? fs.statSync(dbPath).mtimeMs : 0;
+  if (cached && diskMtimeMs <= cached.mtimeMs) return cached.db;
 
-  ensureUserDataDir();
+  ensureUserDataDir(dbPath);
   const SQL = await initSqlJs();
-  if (fileExists) {
-    userDb = new SQL.Database(fs.readFileSync(USER_DB_PATH));
+  let db;
+  if (fs.existsSync(dbPath)) {
+    db = new SQL.Database(fs.readFileSync(dbPath));
   } else {
-    userDb = new SQL.Database();
-    initUserDb(userDb);
-    fs.writeFileSync(USER_DB_PATH, Buffer.from(userDb.export()));
+    db = new SQL.Database();
+    initUserDb(db);
+    fs.writeFileSync(dbPath, Buffer.from(db.export()));
   }
-  userDb.run('PRAGMA foreign_keys = ON');
-  ensureStrictSchema(userDb);
-  userDbMtimeMs = fs.statSync(USER_DB_PATH).mtimeMs;
-  return userDb;
+  db.run('PRAGMA foreign_keys = ON');
+  ensureStrictSchema(db, dbPath);
+  userDbCache.set(dbPath, { db, mtimeMs: fs.statSync(dbPath).mtimeMs, network: normalized });
+  return db;
 }
 
-// 函数 5: 持久化共享用户数据库。
-function saveUserDb() {
-  if (!userDb) return;
-  ensureUserDataDir();
-  fs.writeFileSync(USER_DB_PATH, Buffer.from(userDb.export()));
-  userDbMtimeMs = fs.statSync(USER_DB_PATH).mtimeMs;
+function saveUserDb(network = '') {
+  const normalized = resolveUserNetwork(network || resolveDefaultUserNetwork());
+  const dbPath = getUserDbPath(normalized);
+  const cached = userDbCache.get(dbPath);
+  if (!cached?.db) return;
+  ensureUserDataDir(dbPath);
+  fs.writeFileSync(dbPath, Buffer.from(cached.db.export()));
+  cached.mtimeMs = fs.statSync(dbPath).mtimeMs;
+  userDbCache.set(dbPath, cached);
 }
 
 module.exports = {
   getUserDb,
   saveUserDb,
   parseResult,
-  USER_DB_PATH,
   initUserDb,
+  getUserDbPath,
+  resolveUserNetwork,
+  resolveDefaultUserNetwork,
 };

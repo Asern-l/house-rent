@@ -8,10 +8,19 @@ const fs = require('fs');
 const path = require('path');
 const { ethers } = require('ethers');
 const PDFDocument = require('pdfkit');
+const RENTAL_CHAIN_ABI = require('../../../frontend/src/shared/blockchain/RentalChainABI.json');
 const { getDb, saveDb, parseResult, CHAIN_ENV } = require('../db');
 const { getUserDb, saveUserDb, parseResult: parseUserResult } = require('../user-db');
+const { error, sendError } = require('../app-error');
+const {
+  upsertOnchainOperation,
+  markOnchainOperationConfirmed,
+  markOnchainOperationFailed,
+  getLatestOnchainStatus,
+} = require('../onchain-operations');
 const { authMiddleware, requireRole } = require('../auth');
 const { logSignFlow, logRiskEvent } = require('../logger');
+const { resolveListingPublicState } = require('../listing-public-state');
 
 const router = express.Router();
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -41,21 +50,14 @@ const PDF_FONT_CANDIDATES = [
 ];
 const DEPLOY_FILE_LOCAL = path.join(__dirname, '..', '..', '..', '..', 'blockchain', 'deployments-rental-localhost.json');
 const DEPLOY_FILE_SEPOLIA = path.join(__dirname, '..', '..', '..', '..', 'blockchain', 'deployments-rental-sepolia.json');
+const rentalChainIface = new ethers.Interface(RENTAL_CHAIN_ABI);
+const CONTRACT_ONCHAIN_KINDS = ['contract.create'];
 
 // 函数 1: 将金额规范化为字符串，避免精度展示异常。
 function normalizeAmount(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return null;
   return n.toFixed(8).replace(/\.?0+$/, '');
-}
-
-function error(code, message, extra = {}) {
-  return { code, error: message, ...extra };
-}
-
-// 函数 2: 判断合同是否为终态。
-function isTerminalStatus(status) {
-  return ['cancelled', 'expired', 'ended'].includes(status);
 }
 
 function contractHash(content) {
@@ -225,6 +227,15 @@ function buildMessageHash(message) {
   return ethers.keccak256(ethers.toUtf8Bytes(raw));
 }
 
+function parseSignMessageFields(message) {
+  const parsed = {};
+  for (const line of String(message || '').split('\n')) {
+    const idx = line.indexOf(':');
+    if (idx > 0) parsed[line.slice(0, idx)] = line.slice(idx + 1);
+  }
+  return parsed;
+}
+
 function parseStartDateMs(content = {}) {
   const exactStartAtMs = Number(content?.renewal?.startAtMs || 0);
   if (Number.isFinite(exactStartAtMs) && exactStartAtMs > 0) return exactStartAtMs;
@@ -239,24 +250,6 @@ function parseEndDateMs(content = {}) {
   if (!endDateOnly) return 0;
   const d = new Date(`${endDateOnly}T23:59:59+08:00`);
   return Number.isNaN(d.getTime()) ? 0 : d.getTime();
-}
-
-function isContractCurrentlyEffective(contract) {
-  const content = typeof contract?.content_json === 'string' ? JSON.parse(contract.content_json) : contract?.content_json || {};
-  const startAtMs = parseStartDateMs(content);
-  const endAtMs = parseEndDateMs(content);
-  const now = Date.now();
-  return String(contract?.status || '') === 'active' && startAtMs > 0 && startAtMs <= now && now < endAtMs;
-}
-
-function isContractFutureReserved(contract) {
-  const content = typeof contract?.content_json === 'string' ? JSON.parse(contract.content_json) : contract?.content_json || {};
-  const endAtMs = parseEndDateMs(content);
-  if (String(contract?.status || '') === 'pending_payment') {
-    const deadline = parseCnDateTime(contract.payment_deadline || contract.expires_at);
-    return !!deadline && deadline.getTime() > Date.now();
-  }
-  return String(contract?.status || '') === 'active' && endAtMs > Date.now();
 }
 
 function resolveChainIdByEnv() {
@@ -298,6 +291,172 @@ function createGasCompAuthorizationDigest({
 function resolveRpcUrlByChainId(chainIdNum) {
   if (Number(chainIdNum) === 31337) return String(process.env.LOCAL_RPC_URL || 'http://127.0.0.1:8545').trim();
   return String(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia.publicnode.com').trim();
+}
+
+function resolveChainRuntimeByEnv() {
+  const chainId = resolveChainIdByEnv();
+  const rpcUrl = resolveRpcUrlByChainId(chainId);
+  const contractAddress = resolveContractAddressByEnv();
+  return { chainId, rpcUrl, contractAddress };
+}
+
+async function loadConfirmedContractTx(txHash) {
+  const { rpcUrl, contractAddress } = resolveChainRuntimeByEnv();
+  if (!rpcUrl) {
+    throw error('CHAIN_RPC_URL_MISSING', '当前网络未配置 RPC 地址，无法校验链上交易');
+  }
+  if (!contractAddress) {
+    throw error('CONTRACT_ADDRESS_MISSING', '当前网络未配置合约地址，无法校验链上交易');
+  }
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const [tx, receipt] = await Promise.all([
+    provider.getTransaction(txHash),
+    provider.getTransactionReceipt(txHash),
+  ]);
+  if (!tx || !receipt) {
+    throw error('ONCHAIN_TX_NOT_FOUND', '链上未找到对应交易');
+  }
+  if (receipt.status !== 1) {
+    throw error('ONCHAIN_TX_REVERTED', '链上交易执行失败');
+  }
+  if (String(tx.to || '').toLowerCase() !== contractAddress.toLowerCase()) {
+    throw error('ONCHAIN_TX_CONTRACT_MISMATCH', '交易目标合约与当前网络配置不一致');
+  }
+  return { provider, tx, receipt, contractAddress };
+}
+
+function parseContractLogs(receipt, contractAddress) {
+  const logs = [];
+  for (const log of receipt.logs || []) {
+    if (String(log.address || '').toLowerCase() !== String(contractAddress || '').toLowerCase()) continue;
+    try {
+      const parsed = rentalChainIface.parseLog(log);
+      if (parsed) logs.push(parsed);
+    } catch {
+      // ignore unrelated logs
+    }
+  }
+  return logs;
+}
+
+function parseContractTx(tx) {
+  try {
+    return rentalChainIface.parseTransaction({ data: tx.data, value: tx.value });
+  } catch {
+    return null;
+  }
+}
+
+function toLowerHex(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function indexedStringHash(value) {
+  if (typeof value === 'string') return '';
+  const hash = String(value?.hash || value?._hash || '').trim();
+  return /^0x[a-fA-F0-9]{64}$/.test(hash) ? hash.toLowerCase() : '';
+}
+
+function eventIndexedStringMatches(actualValue, expectedValue) {
+  const expected = String(expectedValue || '').trim();
+  if (!expected) return false;
+  if (typeof actualValue === 'string') return actualValue === expected;
+  const actualHash = indexedStringHash(actualValue);
+  if (!actualHash) return false;
+  return actualHash === ethers.id(expected).toLowerCase();
+}
+
+function formatEventIndexedString(actualValue) {
+  if (typeof actualValue === 'string') return actualValue;
+  return indexedStringHash(actualValue);
+}
+
+function summarizeParsedTx(parsedTx) {
+  const args0 = parsedTx?.args?.[0];
+  return {
+    methodName: String(parsedTx?.name || '').trim(),
+    contractId: String(args0?.contractId || '').trim(),
+    listingId: String(args0?.listingId || '').trim(),
+    parentContractId: String(args0?.parentContractId || '').trim(),
+  };
+}
+
+function summarizeParsedLogs(parsedLogs = []) {
+  return parsedLogs.map((log) => ({
+    name: String(log?.name || '').trim(),
+    contractId: formatEventIndexedString(log?.args?.contractId),
+    listingId: formatEventIndexedString(log?.args?.listingId),
+    signer: normalizeWalletAddress(log?.args?.signer || ''),
+    role: Number(log?.args?.role || 0),
+  }));
+}
+
+function verifyGasAuthorizationLockOnchain({
+  tx,
+  receipt,
+  contractAddress,
+  expectedContractId,
+  expectedTenantAddress,
+  expectedLandlordAddress,
+  expectedContentHash,
+  expectedDeadlineMs,
+  expectedNonce,
+  expectedSignature,
+  expectedCapWei,
+}) {
+  const parsedTx = parseContractTx(tx);
+  if (!parsedTx || parsedTx.name !== 'lockGasCompensationEscrow') {
+    return { ok: false, code: 'GAS_AUTH_LOCK_METHOD_MISMATCH', message: '链上交易不是 gas 锁仓交易' };
+  }
+  if (toLowerHex(tx.from) !== String(expectedTenantAddress || '').toLowerCase()) {
+    return { ok: false, code: 'GAS_AUTH_LOCK_PAYER_MISMATCH', message: '链上锁仓钱包与租客钱包不一致' };
+  }
+  if (BigInt(tx.value || 0) !== BigInt(String(expectedCapWei || '0'))) {
+    return { ok: false, code: 'GAS_AUTH_LOCK_VALUE_MISMATCH', message: '链上锁仓金额与授权上限不一致' };
+  }
+  const args = parsedTx.args || [];
+  if (String(args[0] || '') !== String(expectedContractId || '')) {
+    return { ok: false, code: 'GAS_AUTH_LOCK_CONTRACT_ID_MISMATCH', message: '链上锁仓合同 ID 与数据库不一致' };
+  }
+  if (toLowerHex(args[1] || '') !== toLowerHex(expectedContentHash || '')) {
+    return { ok: false, code: 'GAS_AUTH_LOCK_CONTENT_HASH_MISMATCH', message: '链上锁仓内容哈希与数据库不一致' };
+  }
+  if (normalizeWalletAddress(args[2] || '')?.toLowerCase() !== String(expectedTenantAddress || '').toLowerCase()) {
+    return { ok: false, code: 'GAS_AUTH_LOCK_TENANT_MISMATCH', message: '链上锁仓租客钱包与数据库不一致' };
+  }
+  if (normalizeWalletAddress(args[3] || '')?.toLowerCase() !== String(expectedLandlordAddress || '').toLowerCase()) {
+    return { ok: false, code: 'GAS_AUTH_LOCK_LANDLORD_MISMATCH', message: '链上锁仓房东钱包与数据库不一致' };
+  }
+  if (BigInt(args[4] || 0) !== BigInt(String(expectedCapWei || '0'))) {
+    return { ok: false, code: 'GAS_AUTH_LOCK_CAP_MISMATCH', message: '链上锁仓授权上限与数据库不一致' };
+  }
+  if (BigInt(args[5] || 0) !== BigInt(String(expectedDeadlineMs || '0'))) {
+    return { ok: false, code: 'GAS_AUTH_LOCK_DEADLINE_MISMATCH', message: '链上锁仓截止时间与数据库不一致' };
+  }
+  if (toLowerHex(args[6] || '') !== toLowerHex(expectedNonce || '')) {
+    return { ok: false, code: 'GAS_AUTH_LOCK_NONCE_MISMATCH', message: '链上锁仓 nonce 与数据库不一致' };
+  }
+  if (String(args[7] || '') !== String(expectedSignature || '')) {
+    return { ok: false, code: 'GAS_AUTH_LOCK_SIGNATURE_MISMATCH', message: '链上锁仓授权签名与数据库不一致' };
+  }
+
+  const parsedLogs = parseContractLogs(receipt, contractAddress);
+  const lockedEvent = parsedLogs.find((log) =>
+    log.name === 'GasCompEscrowLocked'
+    && eventIndexedStringMatches(log.args?.contractId, expectedContractId)
+    && toLowerHex(log.args?.tenant) === String(expectedTenantAddress || '').toLowerCase()
+    && toLowerHex(log.args?.landlord) === String(expectedLandlordAddress || '').toLowerCase()
+  );
+  if (!lockedEvent) {
+    return { ok: false, code: 'GAS_AUTH_LOCK_EVENT_MISSING', message: '链上缺少 gas 锁仓事件' };
+  }
+  if (BigInt(lockedEvent.args?.capWei || 0) !== BigInt(String(expectedCapWei || '0'))) {
+    return { ok: false, code: 'GAS_AUTH_LOCK_EVENT_CAP_MISMATCH', message: '链上锁仓事件金额与授权上限不一致' };
+  }
+  if (BigInt(lockedEvent.args?.deadlineMs || 0) !== BigInt(String(expectedDeadlineMs || '0'))) {
+    return { ok: false, code: 'GAS_AUTH_LOCK_EVENT_DEADLINE_MISMATCH', message: '链上锁仓事件截止时间与数据库不一致' };
+  }
+  return { ok: true };
 }
 
 // 函数 2-4: 估算 gas 补偿授权上限（预计 gas 成本 * 10，且不超过硬上限）。
@@ -359,8 +518,34 @@ function normalizeClauses(input) {
   return out;
 }
 
-function createPseudoTxHash(prefix = 'offchain') {
-  return `${prefix}_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
+function parseStoredClauses(raw) {
+  if (Array.isArray(raw)) {
+    return raw.map((x) => String(x || '').trim()).filter(Boolean);
+  }
+  if (raw && typeof raw === 'object') {
+    return [];
+  }
+  try {
+    const arr = JSON.parse(String(raw || '[]'));
+    return Array.isArray(arr) ? arr.map((x) => String(x || '').trim()).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function getNextContractVersion(db, contractId, currentVersion = 1) {
+  const rows = parseResult(db.exec(
+    'SELECT MAX(version) AS max_version FROM contract_versions WHERE contract_id = ?',
+    [contractId]
+  ));
+  const maxVersion = Number(rows[0]?.max_version || 0);
+  return Math.max(maxVersion, Number(currentVersion || 1)) + 1;
+}
+
+function isNegotiationLocked(contract) {
+  return String(contract?.status || '') !== 'pending'
+    || Boolean(String(contract?.tenant_signed_at || '').trim())
+    || Boolean(String(contract?.landlord_signed_at || '').trim());
 }
 
 // 函数 2-2: 为 PDF 选择可用中文字体，避免导出乱码。
@@ -379,31 +564,42 @@ function resolvePdfChineseFontPath() {
 router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req, res) => {
   const { listingId, startDate, leaseMonths } = req.body || {};
   if (!listingId) {
-    return res.status(400).json({ error: 'listingId 不能为空' });
+    return sendError(res, 400, 'LISTING_ID_REQUIRED', 'listingId 不能为空');
   }
 
   const db = await getDb();
   const userDb = await getUserDb();
   const listings = parseResult(db.exec('SELECT * FROM listings WHERE id = ?', [listingId]));
-  if (!listings.length) return res.status(404).json({ error: '房源不存在' });
+  if (!listings.length) return sendError(res, 404, 'LISTING_NOT_FOUND', '房源不存在');
   const listing = listings[0];
-  if (listing.status !== 'available') return res.status(400).json({ error: '房源不可租' });
+  const listingBodyStatus = String(listing.status || '').trim().toLowerCase();
+  if (listingBodyStatus !== 'available' && listingBodyStatus !== 'rented') {
+    return sendError(res, 400, 'LISTING_UNAVAILABLE', '房源不可租');
+  }
 
-  // 同一房源若已有进行中合同，不允许再次发起。
-  const existingContracts = parseResult(db.exec(
-    `SELECT id, status FROM contracts
-     WHERE listing_id = ?
-       AND status NOT IN ('cancelled', 'expired', 'ended')`,
+  const relatedContracts = parseResult(db.exec(
+    `SELECT id, status, content_json, expires_at, payment_deadline
+      FROM contracts
+      WHERE listing_id = ?
+        AND status NOT IN ('cancelled', 'expired', 'ended')`,
     [listingId]
   ));
-  if (existingContracts.length > 0) {
-    return res.status(409).json({ error: '该房源已有进行中的合同，暂不可重复申请' });
+  const listingState = resolveListingPublicState(listing, relatedContracts);
+  if (listingState.publicStatus !== 'available') {
+    return sendError(
+      res,
+      409,
+      listingState.publicStatus === 'rented' ? 'LISTING_OCCUPIED' : 'LISTING_SIGNING_IN_PROGRESS',
+      listingState.publicStatus === 'rented'
+        ? '该房源当前已有生效合同占用，暂不可重复申请'
+        : '该房源当前处于签约流程中，暂不可重复申请'
+    );
   }
 
   const minLeaseMonths = Number(listing.min_lease_months || 1);
   const leaseMonthsNum = Number(leaseMonths ?? minLeaseMonths);
   if (!Number.isInteger(leaseMonthsNum) || leaseMonthsNum < minLeaseMonths || leaseMonthsNum > 12) {
-    return res.status(400).json({ error: `租期必须为 ${minLeaseMonths}-12 月的整数` });
+    return sendError(res, 400, 'LEASE_MONTHS_INVALID', `租期必须为 ${minLeaseMonths}-12 月的整数`);
   }
   const today = new Date();
   const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
@@ -412,13 +608,13 @@ router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req,
   const startDateOnly = normalizeDateOnly(startDate) || getCnDateOnly(todayDate);
   const startAt = new Date(`${startDateOnly}T00:00:00`);
   if (startAt < todayDate || startAt > maxDate) {
-    return res.status(400).json({ error: '生效日期仅支持今天至未来3天' });
+    return sendError(res, 400, 'EFFECTIVE_DATE_INVALID', '生效日期仅支持今天至未来3天');
   }
 
   const [tenant] = parseUserResult(userDb.exec('SELECT * FROM users WHERE id = ?', [req.user.id]));
   const [landlord] = parseUserResult(userDb.exec('SELECT * FROM users WHERE id = ?', [listing.landlord_id]));
   if (!tenant || !landlord) {
-    return res.status(400).json({ error: '用户信息不存在，请重新登录后重试' });
+    return sendError(res, 400, 'USER_PROFILE_MISSING', '用户信息不存在，请重新登录后重试');
   }
   const blockedUntil = parseCnDateTime(tenant.risk_blocked_until);
   if (blockedUntil && blockedUntil > new Date()) {
@@ -487,11 +683,11 @@ router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req,
 
   const rentAmount = normalizeAmount(listing.rent_amount);
   if (!rentAmount) {
-    return res.status(400).json({ error: '房源租金配置无效，请房东先修正房源信息' });
+    return sendError(res, 400, 'LISTING_RENT_CONFIG_INVALID', '房源租金配置无效，请房东先修正房源信息');
   }
   const oneTimeAmount = normalizeAmount(Number(rentAmount) * leaseMonthsNum);
   if (!oneTimeAmount) {
-    return res.status(400).json({ error: '合同首笔支付金额计算失败，请检查房源配置' });
+    return sendError(res, 400, 'INITIAL_PAYMENT_AMOUNT_INVALID', '合同首笔支付金额计算失败，请检查房源配置');
   }
 
   const contractId = `cnt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -511,14 +707,7 @@ router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req,
       leaseMonths: leaseMonthsNum,
       minLeaseMonths,
     },
-    clauses: (() => {
-      try {
-        const arr = JSON.parse(String(listing.clauses_template_json || '[]'));
-        return Array.isArray(arr) ? arr.map((x) => String(x || '').trim()).filter(Boolean) : [];
-      } catch {
-        return [];
-      }
-    })(),
+    clauses: parseStoredClauses(listing.clauses_template_json),
     createdAt: getCnDateTime(new Date()),
   };
 
@@ -544,10 +733,10 @@ router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req,
 router.get('/:id/versions', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
-  if (!rows.length) return res.status(404).json({ error: '合同不存在' });
+  if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
   const contract = rows[0];
   if (![contract.tenant_id, contract.landlord_id].includes(req.user.id)) {
-    return res.status(403).json({ error: '无权限查看合同协商记录' });
+    return sendError(res, 403, 'CONTRACT_FORBIDDEN', '无权限查看合同协商记录');
   }
   const versions = parseResult(db.exec(
     `SELECT *
@@ -563,17 +752,14 @@ router.get('/:id/versions', authMiddleware, asyncHandler(async (req, res) => {
 router.post('/:id/clauses/draft', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
-  if (!rows.length) return res.status(404).json({ error: '合同不存在' });
+  if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
   const contract = rows[0];
-  if (contract.tenant_id !== req.user.id) return res.status(403).json({ error: '仅租客可起草条款' });
-  if (contract.status !== 'pending' || contract.tenant_signed_at || contract.landlord_signed_at) {
+  if (contract.tenant_id !== req.user.id) return sendError(res, 403, 'TENANT_ONLY', '仅租客可起草条款');
+  if (isNegotiationLocked(contract)) {
     return res.status(400).json(error('NEGOTIATION_STATUS_INVALID', '仅签署前合同可协商修改'));
   }
-  if (contract.content_json?.negotiation?.mode === 'landlord_final') {
-    return res.status(400).json(error('LANDLORD_FINAL_LOCKED', '房东已回传最终条款，租客不可再编辑，只能签署或取消'));
-  }
   const clauses = normalizeClauses(req.body?.clauses || []);
-  if (!clauses) return res.status(400).json({ error: '条款格式不正确（1-50 条，每条不超过 200 字）' });
+  if (!clauses) return sendError(res, 400, 'CLAUSES_INVALID', '条款格式不正确（1-50 条，每条不超过 200 字）');
   const current = contract.content_json;
   const draft = JSON.parse(JSON.stringify(current));
   draft.clauses = clauses;
@@ -583,13 +769,25 @@ router.post('/:id/clauses/draft', authMiddleware, asyncHandler(async (req, res) 
     note: String(req.body?.changeNote || '').trim(),
   };
   const draftHash = contractHash(draft);
+  const draftVersion = getNextContractVersion(db, req.params.id, contract.version || 1);
   db.run(
-    `UPDATE contracts
-     SET content_json = ?,
-         content_hash = ?,
-         negotiation_status = 'draft'
-     WHERE id = ? AND status = 'pending'`,
-    [JSON.stringify(draft, null, 2), draftHash, req.params.id]
+    `UPDATE contract_versions
+     SET status = 'superseded', decided_at = datetime('now', '+8 hours'), decided_by = ?
+     WHERE contract_id = ? AND proposer_id = ? AND status = 'draft'`,
+    [req.user.id, req.params.id, req.user.id]
+  );
+  db.run(
+    `INSERT INTO contract_versions (id, contract_id, version, proposer_id, content_json, content_hash, change_note, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
+    [
+      `cv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      req.params.id,
+      draftVersion,
+      req.user.id,
+      JSON.stringify(draft, null, 2),
+      draftHash,
+      String(req.body?.changeNote || '').trim(),
+    ]
   );
   saveDb();
   res.json({ success: true, message: '条款草稿已保存' });
@@ -599,24 +797,14 @@ router.post('/:id/clauses/draft', authMiddleware, asyncHandler(async (req, res) 
 router.post('/:id/clauses/submit', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
-  if (!rows.length) return res.status(404).json({ error: '合同不存在' });
+  if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
   const contract = rows[0];
-  if (contract.tenant_id !== req.user.id) return res.status(403).json({ error: '仅租客可提交审核' });
-  if (contract.status !== 'pending' || contract.tenant_signed_at || contract.landlord_signed_at) {
+  if (contract.tenant_id !== req.user.id) return sendError(res, 403, 'TENANT_ONLY', '仅租客可提交审核');
+  if (isNegotiationLocked(contract)) {
     return res.status(400).json(error('NEGOTIATION_STATUS_INVALID', '仅签署前合同可协商修改'));
   }
-  if (contract.content_json?.negotiation?.mode === 'landlord_final') {
-    return res.status(400).json(error('LANDLORD_FINAL_LOCKED', '房东已回传最终条款，租客不可再提交新协商'));
-  }
-  const existingProposal = parseResult(db.exec(
-    "SELECT id FROM contract_versions WHERE contract_id = ? AND status = 'proposed' LIMIT 1",
-    [req.params.id]
-  ));
-  if (existingProposal.length > 0) {
-    return res.status(409).json(error('NEGOTIATION_PROPOSAL_EXISTS', '已有待确认的修改提案，请先处理后再提交新提案'));
-  }
   const clauses = normalizeClauses(req.body?.clauses || []);
-  if (!clauses) return res.status(400).json({ error: '条款格式不正确（1-50 条，每条不超过 200 字）' });
+  if (!clauses) return sendError(res, 400, 'CLAUSES_INVALID', '条款格式不正确（1-50 条，每条不超过 200 字）');
   const current = contract.content_json;
   const next = JSON.parse(JSON.stringify(current));
   next.clauses = clauses;
@@ -624,11 +812,17 @@ router.post('/:id/clauses/submit', authMiddleware, asyncHandler(async (req, res)
     lastProposedBy: req.user.id,
     lastProposedAt: getCnDateTime(new Date()),
     note: String(req.body?.changeNote || '').trim(),
-  };
+    };
 
   const nextHash = contractHash(next);
-  const nextVersion = Number(contract.version || 1) + 1;
+  const nextVersion = getNextContractVersion(db, req.params.id, contract.version || 1);
   const proposalId = `cv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  db.run(
+    `UPDATE contract_versions
+     SET status = 'superseded', decided_at = datetime('now', '+8 hours'), decided_by = ?
+     WHERE contract_id = ? AND proposer_id = ? AND status IN ('draft', 'proposed')`,
+    [req.user.id, req.params.id, req.user.id]
+  );
   db.run(
     `INSERT INTO contract_versions (id, contract_id, version, proposer_id, content_json, content_hash, change_note, status)
      VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed')`,
@@ -646,74 +840,87 @@ router.post('/:id/clauses/submit', authMiddleware, asyncHandler(async (req, res)
 router.post('/:id/clauses/review', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
-  if (!rows.length) return res.status(404).json({ error: '合同不存在' });
+  if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
   const contract = rows[0];
-  if (contract.landlord_id !== req.user.id) return res.status(403).json({ error: '仅房东可审核条款' });
-  if (contract.status !== 'pending') {
+  if (contract.landlord_id !== req.user.id) return sendError(res, 403, 'LANDLORD_ONLY', '仅房东可审核条款');
+  if (isNegotiationLocked(contract)) {
     return res.status(400).json(error('NEGOTIATION_STATUS_INVALID', '当前状态不可处理协商提案'));
   }
 
   const decision = String(req.body?.decision || '').trim();
-  if (!['approve', 'reject'].includes(decision)) return res.status(400).json({ error: 'decision 仅支持 approve/reject' });
+  if (!['approve', 'reject'].includes(decision)) return sendError(res, 400, 'DECISION_INVALID', 'decision 仅支持 approve/reject');
   const proposals = parseResult(db.exec(
     "SELECT * FROM contract_versions WHERE contract_id = ? AND status = 'proposed' ORDER BY created_at DESC LIMIT 1",
     [req.params.id]
   ));
-  if (!proposals.length) return res.status(404).json({ error: '待确认提案不存在' });
+  if (!proposals.length) return sendError(res, 404, 'NEGOTIATION_PROPOSAL_NOT_FOUND', '待确认提案不存在');
   const proposal = proposals[0];
+  const reviewNote = String(req.body?.note || req.body?.reason || '').trim();
+  const proposalContent = typeof proposal.content_json === 'string' ? JSON.parse(proposal.content_json) : (proposal.content_json || {});
 
   if (decision === 'approve') {
+    const reviewedClausesInput = Array.isArray(req.body?.clauses) ? req.body.clauses : proposalContent?.clauses;
+    const reviewedClauses = normalizeClauses(reviewedClausesInput || []);
+    if (!reviewedClauses) return sendError(res, 400, 'CLAUSES_INVALID', '房东确认版条款格式不正确（1-50 条，每条不超过 200 字）');
+    const originalProposalClauses = Array.isArray(proposalContent?.clauses)
+      ? proposalContent.clauses.map((x) => String(x || '').trim()).filter(Boolean)
+      : [];
+    const reviewAction = JSON.stringify(reviewedClauses) === JSON.stringify(originalProposalClauses)
+      ? 'approved_as_is'
+      : 'approved_with_edits';
+    const landlordFinal = JSON.parse(JSON.stringify(proposalContent || {}));
+    landlordFinal.clauses = reviewedClauses;
+    landlordFinal.negotiation = {
+      mode: 'landlord_confirmed',
+      landlordReviewedAt: getCnDateTime(new Date()),
+      note: reviewNote,
+      basedOnProposalId: proposal.id,
+      reviewAction,
+    };
+    const landlordFinalHash = contractHash(landlordFinal);
+    const landlordFinalVersion = getNextContractVersion(db, req.params.id, proposal.version || contract.version || 1);
     db.run(
       `UPDATE contracts
        SET content_json = ?,
            content_hash = ?,
            version = ?,
-           negotiation_status = 'finalized',
+            negotiation_status = 'finalized',
            finalized_at = datetime('now', '+8 hours')
-       WHERE id = ? AND status = 'pending'`,
-      [JSON.stringify(proposal.content_json, null, 2), proposal.content_hash, Number(proposal.version), req.params.id]
+        WHERE id = ? AND status = 'pending'`,
+      [JSON.stringify(landlordFinal, null, 2), landlordFinalHash, landlordFinalVersion, req.params.id]
     );
     db.run(
       "UPDATE contract_versions SET status = 'accepted', decided_at = datetime('now', '+8 hours'), decided_by = ? WHERE id = ?",
       [req.user.id, proposal.id]
     );
+    db.run(
+      `INSERT INTO contract_versions (id, contract_id, version, proposer_id, content_json, content_hash, change_note, status, decided_at, decided_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'accepted', datetime('now', '+8 hours'), ?)`,
+      [
+        `cv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        req.params.id,
+        landlordFinalVersion,
+        req.user.id,
+        JSON.stringify(landlordFinal, null, 2),
+        landlordFinalHash,
+        reviewNote,
+        req.user.id,
+      ]
+    );
     saveDb();
-    return res.json({ success: true, message: '条款已审核通过并定稿', data: { version: Number(proposal.version), contentHash: proposal.content_hash } });
+    return res.json({ success: true, message: '房东已确认当前条款版本', data: { version: landlordFinalVersion, contentHash: landlordFinalHash } });
   }
-  const rejectReason = String(req.body?.reason || '').trim();
-  if (!rejectReason) return res.status(400).json({ error: '退回需填写 reason' });
-  const finalClauses = normalizeClauses(req.body?.clauses || []);
-  if (!finalClauses) return res.status(400).json({ error: '房东回传最终版时，clauses 格式不正确（1-50 条，每条不超过 200 字）' });
-  const landlordFinal = JSON.parse(JSON.stringify(contract.content_json));
-  landlordFinal.clauses = finalClauses;
-  landlordFinal.negotiation = {
-    mode: 'landlord_final',
-    landlordFinalAt: getCnDateTime(new Date()),
-    note: rejectReason,
-  };
-  const landlordFinalHash = contractHash(landlordFinal);
-  const landlordFinalVersion = Number(contract.version || 1) + 1;
+  if (!reviewNote) return sendError(res, 400, 'REJECT_REASON_REQUIRED', '退回需填写备注');
   db.run(
-    `UPDATE contracts
-     SET content_json = ?,
-         content_hash = ?,
-         version = ?,
-         negotiation_status = 'finalized'
-     WHERE id = ? AND status = 'pending'`,
-    [JSON.stringify(landlordFinal, null, 2), landlordFinalHash, landlordFinalVersion, req.params.id]
+    "UPDATE contracts SET negotiation_status = 'finalized', finalized_at = datetime('now', '+8 hours') WHERE id = ? AND status = 'pending'",
+    [req.params.id]
   );
   db.run(
     "UPDATE contract_versions SET status = 'rejected', decided_at = datetime('now', '+8 hours'), decided_by = ?, change_note = ? WHERE id = ?",
-    [req.user.id, rejectReason, proposal.id]
-  );
-  const finalVersionId = `cv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-  db.run(
-    `INSERT INTO contract_versions (id, contract_id, version, proposer_id, content_json, content_hash, change_note, status, decided_at, decided_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'accepted', datetime('now', '+8 hours'), ?)`,
-    [finalVersionId, req.params.id, landlordFinalVersion, req.user.id, JSON.stringify(landlordFinal, null, 2), landlordFinalHash, rejectReason, req.user.id]
+    [req.user.id, reviewNote, proposal.id]
   );
   saveDb();
-  res.json({ success: true, message: '房东已回传最终条款，租客仅可签署或取消', data: { version: landlordFinalVersion, contentHash: landlordFinalHash } });
+  res.json({ success: true, message: '房东已退回该提议，租客可继续修改并重新提交' });
 }));
 
 // 函数 4: 租客签署合同接口。
@@ -721,15 +928,15 @@ router.post('/:id/sign-tenant', authMiddleware, asyncHandler(async (req, res) =>
   const { signerAddress, signature, message, gasAuthorization } = req.body || {};
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
-  if (!rows.length) return res.status(404).json({ error: '合同不存在' });
+  if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
   const contract = rows[0];
 
-  if (contract.tenant_id !== req.user.id) return res.status(403).json({ error: '无权限签署' });
+  if (contract.tenant_id !== req.user.id) return sendError(res, 403, 'SIGN_FORBIDDEN', '无权限签署');
   if (contract.status !== 'pending') {
     return res.status(400).json(error('SIGN_STATUS_INVALID', '当前状态不允许租客签署', { currentStatus: contract.status }));
   }
-  if (!['finalized'].includes(String(contract.negotiation_status || ''))) {
-    return res.status(400).json(error('CONTRACT_NOT_FINALIZED', '合同尚未进入可签署版本，请先完成协商'));
+  if (String(contract.negotiation_status || '') === 'proposed') {
+    return res.status(400).json(error('CONTRACT_NOT_FINALIZED', '当前有待房东处理的租客提议，请先完成审核'));
   }
   const content = contract.content_json;
   const boundAddress = normalizeWalletAddress(content?.tenant?.walletAddress);
@@ -786,6 +993,50 @@ router.post('/:id/sign-tenant', authMiddleware, asyncHandler(async (req, res) =>
   if (recoveredGasAuth.toLowerCase() !== submittedAddress.toLowerCase()) {
     return res.status(400).json(error('GAS_AUTH_SIGNER_MISMATCH', 'gas 授权签名钱包与租客钱包不一致'));
   }
+  const preparedRows = parseResult(db.exec(
+    `SELECT tenant_address, landlord_address, cap_wei, deadline_epoch_ms, nonce, digest, chain_id, contract_address
+     FROM contract_gas_authorization_prepares
+     WHERE contract_id = ?
+     LIMIT 1`,
+    [req.params.id]
+  ));
+  if (!preparedRows.length) {
+    return res.status(400).json(error('GAS_AUTH_PREPARE_MISSING', '缺少后端生成的 gas 授权参数，请重新准备后签署'));
+  }
+  const prepared = preparedRows[0];
+  if (String(prepared.cap_wei || '') !== gasAuthCapWei
+    || String(prepared.nonce || '').trim() !== gasAuthNonce
+    || String(prepared.digest || '').trim() !== gasAuthDigest
+    || String(prepared.deadline_epoch_ms || '') !== String(deadlineMs)
+    || String(prepared.chain_id || '') !== String(chainId)
+    || String(prepared.contract_address || '').trim().toLowerCase() !== String(contractAddress || '').trim().toLowerCase()
+    || String(prepared.tenant_address || '').trim().toLowerCase() !== submittedAddress.toLowerCase()
+    || String(prepared.landlord_address || '').trim().toLowerCase() !== normalizeWalletAddress(content?.landlord?.walletAddress || '').toLowerCase()
+  ) {
+    return res.status(400).json(error('GAS_AUTH_PREPARE_MISMATCH', 'gas 授权参数与后端准备值不一致，请重新准备后签署'));
+  }
+  let lockLoaded;
+  try {
+    lockLoaded = await loadConfirmedContractTx(gasAuthLockTxHash);
+  } catch (chainErr) {
+    return res.status(400).json(error(chainErr.code || 'GAS_AUTH_LOCK_VERIFY_FAILED', chainErr.error || chainErr.message || '链上 gas 锁仓交易校验失败'));
+  }
+  const lockVerify = verifyGasAuthorizationLockOnchain({
+    tx: lockLoaded.tx,
+    receipt: lockLoaded.receipt,
+    contractAddress: lockLoaded.contractAddress,
+    expectedContractId: contract.id,
+    expectedTenantAddress: submittedAddress,
+    expectedLandlordAddress: normalizeWalletAddress(content?.landlord?.walletAddress || ''),
+    expectedContentHash: contract.content_hash,
+    expectedDeadlineMs: deadlineMs,
+    expectedNonce: gasAuthNonce,
+    expectedSignature: gasAuthSignature,
+    expectedCapWei: gasAuthCapWei,
+  });
+  if (!lockVerify.ok) {
+    return res.status(400).json(error(lockVerify.code, lockVerify.message));
+  }
   const existingGasAuth = parseResult(db.exec(
     'SELECT nonce FROM contract_gas_authorizations WHERE contract_id = ? OR nonce = ? LIMIT 1',
     [req.params.id, gasAuthNonce]
@@ -794,50 +1045,69 @@ router.post('/:id/sign-tenant', authMiddleware, asyncHandler(async (req, res) =>
     return res.status(409).json(error('GAS_AUTH_ALREADY_EXISTS', '该合同 gas 授权已存在或 nonce 已被占用'));
   }
 
-  db.run(
-    `UPDATE contracts
-     SET status = 'tenant_signed',
-         tenant_signed_at = datetime('now', '+8 hours'),
-         tenant_signer_address = ?,
-         tenant_signature = ?,
-         tenant_signature_message = ?,
-         tenant_sign_ip = ?,
-         tenant_sign_user_agent = ?,
-         tenant_sign_request_id = ?
-     WHERE id = ? AND status = 'pending'`,
-    [
-      submittedAddress,
-      String(signature || ''),
-      String(message || ''),
-      getClientIp(req),
-      String(req.headers['user-agent'] || ''),
-      String(req.requestId || ''),
-      req.params.id,
-    ]
-  );
-  if (db.getRowsModified() !== 1) {
-    return res.status(409).json(error('SIGN_STATE_CHANGED', '合同状态已变化，请刷新后重试'));
+  try {
+    db.run('BEGIN TRANSACTION');
+    db.run(
+      `UPDATE contracts
+       SET status = 'tenant_signed',
+            negotiation_status = 'locked',
+            tenant_signed_at = datetime('now', '+8 hours'),
+           tenant_signer_address = ?,
+           tenant_signature = ?,
+           tenant_signature_message = ?,
+           tenant_sign_ip = ?,
+           tenant_sign_user_agent = ?,
+           tenant_sign_request_id = ?
+       WHERE id = ? AND status = 'pending'`,
+      [
+        submittedAddress,
+        String(signature || ''),
+        String(message || ''),
+        getClientIp(req),
+        String(req.headers['user-agent'] || ''),
+        String(req.requestId || ''),
+        req.params.id,
+      ]
+    );
+    if (db.getRowsModified() !== 1) {
+      throw error('SIGN_STATE_CHANGED', '合同状态已变化，请刷新后重试');
+    }
+    db.run(
+      `INSERT INTO contract_gas_authorizations (
+        id, contract_id, tenant_address, landlord_address, cap_wei, deadline_epoch_ms, nonce, signature, message, chain_id, contract_address, lock_tx_hash, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+      [
+        `ga_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        req.params.id,
+        submittedAddress,
+        normalizeWalletAddress(content?.landlord?.walletAddress || ''),
+        gasAuthCapWei,
+        String(deadlineMs),
+        gasAuthNonce,
+        gasAuthSignature,
+        gasAuthDigest,
+        String(chainId),
+        contractAddress,
+        gasAuthLockTxHash,
+      ]
+    );
+    db.run('DELETE FROM contract_gas_authorization_prepares WHERE contract_id = ?', [req.params.id]);
+    db.run('COMMIT');
+    saveDb();
+  } catch (txErr) {
+    try { db.run('ROLLBACK'); } catch { /* ignore */ }
+    const raw = String(txErr?.message || txErr || '');
+    if (raw.includes('UNIQUE constraint failed')) {
+      return res.status(409).json(error('GAS_AUTH_ALREADY_EXISTS', '该合同 gas 授权已存在或 nonce 已被占用'));
+    }
+    if (txErr?.code && txErr?.error) {
+      return res.status(409).json(txErr);
+    }
+    if (txErr?.code && txErr?.message) {
+      return res.status(409).json(error(txErr.code, txErr.message));
+    }
+    return res.status(500).json(error('SIGN_TENANT_COMMIT_FAILED', '租客签署写库失败，请重试'));
   }
-  db.run(
-    `INSERT INTO contract_gas_authorizations (
-      id, contract_id, tenant_address, landlord_address, cap_wei, deadline_epoch_ms, nonce, signature, message, chain_id, contract_address, lock_tx_hash, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
-    [
-      `ga_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-      req.params.id,
-      submittedAddress,
-      normalizeWalletAddress(content?.landlord?.walletAddress || ''),
-      gasAuthCapWei,
-      String(deadlineMs),
-      gasAuthNonce,
-      gasAuthSignature,
-      gasAuthDigest,
-      String(chainId),
-      contractAddress,
-      gasAuthLockTxHash,
-    ]
-  );
-  saveDb();
   res.json({
     success: true,
     message: '租客签署成功',
@@ -853,12 +1123,12 @@ router.post('/:id/sign-tenant', authMiddleware, asyncHandler(async (req, res) =>
 router.get('/:id/gas-authorization/prepare', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
-  if (!rows.length) return res.status(404).json({ error: '合同不存在' });
+  if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
   const contract = rows[0];
-  if (contract.tenant_id !== req.user.id) return res.status(403).json({ error: '仅租客可准备 gas 授权参数' });
+  if (contract.tenant_id !== req.user.id) return sendError(res, 403, 'TENANT_ONLY', '仅租客可准备 gas 授权参数');
   if (contract.status !== 'pending') return res.status(400).json(error('SIGN_STATUS_INVALID', '当前状态不可准备 gas 授权'));
-  if (String(contract.negotiation_status || '') !== 'finalized') {
-    return res.status(400).json(error('CONTRACT_NOT_FINALIZED', '合同尚未定稿'));
+  if (String(contract.negotiation_status || '') === 'proposed') {
+    return res.status(400).json(error('CONTRACT_NOT_FINALIZED', '当前有待房东处理的租客提议'));
   }
   const content = contract.content_json;
   const tenantAddress = normalizeWalletAddress(content?.tenant?.walletAddress || '');
@@ -900,6 +1170,34 @@ router.get('/:id/gas-authorization/prepare', authMiddleware, asyncHandler(async 
       digest,
     },
   });
+  db.run(
+    `INSERT INTO contract_gas_authorization_prepares (
+      id, contract_id, tenant_address, landlord_address, cap_wei, deadline_epoch_ms, nonce, digest, chain_id, contract_address, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+8 hours'))
+    ON CONFLICT(contract_id) DO UPDATE SET
+      tenant_address = excluded.tenant_address,
+      landlord_address = excluded.landlord_address,
+      cap_wei = excluded.cap_wei,
+      deadline_epoch_ms = excluded.deadline_epoch_ms,
+      nonce = excluded.nonce,
+      digest = excluded.digest,
+      chain_id = excluded.chain_id,
+      contract_address = excluded.contract_address,
+      updated_at = datetime('now', '+8 hours')`,
+    [
+      `gap_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      contract.id,
+      tenantAddress,
+      landlordAddress,
+      cap.capWei,
+      String(deadlineMs),
+      nonce,
+      digest,
+      String(chainId),
+      contractAddress,
+    ]
+  );
+  saveDb();
 }));
 
 // 函数 4-2: 合同参与方链上取消后回写 gas 授权撤销结果（仅房东签署前可用）。
@@ -907,13 +1205,13 @@ router.post('/:id/gas-authorization/revoke', authMiddleware, asyncHandler(async 
   const revokeTxHash = String(req.body?.txHash || '').trim();
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
-  if (!rows.length) return res.status(404).json({ error: '合同不存在' });
+  if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
   const contract = rows[0];
   if (![contract.tenant_id, contract.landlord_id].includes(req.user.id)) {
-    return res.status(403).json({ error: '仅合同参与方可回写 gas 授权撤销结果' });
+    return sendError(res, 403, 'CONTRACT_PARTY_ONLY', '仅合同参与方可回写 gas 授权撤销结果');
   }
-  if (contract.status !== 'pending' && contract.status !== 'tenant_signed') {
-    return res.status(400).json(error('GAS_AUTH_REVOKE_FORBIDDEN', '房东签署后不可撤销授权'));
+  if (!['pending', 'tenant_signed', 'cancelled', 'expired'].includes(contract.status)) {
+    return res.status(400).json(error('GAS_AUTH_REVOKE_FORBIDDEN', '当前合同状态不允许撤销 gas 授权'));
   }
   if (String(contract.landlord_signed_at || '').trim()) {
     return res.status(400).json(error('GAS_AUTH_REVOKE_FORBIDDEN', '房东已签署后不可撤销授权'));
@@ -931,6 +1229,105 @@ router.post('/:id/gas-authorization/revoke', authMiddleware, asyncHandler(async 
   if (!gasAuthRows.length) {
     return res.status(404).json(error('GAS_AUTH_NOT_FOUND', '未找到 gas 授权记录'));
   }
+  const gasAuth = gasAuthRows[0];
+  const opId = `op_gas_revoke_${req.params.id}_${revokeTxHash.toLowerCase()}`;
+  upsertOnchainOperation(db, {
+    opId,
+    entityType: 'gas_auth',
+    entityId: req.params.id,
+    operationKind: 'gas_auth.revoke',
+    txHash: revokeTxHash,
+    status: 'pending',
+    requestId: req.requestId,
+    payload: { contractId: req.params.id, actorId: req.user.id },
+  });
+  try {
+    const loaded = await loadConfirmedContractTx(revokeTxHash);
+    const parsedTx = parseContractTx(loaded.tx);
+    const parsedLogs = parseContractLogs(loaded.receipt, loaded.contractAddress);
+    const content = typeof contract.content_json === 'string' ? JSON.parse(contract.content_json) : (contract.content_json || {});
+    const tenantAddress = normalizeWalletAddress(content?.tenant?.walletAddress || '');
+    const nonce = String(parseResult(db.exec(
+      `SELECT nonce FROM contract_gas_authorizations WHERE contract_id = ? LIMIT 1`,
+      [req.params.id]
+    ))[0]?.nonce || '').trim();
+    if (!tenantAddress || !nonce) {
+      markOnchainOperationFailed(db, {
+        opId,
+        entityType: 'gas_auth',
+        entityId: req.params.id,
+        operationKind: 'gas_auth.revoke',
+        txHash: revokeTxHash,
+        requestId: req.requestId,
+        payload: { contractId: req.params.id },
+        errorMessage: 'gas authorization record invalid',
+      });
+      return res.status(400).json(error('GAS_AUTH_RECORD_INVALID', 'gas 授权记录缺少 tenant 或 nonce'));
+    }
+    const methodName = String(parsedTx?.name || '').trim();
+    const revokeByTenant =
+      methodName === 'revokeGasCompensationAuthorization'
+      && String(parsedTx.args?.[0] || '') === String(req.params.id)
+      && normalizeWalletAddress(parsedTx.args?.[1] || '')?.toLowerCase() === tenantAddress.toLowerCase()
+      && toLowerHex(parsedTx.args?.[2] || '') === toLowerHex(nonce);
+    const cancelByCounterparty =
+      methodName === 'cancelPendingGasAuthorization'
+      && String(parsedTx.args?.[0] || '') === String(req.params.id)
+      && normalizeWalletAddress(parsedTx.args?.[1] || '')?.toLowerCase() === tenantAddress.toLowerCase()
+      && toLowerHex(parsedTx.args?.[2] || '') === toLowerHex(nonce);
+    if (!revokeByTenant && !cancelByCounterparty) {
+      markOnchainOperationFailed(db, {
+        opId,
+        entityType: 'gas_auth',
+        entityId: req.params.id,
+        operationKind: 'gas_auth.revoke',
+        txHash: revokeTxHash,
+        requestId: req.requestId,
+        payload: { contractId: req.params.id },
+        errorMessage: 'onchain revoke method mismatch',
+      });
+      return res.status(400).json(error('GAS_AUTH_REVOKE_METHOD_MISMATCH', '链上交易不是 gas 授权撤销交易'));
+    }
+    const revokedEvent = parsedLogs.find((log) =>
+      log.name === 'GasCompRevoked'
+      && eventIndexedStringMatches(log.args?.contractId, req.params.id)
+      && toLowerHex(log.args?.tenant) === tenantAddress.toLowerCase()
+    );
+    if (!revokedEvent) {
+      markOnchainOperationFailed(db, {
+        opId,
+        entityType: 'gas_auth',
+        entityId: req.params.id,
+        operationKind: 'gas_auth.revoke',
+        txHash: revokeTxHash,
+        requestId: req.requestId,
+        payload: { contractId: req.params.id },
+        errorMessage: 'gas revoke event missing',
+      });
+      return res.status(400).json(error('GAS_AUTH_REVOKE_EVENT_MISSING', '链上缺少 gas 授权撤销事件'));
+    }
+  } catch (chainErr) {
+    const chainErrCode = String(chainErr?.code || '').trim();
+    if (chainErrCode === 'ONCHAIN_TX_NOT_FOUND') {
+      saveDb();
+      return res.status(202).json({
+        success: true,
+        message: 'gas 授权撤销交易已提交，后台将自动确认',
+        data: { txHash: revokeTxHash, onchainState: 'pending' },
+      });
+    }
+    markOnchainOperationFailed(db, {
+      opId,
+      entityType: 'gas_auth',
+      entityId: req.params.id,
+      operationKind: 'gas_auth.revoke',
+      txHash: revokeTxHash,
+      requestId: req.requestId,
+      payload: { contractId: req.params.id },
+      errorMessage: chainErr.error || chainErr.message || 'gas revoke verify failed',
+    });
+    return res.status(400).json(error(chainErrCode || 'GAS_AUTH_REVOKE_VERIFY_FAILED', chainErr.error || chainErr.message || '链上撤销交易校验失败'));
+  }
   db.run(
     `UPDATE contract_gas_authorizations
      SET status = CASE WHEN status = 'active' THEN 'revoked' ELSE status END,
@@ -942,6 +1339,16 @@ router.post('/:id/gas-authorization/revoke', authMiddleware, asyncHandler(async 
      WHERE contract_id = ?`,
     [revokeTxHash, req.params.id]
   );
+  markOnchainOperationConfirmed(db, {
+    opId,
+    entityType: 'gas_auth',
+    entityId: req.params.id,
+    operationKind: 'gas_auth.revoke',
+    txHash: revokeTxHash,
+    requestId: req.requestId,
+    payload: { contractId: req.params.id, actorId: req.user.id },
+    result: { gasAuthStatusBefore: gasAuth.status, gasAuthStatusAfter: 'revoked' },
+  });
   saveDb();
   res.json({ success: true, message: 'gas 授权已撤销' });
 }));
@@ -952,10 +1359,10 @@ router.post('/:id/sign-landlord', authMiddleware, asyncHandler(async (req, res) 
     const { signerAddress, signature, message, txHash } = req.body || {};
     const db = await getDb();
     const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
-    if (!rows.length) return res.status(404).json({ error: '合同不存在' });
+    if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
     const contract = rows[0];
 
-    if (contract.landlord_id !== req.user.id) return res.status(403).json({ error: '无权限签署' });
+    if (contract.landlord_id !== req.user.id) return sendError(res, 403, 'SIGN_FORBIDDEN', '无权限签署');
     if (contract.status !== 'tenant_signed') {
       return res.status(400).json(error('SIGN_STATUS_INVALID', '当前状态不允许房东签署', { currentStatus: contract.status }));
     }
@@ -965,8 +1372,10 @@ router.post('/:id/sign-landlord', authMiddleware, asyncHandler(async (req, res) 
     if (!/^0x[a-fA-F0-9]{64}$/.test(String(txHash || '').trim())) {
       return res.status(400).json(error('ONCHAIN_TX_HASH_INVALID', '缺少有效的合同上链交易哈希'));
     }
+    const normalizedSignTxHash = String(txHash || '').trim().toLowerCase();
+    const signOpId = `op_contract_create_${req.params.id}_${normalizedSignTxHash}`;
 
-    const content = contract.content_json;
+    const content = typeof contract.content_json === 'string' ? JSON.parse(contract.content_json) : (contract.content_json || {});
     const tenantAddress = String(content?.tenant?.walletAddress || '').trim();
     const landlordAddress = String(content?.landlord?.walletAddress || '').trim();
     const normalizedTenantAddress = normalizeWalletAddress(tenantAddress);
@@ -998,6 +1407,305 @@ router.post('/:id/sign-landlord', authMiddleware, asyncHandler(async (req, res) 
       return res.status(400).json(error('GAS_AUTH_LOCK_MISSING', '租客尚未完成链上 gas 锁仓，房东暂不可签署'));
     }
 
+    const parentContractId = String(contract.parent_contract_id || content?.parentContractId || '').trim();
+    const initialAmountWei = (() => {
+      try {
+        return ethers.parseEther(String(content?.oneTimeAmount || '0'));
+      } catch {
+        return 0n;
+      }
+    })();
+    const tenantMessageHash = buildMessageHash(contract.tenant_signature_message || '');
+    const landlordMessageHash = buildMessageHash(message || '');
+    const tenantSignedAt = (() => {
+      const d = parseCnDateTime(contract.tenant_signed_at);
+      return d ? d.getTime() : 0;
+    })();
+    const landlordMessageFields = parseSignMessageFields(message);
+    const landlordMessageTimestamp = Number(landlordMessageFields.timestamp || 0);
+    const startAtMs = parseStartDateMs(content);
+    const endAtMs = parseEndDateMs(content);
+    const signOpPayload = {
+      contractId: req.params.id,
+      listingId: contract.listing_id,
+      actorId: req.user.id,
+      signerAddress: submittedAddress,
+      signature: String(signature || ''),
+      message: String(message || ''),
+      messageHash: landlordMessageHash,
+      messageTimestamp: landlordMessageTimestamp,
+      tenantAddress: normalizedTenantAddress,
+      landlordAddress: normalizedLandlordAddress,
+      parentContractId,
+      initialAmountWei: initialAmountWei.toString(),
+      startAtMs: Number(startAtMs || 0),
+      endAtMs: Number(endAtMs || 0),
+      tenantMessageHash,
+      tenantSignature: String(contract.tenant_signature || ''),
+      tenantSignedAt: Number(tenantSignedAt || 0),
+      gasAuthNonce: String(gasAuth.nonce || ''),
+    };
+    upsertOnchainOperation(db, {
+      opId: signOpId,
+      entityType: 'contract',
+      entityId: req.params.id,
+      operationKind: 'contract.create',
+      txHash: normalizedSignTxHash,
+      status: 'pending',
+      requestId: req.requestId,
+      payload: signOpPayload,
+    });
+
+    let onchainTx;
+    let parsedTx;
+    let parsedLogs;
+    try {
+      const loaded = await loadConfirmedContractTx(String(txHash || '').trim());
+      onchainTx = loaded.tx;
+      parsedTx = parseContractTx(loaded.tx);
+      parsedLogs = parseContractLogs(loaded.receipt, loaded.contractAddress);
+    } catch (chainErr) {
+      const chainErrCode = String(chainErr?.code || '').trim();
+      if (chainErrCode === 'ONCHAIN_TX_NOT_FOUND') {
+        db.run(
+          `UPDATE contracts
+           SET landlord_signer_address = ?,
+               landlord_signature = ?,
+               landlord_signature_message = ?,
+               landlord_sign_ip = ?,
+               landlord_sign_user_agent = ?,
+               landlord_sign_request_id = ?,
+               tx_hash = ?,
+               updated_at = datetime('now', '+8 hours')
+            WHERE id = ? AND status = 'tenant_signed'`,
+          [
+            submittedAddress,
+            String(signature || ''),
+            String(message || ''),
+            getClientIp(req),
+            String(req.headers['user-agent'] || ''),
+            String(req.requestId || ''),
+            String(txHash || '').trim(),
+            req.params.id,
+          ]
+        );
+        saveDb();
+        return res.status(202).json({
+          success: true,
+          message: '房东上链交易已提交，后台将自动补偿确认',
+          data: {
+            txHash: String(txHash || '').trim(),
+            onchainState: 'pending',
+          },
+        });
+      }
+      markOnchainOperationFailed(db, {
+        opId: signOpId,
+        entityType: 'contract',
+        entityId: req.params.id,
+        operationKind: 'contract.create',
+        txHash: normalizedSignTxHash,
+        requestId: req.requestId,
+        payload: signOpPayload,
+        errorMessage: chainErr.error || chainErr.message || 'contract create verify failed',
+      });
+      return res.status(400).json(error(chainErrCode || 'ONCHAIN_TX_VERIFY_FAILED', chainErr.error || chainErr.message || '链上交易校验失败'));
+    }
+    const parsedTxSummary = summarizeParsedTx(parsedTx);
+    const parsedLogSummary = summarizeParsedLogs(parsedLogs);
+    if (!parsedTx || parsedTx.name !== 'createContractRecord') {
+      logSignFlow('sign-landlord.verify-failed', {
+        contractId: req.params.id,
+        requestId: req.requestId,
+        code: 'ONCHAIN_METHOD_MISMATCH',
+        txHash: normalizedSignTxHash,
+        txFrom: String(onchainTx?.from || '').trim(),
+        txTo: String(onchainTx?.to || '').trim(),
+        parsedTx: parsedTxSummary,
+        parsedLogs: parsedLogSummary,
+      });
+      return res.status(400).json(error('ONCHAIN_METHOD_MISMATCH', '链上交易不是合同创建交易'));
+    }
+    if (toLowerHex(onchainTx.from) !== submittedAddress.toLowerCase()) {
+      logSignFlow('sign-landlord.verify-failed', {
+        contractId: req.params.id,
+        requestId: req.requestId,
+        code: 'ONCHAIN_TX_SIGNER_MISMATCH',
+        txHash: normalizedSignTxHash,
+        txFrom: String(onchainTx?.from || '').trim(),
+        expectedSigner: submittedAddress,
+        parsedTx: parsedTxSummary,
+        parsedLogs: parsedLogSummary,
+      });
+      return res.status(400).json(error('ONCHAIN_TX_SIGNER_MISMATCH', '链上交易发起钱包与房东签署钱包不一致'));
+    }
+    const p = parsedTx.args?.[0];
+    if (!p) {
+      logSignFlow('sign-landlord.verify-failed', {
+        contractId: req.params.id,
+        requestId: req.requestId,
+        code: 'ONCHAIN_TX_DECODE_FAILED',
+        txHash: normalizedSignTxHash,
+        parsedTx: parsedTxSummary,
+        parsedLogs: parsedLogSummary,
+      });
+      return res.status(400).json(error('ONCHAIN_TX_DECODE_FAILED', '链上交易参数解析失败'));
+    }
+    const logVerifyMismatch = (code, expected = {}, actual = {}) => {
+      logSignFlow('sign-landlord.verify-failed', {
+        contractId: req.params.id,
+        requestId: req.requestId,
+        code,
+        txHash: normalizedSignTxHash,
+        txFrom: String(onchainTx?.from || '').trim(),
+        txTo: String(onchainTx?.to || '').trim(),
+        parsedTx: parsedTxSummary,
+        parsedLogs: parsedLogSummary,
+        expected,
+        actual,
+      });
+    };
+    if (String(p.contractId || '') !== String(contract.id)) {
+      logVerifyMismatch('ONCHAIN_CONTRACT_ID_MISMATCH', { contractId: String(contract.id) }, { contractId: String(p.contractId || '') });
+      return res.status(400).json(error('ONCHAIN_CONTRACT_ID_MISMATCH', '链上合同 ID 与数据库不一致'));
+    }
+    if (String(p.listingId || '') !== String(contract.listing_id || '')) {
+      logVerifyMismatch('ONCHAIN_LISTING_ID_MISMATCH', { listingId: String(contract.listing_id || '') }, { listingId: String(p.listingId || '') });
+      return res.status(400).json(error('ONCHAIN_LISTING_ID_MISMATCH', '链上房源 ID 与数据库不一致'));
+    }
+    if (String(p.parentContractId || '') !== parentContractId) {
+      logVerifyMismatch('ONCHAIN_PARENT_CONTRACT_MISMATCH', { parentContractId }, { parentContractId: String(p.parentContractId || '') });
+      return res.status(400).json(error('ONCHAIN_PARENT_CONTRACT_MISMATCH', '链上续约父合同 ID 与数据库不一致'));
+    }
+    if (toLowerHex(p.tenant) !== normalizedTenantAddress.toLowerCase()) {
+      logVerifyMismatch('ONCHAIN_TENANT_MISMATCH', { tenant: normalizedTenantAddress }, { tenant: normalizeWalletAddress(p.tenant || '') });
+      return res.status(400).json(error('ONCHAIN_TENANT_MISMATCH', '链上租客钱包与数据库不一致'));
+    }
+    if (toLowerHex(p.landlord) !== normalizedLandlordAddress.toLowerCase()) {
+      logVerifyMismatch('ONCHAIN_LANDLORD_MISMATCH', { landlord: normalizedLandlordAddress }, { landlord: normalizeWalletAddress(p.landlord || '') });
+      return res.status(400).json(error('ONCHAIN_LANDLORD_MISMATCH', '链上房东钱包与数据库不一致'));
+    }
+    if (toLowerHex(p.contentHash) !== toLowerHex(contract.content_hash)) {
+      logVerifyMismatch('ONCHAIN_CONTENT_HASH_MISMATCH', { contentHash: String(contract.content_hash || '') }, { contentHash: String(p.contentHash || '') });
+      return res.status(400).json(error('ONCHAIN_CONTENT_HASH_MISMATCH', '链上合同哈希与数据库不一致'));
+    }
+    if (toLowerHex(p.gasAuthNonce) !== toLowerHex(gasAuth.nonce)) {
+      logVerifyMismatch('ONCHAIN_GAS_AUTH_NONCE_MISMATCH', { gasAuthNonce: String(gasAuth.nonce || '') }, { gasAuthNonce: String(p.gasAuthNonce || '') });
+      return res.status(400).json(error('ONCHAIN_GAS_AUTH_NONCE_MISMATCH', '链上 gas 授权 nonce 与数据库不一致'));
+    }
+    if (BigInt(p.initialAmountWei || 0) !== initialAmountWei) {
+      return res.status(400).json(error('ONCHAIN_INITIAL_AMOUNT_MISMATCH', '链上首笔支付金额与数据库不一致'));
+    }
+    if (Number(p.startAtMs || 0) !== Number(startAtMs || 0)) {
+      return res.status(400).json(error('ONCHAIN_START_AT_MISMATCH', '链上合同起始时间与数据库不一致'));
+    }
+    if (Number(p.endAtMs || 0) !== Number(endAtMs || 0)) {
+      return res.status(400).json(error('ONCHAIN_END_AT_MISMATCH', '链上合同结束时间与数据库不一致'));
+    }
+    if (toLowerHex(p.tenantMessageHash) !== toLowerHex(tenantMessageHash)) {
+      return res.status(400).json(error('ONCHAIN_TENANT_MESSAGE_HASH_MISMATCH', '链上租客签名哈希与数据库不一致'));
+    }
+    if (toLowerHex(p.landlordMessageHash) !== toLowerHex(landlordMessageHash)) {
+      return res.status(400).json(error('ONCHAIN_LANDLORD_MESSAGE_HASH_MISMATCH', '链上房东签名哈希与数据库不一致'));
+    }
+    if (Number(p.tenantSignedAt || 0) !== Number(tenantSignedAt || 0)) {
+      return res.status(400).json(error('ONCHAIN_TENANT_SIGNED_AT_MISMATCH', '链上租客签署时间与数据库不一致'));
+    }
+    if (String(p.tenantSignature || '') !== String(contract.tenant_signature || '')) {
+      return res.status(400).json(error('ONCHAIN_TENANT_SIGNATURE_MISMATCH', '链上租客签名与数据库不一致'));
+    }
+    if (String(p.landlordSignature || '') !== String(signature || '')) {
+      return res.status(400).json(error('ONCHAIN_LANDLORD_SIGNATURE_MISMATCH', '链上房东签名与本次提交不一致'));
+    }
+    if (!Number.isFinite(landlordMessageTimestamp) || Number(p.landlordSignedAt || 0) < landlordMessageTimestamp) {
+      return res.status(400).json(error('ONCHAIN_LANDLORD_SIGNED_AT_INVALID', '链上房东签署时间无效'));
+    }
+
+    const contractCreatedLog = parsedLogs.find((log) => log.name === 'ContractCreated' && eventIndexedStringMatches(log.args?.contractId, contract.id));
+    if (!contractCreatedLog) {
+      logSignFlow('sign-landlord.verify-failed', {
+        contractId: req.params.id,
+        requestId: req.requestId,
+        code: 'ONCHAIN_CONTRACT_CREATED_EVENT_MISSING',
+        txHash: normalizedSignTxHash,
+        txFrom: String(onchainTx?.from || '').trim(),
+        txTo: String(onchainTx?.to || '').trim(),
+        parsedTx: parsedTxSummary,
+        parsedLogs: parsedLogSummary,
+        expected: {
+          contractId: String(contract.id),
+          listingId: String(contract.listing_id || ''),
+          tenant: normalizedTenantAddress,
+          landlord: normalizedLandlordAddress,
+          contentHash: String(contract.content_hash || ''),
+        },
+      });
+      return res.status(400).json(error('ONCHAIN_CONTRACT_CREATED_EVENT_MISSING', '链上缺少合同创建事件'));
+    }
+    if (!eventIndexedStringMatches(contractCreatedLog.args?.listingId, contract.listing_id)
+      || toLowerHex(contractCreatedLog.args?.landlord) !== normalizedLandlordAddress.toLowerCase()
+      || toLowerHex(contractCreatedLog.args?.tenant) !== normalizedTenantAddress.toLowerCase()
+      || toLowerHex(contractCreatedLog.args?.contentHash) !== toLowerHex(contract.content_hash)
+    ) {
+      logSignFlow('sign-landlord.verify-failed', {
+        contractId: req.params.id,
+        requestId: req.requestId,
+        code: 'ONCHAIN_CONTRACT_CREATED_EVENT_MISMATCH',
+        txHash: normalizedSignTxHash,
+        parsedTx: parsedTxSummary,
+        parsedLogs: parsedLogSummary,
+        actualEvent: {
+          contractId: formatEventIndexedString(contractCreatedLog.args?.contractId),
+          listingId: formatEventIndexedString(contractCreatedLog.args?.listingId),
+          landlord: normalizeWalletAddress(contractCreatedLog.args?.landlord || ''),
+          tenant: normalizeWalletAddress(contractCreatedLog.args?.tenant || ''),
+          contentHash: String(contractCreatedLog.args?.contentHash || ''),
+        },
+        expected: {
+          contractId: String(contract.id),
+          listingId: String(contract.listing_id || ''),
+          landlord: normalizedLandlordAddress,
+          tenant: normalizedTenantAddress,
+          contentHash: String(contract.content_hash || ''),
+        },
+      });
+      return res.status(400).json(error('ONCHAIN_CONTRACT_CREATED_EVENT_MISMATCH', '链上合同创建事件参数与数据库不一致'));
+    }
+    const tenantSignatureEvent = parsedLogs.find((log) =>
+      log.name === 'ContractSignatureAnchored'
+      && eventIndexedStringMatches(log.args?.contractId, contract.id)
+      && toLowerHex(log.args?.signer) === normalizedTenantAddress.toLowerCase()
+      && Number(log.args?.role || 0) === 1
+    );
+    const landlordSignatureEvent = parsedLogs.find((log) =>
+      log.name === 'ContractSignatureAnchored'
+      && eventIndexedStringMatches(log.args?.contractId, contract.id)
+      && toLowerHex(log.args?.signer) === normalizedLandlordAddress.toLowerCase()
+      && Number(log.args?.role || 0) === 2
+    );
+    if (!tenantSignatureEvent || !landlordSignatureEvent) {
+      logSignFlow('sign-landlord.verify-failed', {
+        contractId: req.params.id,
+        requestId: req.requestId,
+        code: 'ONCHAIN_SIGNATURE_EVENT_MISSING',
+        txHash: normalizedSignTxHash,
+        parsedTx: parsedTxSummary,
+        parsedLogs: parsedLogSummary,
+      });
+      return res.status(400).json(error('ONCHAIN_SIGNATURE_EVENT_MISSING', '链上缺少合同签名锚定事件'));
+    }
+    if (toLowerHex(tenantSignatureEvent.args?.messageHash) !== toLowerHex(tenantMessageHash)
+      || String(tenantSignatureEvent.args?.signature || '') !== String(contract.tenant_signature || '')
+      || Number(tenantSignatureEvent.args?.signedAt || 0) !== Number(tenantSignedAt || 0)
+    ) {
+      return res.status(400).json(error('ONCHAIN_TENANT_SIGNATURE_EVENT_MISMATCH', '链上租客签名锚定事件与数据库不一致'));
+    }
+    if (toLowerHex(landlordSignatureEvent.args?.messageHash) !== toLowerHex(landlordMessageHash)
+      || String(landlordSignatureEvent.args?.signature || '') !== String(signature || '')
+      || Number(landlordSignatureEvent.args?.signedAt || 0) < landlordMessageTimestamp
+    ) {
+      return res.status(400).json(error('ONCHAIN_LANDLORD_SIGNATURE_EVENT_MISMATCH', '链上房东签名锚定事件与本次提交不一致'));
+    }
     const paymentDeadline = getCnDateTime(new Date(Date.now() + PAYMENT_WINDOW_MS));
     db.run(
       `UPDATE contracts
@@ -1009,9 +1717,6 @@ router.post('/:id/sign-landlord', authMiddleware, asyncHandler(async (req, res) 
            landlord_sign_user_agent = ?,
            landlord_sign_request_id = ?,
            tx_hash = ?,
-           onchain_status = 'confirmed',
-           onchain_error = '',
-           onchain_next_retry_at = '',
            payment_deadline = ?,
            status = 'pending_payment'
        WHERE id = ? AND status = 'tenant_signed'`,
@@ -1038,6 +1743,16 @@ router.post('/:id/sign-landlord', authMiddleware, asyncHandler(async (req, res) 
        WHERE contract_id = ? AND status = 'active'`,
       [String(txHash || '').trim(), req.params.id]
     );
+    markOnchainOperationConfirmed(db, {
+      opId: signOpId,
+      entityType: 'contract',
+      entityId: req.params.id,
+      operationKind: 'contract.create',
+      txHash: normalizedSignTxHash,
+      requestId: req.requestId,
+      payload: signOpPayload,
+      result: { paymentDeadline, onchainState: 'confirmed' },
+    });
     saveDb();
 
     res.json({
@@ -1048,7 +1763,7 @@ router.post('/:id/sign-landlord', authMiddleware, asyncHandler(async (req, res) 
         tenantAddress: normalizedTenantAddress,
         landlordAddress: normalizedLandlordAddress,
         initialAmount: content?.oneTimeAmount || '',
-        onchainStatus: 'confirmed',
+        onchainState: 'confirmed',
         txHash: String(txHash || '').trim(),
         onchainError: '',
         paymentDeadline,
@@ -1056,7 +1771,7 @@ router.post('/:id/sign-landlord', authMiddleware, asyncHandler(async (req, res) 
     });
   } catch (error) {
     logSignFlow('sign-landlord.exception', { contractId: req.params.id, message: error.message, requestId: req.requestId });
-    res.status(500).json({ error: '房东签署失败' });
+    sendError(res, 500, 'LANDLORD_SIGN_FAILED', '房东签署失败');
   }
 }));
 
@@ -1064,22 +1779,22 @@ router.post('/:id/sign-landlord', authMiddleware, asyncHandler(async (req, res) 
 router.post('/:id/payments/onchain', authMiddleware, asyncHandler(async (req, res) => {
   const { txHash, amount, payType = 'initial', period = '' } = req.body || {};
   if (!/^0x[a-fA-F0-9]{64}$/.test(txHash || '')) {
-    return res.status(400).json({ error: 'txHash 格式不正确' });
+    return sendError(res, 400, 'TX_HASH_INVALID', 'txHash 格式不正确');
   }
   if (payType !== 'initial') {
-    return res.status(400).json({ error: '当前仅支持 initial' });
+    return sendError(res, 400, 'PAY_TYPE_INVALID', '当前仅支持 initial');
   }
   if (!amount || Number(amount) <= 0) {
-    return res.status(400).json({ error: 'amount 必须大于 0' });
+    return sendError(res, 400, 'PAYMENT_AMOUNT_INVALID', 'amount 必须大于 0');
   }
 
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
-  if (!rows.length) return res.status(404).json({ error: '合同不存在' });
+  if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
   const contract = rows[0];
 
   if (contract.tenant_id !== req.user.id) {
-    return res.status(403).json({ error: '仅租客可回写支付记录' });
+    return sendError(res, 403, 'TENANT_ONLY', '仅租客可回写支付记录');
   }
   if (contract.status !== 'pending_payment') {
     return res.status(400).json(error('PAYMENT_STATUS_INVALID', '当前状态不允许首笔支付', { currentStatus: contract.status }));
@@ -1091,6 +1806,18 @@ router.post('/:id/payments/onchain', authMiddleware, asyncHandler(async (req, re
   if (!expectedAmount || !requestedAmount || expectedAmount !== requestedAmount) {
     return res.status(400).json(error('PAYMENT_AMOUNT_MISMATCH', '支付金额与合同首笔金额不一致', { expectedAmount }));
   }
+  const expectedAmountWei = (() => {
+    try {
+      return ethers.parseEther(String(expectedAmount));
+    } catch {
+      return 0n;
+    }
+  })();
+  const tenantAddress = normalizeWalletAddress(content?.tenant?.walletAddress || '');
+  const landlordAddress = normalizeWalletAddress(content?.landlord?.walletAddress || '');
+  if (!tenantAddress || !landlordAddress) {
+    return res.status(400).json(error('WALLET_NOT_BOUND', '合同绑定钱包地址无效，无法校验链上支付'));
+  }
 
   const deadlineAt = parseCnDateTime(contract.payment_deadline || contract.expires_at);
   if (!deadlineAt || deadlineAt <= new Date()) {
@@ -1099,7 +1826,7 @@ router.post('/:id/payments/onchain', authMiddleware, asyncHandler(async (req, re
 
   const existed = parseResult(db.exec('SELECT id FROM payments WHERE tx_hash = ?', [txHash]));
   if (existed.length > 0) {
-    return res.status(409).json({ error: '该支付交易已回写' });
+    return sendError(res, 409, 'PAYMENT_TX_REUSED', '该支付交易已回写');
   }
 
   const priorInitial = parseResult(db.exec(
@@ -1107,7 +1834,79 @@ router.post('/:id/payments/onchain', authMiddleware, asyncHandler(async (req, re
     [req.params.id, 'initial', 'confirmed']
   ));
   if (priorInitial.length > 0) {
-    return res.status(409).json({ error: '该合同首笔支付已完成' });
+    return sendError(res, 409, 'INITIAL_PAYMENT_ALREADY_RECORDED', '该合同首笔支付已完成');
+  }
+  const normalizedPaymentTxHash = String(txHash || '').trim().toLowerCase();
+  const paymentOpId = `op_payment_initial_${req.params.id}_${normalizedPaymentTxHash}`;
+  upsertOnchainOperation(db, {
+    opId: paymentOpId,
+    entityType: 'payment',
+    entityId: req.params.id,
+    operationKind: 'payment.initial',
+    txHash: normalizedPaymentTxHash,
+    status: 'pending',
+    requestId: req.requestId,
+    payload: { contractId: req.params.id, payerId: req.user.id, payType, amount: String(amount), period: period || '' },
+  });
+
+  let onchainTx;
+  let parsedTx;
+  let parsedLogs;
+  try {
+    const loaded = await loadConfirmedContractTx(String(txHash || '').trim());
+    onchainTx = loaded.tx;
+    parsedTx = parseContractTx(loaded.tx);
+    parsedLogs = parseContractLogs(loaded.receipt, loaded.contractAddress);
+  } catch (chainErr) {
+    const chainErrCode = String(chainErr?.code || '').trim();
+    if (chainErrCode === 'ONCHAIN_TX_NOT_FOUND') {
+      saveDb();
+      return res.status(202).json({
+        success: true,
+        message: '支付交易已提交，后台将自动确认',
+        data: { txHash: normalizedPaymentTxHash, onchainState: 'pending' },
+      });
+    }
+    markOnchainOperationFailed(db, {
+      opId: paymentOpId,
+      entityType: 'payment',
+      entityId: req.params.id,
+      operationKind: 'payment.initial',
+      txHash: normalizedPaymentTxHash,
+      requestId: req.requestId,
+      payload: { contractId: req.params.id, payerId: req.user.id, payType, amount: String(amount), period: period || '' },
+      errorMessage: chainErr.error || chainErr.message || 'payment verify failed',
+    });
+    return res.status(400).json(error(chainErr.code || 'PAYMENT_TX_VERIFY_FAILED', chainErr.error || chainErr.message || '链上支付交易校验失败'));
+  }
+  if (!parsedTx || parsedTx.name !== 'recordInitialRentPayment') {
+    return res.status(400).json(error('PAYMENT_METHOD_MISMATCH', '链上交易不是首笔支付交易'));
+  }
+  if (toLowerHex(onchainTx.from) !== tenantAddress.toLowerCase()) {
+    return res.status(400).json(error('PAYMENT_PAYER_MISMATCH', '链上付款钱包与合同绑定租客钱包不一致'));
+  }
+  if (BigInt(onchainTx.value || 0) !== expectedAmountWei) {
+    return res.status(400).json(error('PAYMENT_VALUE_MISMATCH', '链上支付金额与合同首笔金额不一致'));
+  }
+  const payContractId = String(parsedTx.args?.[0] || '');
+  const payLandlord = normalizeWalletAddress(parsedTx.args?.[1] || '');
+  if (payContractId !== String(contract.id)) {
+    return res.status(400).json(error('PAYMENT_CONTRACT_ID_MISMATCH', '链上支付合同 ID 与数据库不一致'));
+  }
+  if (!payLandlord || payLandlord.toLowerCase() !== landlordAddress.toLowerCase()) {
+    return res.status(400).json(error('PAYMENT_LANDLORD_MISMATCH', '链上支付收款房东与数据库不一致'));
+  }
+  const paymentEvent = parsedLogs.find((log) =>
+    log.name === 'RentPaymentRecorded'
+    && eventIndexedStringMatches(log.args?.contractId, contract.id)
+    && toLowerHex(log.args?.payer) === tenantAddress.toLowerCase()
+    && toLowerHex(log.args?.landlord) === landlordAddress.toLowerCase()
+  );
+  if (!paymentEvent) {
+    return res.status(400).json(error('PAYMENT_EVENT_MISSING', '链上缺少首笔支付事件'));
+  }
+  if (BigInt(paymentEvent.args?.amountWei || 0) !== expectedAmountWei) {
+    return res.status(400).json(error('PAYMENT_EVENT_AMOUNT_MISMATCH', '链上支付事件金额与合同首笔金额不一致'));
   }
 
   const paymentId = `pay_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -1122,18 +1921,22 @@ router.post('/:id/payments/onchain', authMiddleware, asyncHandler(async (req, re
     [req.params.id]
   );
   if (db.getRowsModified() !== 1) {
-    return res.status(409).json({ error: '合同状态已变化，无法完成生效' });
+    return sendError(res, 409, 'CONTRACT_STATE_CHANGED', '合同状态已变化，无法完成生效');
   }
   const startDateOnly = normalizeDateOnly(content?.terms?.startDate);
   const startAt = startDateOnly ? new Date(`${startDateOnly}T00:00:00+08:00`) : null;
   const isFutureRenewalStart = !!(contract.parent_contract_id && startAt && !Number.isNaN(startAt.getTime()) && startAt.getTime() > Date.now());
-  if (!isFutureRenewalStart) {
-    db.run(
-      'UPDATE listings SET status = \'rented\', updated_at = datetime(\'now\', \'+8 hours\') WHERE id = ? AND status = \'available\'',
-      [contract.listing_id]
-    );
-  }
 
+  markOnchainOperationConfirmed(db, {
+    opId: paymentOpId,
+    entityType: 'payment',
+    entityId: req.params.id,
+    operationKind: 'payment.initial',
+    txHash: normalizedPaymentTxHash,
+    requestId: req.requestId,
+    payload: { contractId: req.params.id, payerId: req.user.id, payType, amount: String(amount), period: period || '' },
+    result: { paymentId, contractStatusAfter: 'active', isFutureRenewalStart },
+  });
   saveDb();
   res.json({
     success: true,
@@ -1146,14 +1949,14 @@ router.post('/:id/payments/onchain', authMiddleware, asyncHandler(async (req, re
 router.post('/:id/cancel', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
-  if (!rows.length) return res.status(404).json({ error: '合同不存在' });
+  if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
   const contract = rows[0];
 
   if (![contract.tenant_id, contract.landlord_id].includes(req.user.id)) {
-    return res.status(403).json({ error: '无权限取消该合同' });
+    return sendError(res, 403, 'CONTRACT_FORBIDDEN', '无权限取消该合同');
   }
-  if (!['pending', 'tenant_signed'].includes(contract.status)) {
-    return res.status(400).json({ error: '当前状态不允许取消' });
+  if (!['pending', 'tenant_signed', 'expired'].includes(contract.status)) {
+    return sendError(res, 400, 'CANCEL_STATUS_INVALID', '当前状态不允许取消');
   }
   const gasAuthRows = parseResult(db.exec(
     `SELECT id, status, lock_tx_hash
@@ -1163,54 +1966,46 @@ router.post('/:id/cancel', authMiddleware, asyncHandler(async (req, res) => {
     [req.params.id]
   ));
   const activeGasAuth = gasAuthRows[0];
+  const gasReleasePending = Boolean(
+    activeGasAuth
+    && String(activeGasAuth.status || '') === 'active'
+    && /^0x[a-fA-F0-9]{64}$/.test(String(activeGasAuth.lock_tx_hash || '').trim())
+  );
   if (activeGasAuth
     && String(activeGasAuth.status || '') === 'active'
     && /^0x[a-fA-F0-9]{64}$/.test(String(activeGasAuth.lock_tx_hash || '').trim())
   ) {
   }
 
-  db.run(
-    'UPDATE contracts SET status = \'cancelled\' WHERE id = ? AND status IN (\'pending\', \'tenant_signed\')',
-    [req.params.id]
-  );
-  if (db.getRowsModified() !== 1) {
-    return res.status(409).json({ error: '合同状态已变化，无法取消' });
-  }
-  db.run(
-    `UPDATE contract_gas_authorizations
-     SET status = 'revoked', updated_at = datetime('now', '+8 hours')
-     WHERE contract_id = ? AND status = 'active'`,
-    [req.params.id]
-  );
-
-  const listingRows = parseResult(db.exec('SELECT status FROM listings WHERE id = ?', [contract.listing_id]));
-  const listingStatus = listingRows[0]?.status || '';
-  if (listingStatus === 'available') {
-    const siblingContracts = parseResult(db.exec(
-      `SELECT id, status FROM contracts
-       WHERE listing_id = ? AND id <> ?`,
-      [contract.listing_id, contract.id]
-    ));
-    const hasNonTerminal = siblingContracts.some((item) => !isTerminalStatus(item.status));
-    if (!hasNonTerminal) {
-      db.run(
-        'UPDATE listings SET status = \'available\', updated_at = datetime(\'now\', \'+8 hours\') WHERE id = ? AND status = \'available\'',
-        [contract.listing_id]
-      );
+  if (contract.status !== 'expired') {
+    db.run(
+      'UPDATE contracts SET status = \'cancelled\' WHERE id = ? AND status IN (\'pending\', \'tenant_signed\')',
+      [req.params.id]
+    );
+    if (db.getRowsModified() !== 1) {
+      return sendError(res, 409, 'CONTRACT_STATE_CHANGED', '合同状态已变化，无法取消');
     }
   }
   saveDb();
-  res.json({ success: true, message: '合同已取消' });
+  res.json({
+    success: true,
+    message: gasReleasePending
+      ? (contract.status === 'expired' ? '过期合同已确认结束，gas 待释放' : '合同已取消，gas 待释放')
+      : (contract.status === 'expired' ? '过期合同已确认结束' : '合同已取消'),
+    data: {
+      gasReleasePending,
+    },
+  });
 }));
 
 // 函数 8: 获取合同支付记录接口。
 router.get('/:id/payments', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
-  if (!rows.length) return res.status(404).json({ error: '合同不存在' });
+  if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
   const contract = rows[0];
   if (![contract.tenant_id, contract.landlord_id].includes(req.user.id)) {
-    return res.status(403).json({ error: '无权限查看该合同支付记录' });
+    return sendError(res, 403, 'CONTRACT_FORBIDDEN', '无权限查看该合同支付记录');
   }
   const payments = parseResult(db.exec(
     `SELECT id, contract_id, payer_id, pay_type, amount, period, tx_hash, status, paid_at
@@ -1226,10 +2021,10 @@ router.get('/:id/payments', authMiddleware, asyncHandler(async (req, res) => {
 router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
-  if (!rows.length) return res.status(404).json({ error: '合同不存在' });
+  if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
   const contract = rows[0];
   if (![contract.tenant_id, contract.landlord_id].includes(req.user.id)) {
-    return res.status(403).json({ error: '无权限下载该合同' });
+    return sendError(res, 403, 'CONTRACT_FORBIDDEN', '无权限下载该合同');
   }
   const content = contract.content_json || {};
   const contentHashSpec = buildContentHashSpec(content);
@@ -1328,60 +2123,53 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   doc.fontSize(8).fillColor('gray').text(`生成时间：${getCnDateTime(new Date())}`);
   doc.end();
 }));
-
 // 函数 8-3: 租客基于原合同发起续约合同。
 router.post('/:id/renewals', authMiddleware, requireRole('tenant'), asyncHandler(async (req, res) => {
   const db = await getDb();
   const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
-  if (!rows.length) return res.status(404).json({ error: '原合同不存在' });
+  if (!rows.length) return sendError(res, 404, 'PARENT_CONTRACT_NOT_FOUND', '原合同不存在');
   const parent = rows[0];
   if (parent.tenant_id !== req.user.id) {
-    return res.status(403).json({ error: '仅租客可发起续约申请' });
+    return sendError(res, 403, 'TENANT_ONLY', '仅租客可发起续约申请');
   }
   if (parent.status !== 'active') {
-    return res.status(400).json({ error: '仅已支付成功的原合同可发起续约申请' });
+    return sendError(res, 400, 'RENEWAL_PARENT_STATUS_INVALID', '仅已支付成功的原合同可发起续约申请');
   }
   const parentContent = JSON.parse(JSON.stringify(parent.content_json || {}));
   const parentEndDate = normalizeDateOnly(parentContent?.terms?.endDate);
   if (!parentEndDate) {
-    return res.status(400).json({ error: '原合同缺少有效结束日期，无法发起续约' });
+    return sendError(res, 400, 'RENEWAL_PARENT_END_DATE_INVALID', '原合同缺少有效结束日期，无法发起续约');
   }
   const now = new Date();
   const parentEndAt = new Date(`${parentEndDate}T23:59:59+08:00`);
   if (Number.isNaN(parentEndAt.getTime()) || parentEndAt.getTime() <= now.getTime()) {
-    return res.status(400).json({ error: '原合同已过续约申请时点，请重新发起新合同' });
+    return sendError(res, 400, 'RENEWAL_WINDOW_EXPIRED', '原合同已过续约申请时点，请重新发起新合同');
   }
   const existingRenewal = parseResult(db.exec(
     `SELECT id FROM contracts
-     WHERE parent_contract_id = ?
+      WHERE parent_contract_id = ?
        AND status NOT IN ('cancelled','expired','ended')
-     LIMIT 1`,
+      LIMIT 1`,
     [parent.id]
   ));
-  if (existingRenewal.length > 0) return res.status(409).json({ error: '该原合同已有进行中的续约合同' });
+  if (existingRenewal.length > 0) return sendError(res, 409, 'RENEWAL_ALREADY_EXISTS', '该原合同已有进行中的续约合同');
 
   const renewalId = `cnt_ren_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const nextLeaseMonths = Number(req.body?.leaseMonths ?? parentContent?.terms?.leaseMonths ?? 1);
   if (!Number.isInteger(nextLeaseMonths) || nextLeaseMonths < 1 || nextLeaseMonths > 12) {
-    return res.status(400).json({ error: '租期必须为 1-12 月的整数' });
+    return sendError(res, 400, 'LEASE_MONTHS_INVALID', '租期必须为 1-12 月的整数');
   }
   const nextStartDate = parentEndDate;
   const nextEndDate = addMonthsDateOnly(nextStartDate, nextLeaseMonths);
   const nextRentAmount = normalizeAmount(parentContent.rentAmount);
-  if (!nextRentAmount) return res.status(400).json({ error: '租金必须为大于 0 的数字' });
+  if (!nextRentAmount) return sendError(res, 400, 'RENT_AMOUNT_INVALID', '租金必须为大于 0 的数字');
 
   let clauses = Array.isArray(parentContent?.clauses) ? parentContent.clauses.map((x) => String(x || '').trim()).filter(Boolean) : [];
   let clauseSource = 'parent_contract';
   if (clauses.length === 0) {
     const listingRows = parseResult(db.exec('SELECT clauses_template_json FROM listings WHERE id = ?', [parent.listing_id]));
-    try {
-      const fallback = JSON.parse(String(listingRows[0]?.clauses_template_json || '[]'));
-      clauses = Array.isArray(fallback) ? fallback.map((x) => String(x || '').trim()).filter(Boolean) : [];
-      clauseSource = 'listing_default';
-    } catch {
-      clauses = [];
-      clauseSource = 'listing_default';
-    }
+    clauses = parseStoredClauses(listingRows[0]?.clauses_template_json);
+    clauseSource = 'listing_default';
   }
 
   const content = JSON.parse(JSON.stringify(parentContent));
@@ -1443,17 +2231,26 @@ router.get('/', authMiddleware, asyncHandler(async (req, res) => {
   const rows = parseResult(db.exec(`SELECT c.*, l.title AS listing_title, l.address AS listing_address
     FROM contracts c JOIN listings l ON c.listing_id = l.id
     WHERE c.tenant_id = ? OR c.landlord_id = ? ORDER BY c.created_at DESC`, [req.user.id, req.user.id]));
+  rows.forEach((row) => {
+    const onchain = getLatestOnchainStatus(db, 'contract', row.id, CONTRACT_ONCHAIN_KINDS);
+    row.onchain_state = onchain.status;
+    row.onchain_error_message = onchain.errorMessage;
+    row.onchain_tx_hash = onchain.txHash;
+  });
   res.json({ success: true, data: rows });
 }));
 
 // 函数 11: 获取合同详情接口。
-router.get('/:id', asyncHandler(async (req, res) => {
+router.get('/:id', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getDb();
   const userDb = await getUserDb();
   const rows = parseResult(db.exec(`SELECT c.*, l.title AS listing_title, l.address AS listing_address
     FROM contracts c JOIN listings l ON c.listing_id = l.id WHERE c.id = ?`, [req.params.id]));
-  if (!rows.length) return res.status(404).json({ error: '合同不存在' });
+  if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
   const contract = rows[0];
+  if (![contract.tenant_id, contract.landlord_id].includes(req.user.id)) {
+    return sendError(res, 403, 'CONTRACT_FORBIDDEN', '无权限查看该合同');
+  }
   // 补充双方联系方式
   const tenantProfiles = parseUserResult(userDb.exec('SELECT phone, nickname FROM users WHERE id = ?', [contract.tenant_id]));
   const landlordProfiles = parseUserResult(userDb.exec('SELECT phone, nickname FROM users WHERE id = ?', [contract.landlord_id]));
@@ -1479,6 +2276,12 @@ router.get('/:id', asyncHandler(async (req, res) => {
   ));
   contract.renewal_child_contract = renewalChildRows[0] || null;
   contract.is_renewal = !!String(contract.parent_contract_id || '').trim();
+  {
+    const onchain = getLatestOnchainStatus(db, 'contract', contract.id, CONTRACT_ONCHAIN_KINDS);
+    contract.onchain_state = onchain.status;
+    contract.onchain_error_message = onchain.errorMessage;
+    contract.onchain_tx_hash = onchain.txHash;
+  }
   res.json({ success: true, data: contract });
 }));
 

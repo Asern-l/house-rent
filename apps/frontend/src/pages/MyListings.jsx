@@ -34,6 +34,22 @@ function parseImageUrls(raw) {
   }
 }
 
+function parseJsonArray(raw) {
+  try {
+    const arr = Array.isArray(raw) ? raw : JSON.parse(raw || '[]');
+    return Array.isArray(arr) ? arr.filter(Boolean).map((x) => String(x)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseClausesText(text) {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function resolveImageUrl(url) {
   const network = String(localStorage.getItem('preferredNetwork') || 'sepolia').toLowerCase();
   if (network === 'local' && String(url).startsWith('/uploads/')) {
@@ -100,8 +116,10 @@ export default function MyListings() {
   const [listings, setListings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState('');
+  const [editMode, setEditMode] = useState('info');
   const [submittingId, setSubmittingId] = useState('');
   const [editForm, setEditForm] = useState({ rentAmount: '', minLeaseMonths: 1 });
+  const [clausesForm, setClausesForm] = useState({ clausesText: '' });
   const [currentImageUrls, setCurrentImageUrls] = useState([]);
   const [newImageFiles, setNewImageFiles] = useState([]);
   const [newImagePreviews, setNewImagePreviews] = useState([]);
@@ -184,17 +202,23 @@ export default function MyListings() {
     previewsRef.current.forEach((url) => URL.revokeObjectURL(url));
     previewsRef.current = [];
     setEditingId('');
+    setEditMode('info');
     setEditForm({ rentAmount: '', minLeaseMonths: 1 });
+    setClausesForm({ clausesText: '' });
     setCurrentImageUrls([]);
     setNewImageFiles([]);
     setNewImagePreviews([]);
   };
 
-  const startEdit = (item) => {
+  const startEdit = (item, mode = 'info') => {
     setEditingId(item.id);
+    setEditMode(mode);
     setEditForm({
       rentAmount: String(item.rent_amount || ''),
       minLeaseMonths: Number(item.min_lease_months || 1),
+    });
+    setClausesForm({
+      clausesText: parseJsonArray(item.clauses_template_json).join('\n'),
     });
     setCurrentImageUrls(parseImageUrls(item.image_urls));
     previewsRef.current.forEach((url) => URL.revokeObjectURL(url));
@@ -254,9 +278,31 @@ export default function MyListings() {
       const prepare = await apiPost(`/listings/${id}/status/prepare`, { status });
       const prepared = prepare?.data;
       const { contract, chainState } = await getContractAndState(id);
+      const currentChainStatus = Number(chainState?.status ?? chainState?.[6]);
+      const expectedCurrentStatus = { available: 1, offline: 0, closed: currentChainStatus }[status];
+      if (currentChainStatus === 2) {
+        throw new Error('链上房源已销毁，不能再下架、上架或编辑');
+      }
+      if (status !== 'closed' && Number.isFinite(expectedCurrentStatus) && currentChainStatus !== expectedCurrentStatus) {
+        throw new Error('链上房源状态与数据库不一致，请先验真或刷新后重试');
+      }
       const expectedVersion = chainState[7];
       const expectedNonce = chainState[8];
-      const tx = await contract.setListingStatus(id, Number(prepared.toStatusEnum), expectedVersion, expectedNonce);
+      await contract.setListingStatus.staticCall(id, Number(prepared.toStatusEnum), expectedVersion, expectedNonce);
+      const estimatedGas = await contract.setListingStatus.estimateGas(
+        id,
+        Number(prepared.toStatusEnum),
+        expectedVersion,
+        expectedNonce
+      );
+      const gasLimit = (estimatedGas * 12n) / 10n;
+      const tx = await contract.setListingStatus(
+        id,
+        Number(prepared.toStatusEnum),
+        expectedVersion,
+        expectedNonce,
+        { gasLimit }
+      );
       await tx.wait();
       await apiPost(`/listings/${id}/status/commit`, {
         status,
@@ -279,7 +325,35 @@ export default function MyListings() {
     }
   };
 
-  const submitEditTerms = async (item) => {
+  const submitListingUpdate = async (item) => {
+    if (editMode === 'clauses') {
+      setSubmittingId(item.id);
+      try {
+        const res = await apiPost(`/listings/${item.id}/clauses`, {
+          clauses: parseClausesText(clausesForm.clausesText),
+        });
+        const next = res?.data || {};
+        setListings((prev) => prev.map((x) => (x.id === item.id ? {
+          ...x,
+          clauses_template_json: JSON.stringify(next.clauses ?? parseClausesText(clausesForm.clausesText)),
+        } : x)));
+        toast.success('附加条款更新成功');
+        resetEditingState();
+      } catch (error) {
+        await reportClientError({
+          listingId: item?.id,
+          stage: 'listing.clauses.error',
+          message: error?.message || 'submitListingUpdate failed',
+          stack: error?.stack || '',
+          extra: { apiError: error?.response?.data || null },
+        });
+        toast.error(error?.response?.data?.error || error?.message || '附加条款更新失败');
+      } finally {
+        setSubmittingId('');
+      }
+      return;
+    }
+
     if (!window.ethereum) {
       await reportClientError({ listingId: item?.id, stage: 'wallet.missing', message: 'window.ethereum is missing' });
       toast.error('请先安装 MetaMask 钱包');
@@ -301,6 +375,7 @@ export default function MyListings() {
       const prepare = await apiPost(`/listings/${item.id}/terms/prepare`, {
         rentAmount: editForm.rentAmount,
         minLeaseMonths: Number(editForm.minLeaseMonths),
+        clauses: parseJsonArray(item.clauses_template_json),
         imageUrls: mergedImageUrls,
       });
       const prepared = prepare?.data;
@@ -347,19 +422,20 @@ export default function MyListings() {
         ...x,
         rent_amount: next.rentAmount ?? x.rent_amount,
         min_lease_months: next.minLeaseMonths ?? x.min_lease_months,
+        clauses_template_json: JSON.stringify(next.clauses ?? parseJsonArray(item.clauses_template_json)),
         image_urls: JSON.stringify(next.imageUrls ?? mergedImageUrls),
       } : x)));
-      toast.success('条款更新成功（已上链）');
+      toast.success('房源信息更新成功（已上链）');
       resetEditingState();
     } catch (error) {
       await reportClientError({
         listingId: item?.id,
-        stage: 'terms.error',
-        message: error?.message || 'submitEditTerms failed',
+        stage: 'listing.info.error',
+        message: error?.message || 'submitListingUpdate failed',
         stack: error?.stack || '',
         extra: { apiError: error?.response?.data || null },
       });
-      toast.error(error?.response?.data?.error || error?.message || '条款更新失败');
+      toast.error(error?.response?.data?.error || error?.message || '房源信息更新失败');
     } finally {
       setSubmittingId('');
     }
@@ -391,6 +467,8 @@ export default function MyListings() {
             const rawStatus = String(item.status || '').trim().toLowerCase();
             const isEditable = ['available', 'offline'].includes(rawStatus);
             const isEditing = editingId === item.id;
+            const isEditingInfo = isEditing && editMode === 'info';
+            const isEditingClauses = isEditing && editMode === 'clauses';
             const allPreviewUrls = [...currentImageUrls, ...newImagePreviews];
             const displayStatus = getDisplayStatus(item);
             return (
@@ -416,7 +494,8 @@ export default function MyListings() {
                       {rawStatus === 'available' && (
                         <>
                           <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => updateStatusOnchain(item.id, 'offline')}>下架（钱包签名）</button>
-                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => startEdit(item)}>编辑条款</button>
+                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => startEdit(item, 'info')}>房源信息编辑</button>
+                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => startEdit(item, 'clauses')}>附加条款编辑</button>
                           <button
                             disabled={submittingId === item.id}
                             className="btn-secondary px-3 py-1.5 text-sm"
@@ -433,7 +512,8 @@ export default function MyListings() {
                       {rawStatus === 'offline' && (
                         <>
                           <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => updateStatusOnchain(item.id, 'available')}>重新上架（钱包签名）</button>
-                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => startEdit(item)}>编辑条款</button>
+                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => startEdit(item, 'info')}>房源信息编辑</button>
+                          <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => startEdit(item, 'clauses')}>附加条款编辑</button>
                           <button
                             disabled={submittingId === item.id}
                             className="btn-secondary px-3 py-1.5 text-sm"
@@ -457,82 +537,98 @@ export default function MyListings() {
                     <div className="mb-3 flex items-center justify-between">
                       <p className="flex items-center gap-2 text-sm font-semibold text-gray-100">
                         <PencilIcon className="h-4 w-4" />
-                        编辑条款
+                        {isEditingClauses ? '附加条款编辑' : '房源信息编辑'}
                       </p>
                       <button type="button" className="text-gray-400 hover:text-gray-200" onClick={resetEditingState}>
                         <XIcon className="h-4 w-4" />
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                      <label className="text-xs text-gray-400">
-                        租金（ETH）
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          className="input-field mt-1"
-                          value={editForm.rentAmount}
-                          onChange={(e) => setEditForm((p) => ({ ...p, rentAmount: e.target.value }))}
+                    {isEditingInfo && (
+                      <>
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                          <label className="text-xs text-gray-400">
+                            租金（ETH）
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              className="input-field mt-1"
+                              value={editForm.rentAmount}
+                              onChange={(e) => setEditForm((p) => ({ ...p, rentAmount: e.target.value }))}
+                            />
+                          </label>
+                          <label className="text-xs text-gray-400">
+                            最少租期（月）
+                            <select
+                              className="input-field mt-1"
+                              value={editForm.minLeaseMonths}
+                              onChange={(e) => setEditForm((p) => ({ ...p, minLeaseMonths: Number(e.target.value) }))}
+                            >
+                              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{m}个月</option>)}
+                            </select>
+                          </label>
+                        </div>
+
+                        <div className="mt-3 rounded-lg border border-gray-700 bg-gray-800/40 p-3">
+                          <p className="text-xs text-gray-500">以下字段仅展示，不支持编辑</p>
+                          <p className="mt-1 text-sm text-gray-400">标题：{item.title || '-'}</p>
+                          <p className="text-sm text-gray-400">地址：{item.address || '-'}</p>
+                          <p className="text-sm text-gray-400">描述：{item.description || '-'}</p>
+                        </div>
+
+                        <div className="mt-3">
+                          <p className="text-xs text-gray-400">图片（可增删，最多 {MAX_IMAGE_COUNT} 张）</p>
+                          <div className="mt-2 grid grid-cols-3 gap-2 md:grid-cols-5">
+                            {currentImageUrls.map((url, idx) => (
+                              <div key={`cur_${url}_${idx}`} className="group relative overflow-hidden rounded border border-gray-700">
+                                <img src={resolveImageUrl(url)} alt={`cur_${idx}`} className="h-20 w-full object-cover" />
+                                <button type="button" onClick={() => removeCurrentImage(idx)} className="absolute right-1 top-1 rounded bg-black/70 p-1 text-white">
+                                  <Trash2Icon className="h-3 w-3" />
+                                </button>
+                              </div>
+                            ))}
+                            {newImagePreviews.map((url, idx) => (
+                              <div key={`new_${url}_${idx}`} className="group relative overflow-hidden rounded border border-blue-700">
+                                <img src={url} alt={`new_${idx}`} className="h-20 w-full object-cover" />
+                                <button type="button" onClick={() => removeNewImage(idx)} className="absolute right-1 top-1 rounded bg-black/70 p-1 text-white">
+                                  <Trash2Icon className="h-3 w-3" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                          <input
+                            type="file"
+                            className="mt-2 block w-full text-xs text-gray-300 file:mr-3 file:rounded file:border-0 file:bg-stone-900 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-[#f5f0e8]"
+                            accept="image/jpeg,image/png,image/webp"
+                            multiple
+                            onChange={handleSelectNewImages}
+                          />
+                          <p className="mt-1 text-xs text-gray-500">当前总数：{allPreviewUrls.length}</p>
+                        </div>
+                      </>
+                    )}
+
+                    {isEditingClauses && (
+                      <label className="block text-xs text-gray-400">
+                        默认条款（每行一条）
+                        <textarea
+                          className="input-field mt-1 min-h-[120px] resize-y"
+                          value={clausesForm.clausesText}
+                          onChange={(e) => setClausesForm({ clausesText: e.target.value })}
+                          placeholder={'例如：\n租金需在每月 1 日前支付\n禁止转租\n保持房屋设施完好'}
                         />
                       </label>
-                      <label className="text-xs text-gray-400">
-                        最少租期（月）
-                        <select
-                          className="input-field mt-1"
-                          value={editForm.minLeaseMonths}
-                          onChange={(e) => setEditForm((p) => ({ ...p, minLeaseMonths: Number(e.target.value) }))}
-                        >
-                          {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{m}个月</option>)}
-                        </select>
-                      </label>
-                    </div>
-
-                    <div className="mt-3 rounded-lg border border-gray-700 bg-gray-800/40 p-3">
-                      <p className="text-xs text-gray-500">content 固定不可改（以下字段仅展示）</p>
-                      <p className="mt-1 text-sm text-gray-400">标题：{item.title || '-'}</p>
-                      <p className="text-sm text-gray-400">地址：{item.address || '-'}</p>
-                      <p className="text-sm text-gray-400">描述：{item.description || '-'}</p>
-                    </div>
-
-                    <div className="mt-3">
-                      <p className="text-xs text-gray-400">图片（可增删，最多 {MAX_IMAGE_COUNT} 张）</p>
-                      <div className="mt-2 grid grid-cols-3 gap-2 md:grid-cols-5">
-                        {currentImageUrls.map((url, idx) => (
-                          <div key={`cur_${url}_${idx}`} className="group relative overflow-hidden rounded border border-gray-700">
-                            <img src={resolveImageUrl(url)} alt={`cur_${idx}`} className="h-20 w-full object-cover" />
-                            <button type="button" onClick={() => removeCurrentImage(idx)} className="absolute right-1 top-1 rounded bg-black/70 p-1 text-white">
-                              <Trash2Icon className="h-3 w-3" />
-                            </button>
-                          </div>
-                        ))}
-                        {newImagePreviews.map((url, idx) => (
-                          <div key={`new_${url}_${idx}`} className="group relative overflow-hidden rounded border border-blue-700">
-                            <img src={url} alt={`new_${idx}`} className="h-20 w-full object-cover" />
-                            <button type="button" onClick={() => removeNewImage(idx)} className="absolute right-1 top-1 rounded bg-black/70 p-1 text-white">
-                              <Trash2Icon className="h-3 w-3" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                      <input
-                        type="file"
-                        className="mt-2 block w-full text-xs text-gray-300 file:mr-3 file:rounded file:border-0 file:bg-stone-900 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-[#f5f0e8]"
-                        accept="image/jpeg,image/png,image/webp"
-                        multiple
-                        onChange={handleSelectNewImages}
-                      />
-                      <p className="mt-1 text-xs text-gray-500">当前总数：{allPreviewUrls.length}</p>
-                    </div>
+                    )}
 
                     <div className="mt-4 flex gap-2">
                       <button
                         type="button"
                         className="btn-primary px-4 py-2 text-sm"
                         disabled={submittingId === item.id}
-                        onClick={() => submitEditTerms(item)}
+                        onClick={() => submitListingUpdate(item)}
                       >
-                        {submittingId === item.id ? '提交中...' : '提交修改（钱包签名）'}
+                        {submittingId === item.id ? '提交中...' : (isEditingClauses ? '提交附加条款修改' : '提交房源信息修改（钱包签名）')}
                       </button>
                       <button type="button" className="btn-secondary px-4 py-2 text-sm" onClick={resetEditingState}>取消</button>
                     </div>

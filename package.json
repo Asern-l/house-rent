@@ -6,9 +6,7 @@
     "dev:backend": "npm --prefix apps/backend run dev",
     "dev:frontend": "npm --prefix apps/frontend run dev",
     "build:frontend": "npm --prefix apps/frontend run build",
-    "test:sign-flow": "node scripts/test_contract_sign_flow.js",
     "test:env-isolation": "node scripts/test_env_isolation.js",
-    "seed:local-debug": "CHAIN_ENV=local node scripts/seed_local_debug_data.js",
     "check:abi": "node scripts/sync_abi_and_deployment.js --check",
     "sync:abi": "node scripts/sync_abi_and_deployment.js --write"
   }

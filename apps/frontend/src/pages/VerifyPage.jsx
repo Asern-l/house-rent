@@ -38,6 +38,20 @@ const CONTRACT_CHECK_LABELS = {
   landlordSignatureEventMatch: '房东签名事件',
 };
 
+const SEMANTIC_STATE_LABELS = {
+  signing: '签约中',
+  pending_payment: '待支付',
+  future_reserved: '待生效',
+  effective: '当前有效',
+  expired: '已过期',
+  inactive: '未生效',
+  missing: '链上缺失',
+};
+
+function semanticLabel(value) {
+  return SEMANTIC_STATE_LABELS[String(value || '').trim()] || value || '-';
+}
+
 function getExplorerBase() {
   const network = String(localStorage.getItem('preferredNetwork') || 'sepolia').toLowerCase();
   if (network === 'sepolia') return 'https://sepolia.etherscan.io/tx/';
@@ -170,7 +184,7 @@ export default function VerifyPage({ onClose }) {
             <InfoPanel title="房源标识">
               <KeyValue label="网络" value={result.chainEnv || '-'} />
               <KeyValue label="房源 ID" value={result.listingId || '-'} mono />
-              <KeyValue label="数据库上链状态" value={result.dbSnapshot?.onchainStatus || '-'} />
+              <KeyValue label="数据库上链状态" value={result.dbSnapshot?.onchainState || '-'} />
               <KeyValue label="交易哈希" value={txHash || '-'} mono />
               {txExplorerBase && txHash && txHash.startsWith('0x') && (
                 <ExplorerLink href={`${txExplorerBase}${txHash}`} text="在区块浏览器查看房源交易" />
@@ -230,7 +244,7 @@ export default function VerifyPage({ onClose }) {
         {result && result.exists && verifyType === 'contract' && (
           <div className="mt-4 space-y-3">
             <StatusCard
-              ok={Boolean(result.hashMatch && result.signatureVerification?.allSignaturesValid && (result.onchainAnchored || !result.txHash || result.txHash === '未上链'))}
+              ok={Boolean(result.hashMatch && result.signatureVerification?.allSignaturesValid && (result.onchainAnchored || !result.txHash || result.txHash === '???') && (result.semanticVerification?.semanticMatch ?? true))}
               title="合同验真"
               desc={result.conclusion}
             />
@@ -241,7 +255,7 @@ export default function VerifyPage({ onClose }) {
                 <KeyValue label="合同 ID" value={result.contractId || '-'} mono />
                 <KeyValue label="房源 ID" value={result.listingId || '-'} mono />
                 <KeyValue label="合同状态" value={result.status || '-'} />
-                <KeyValue label="数据库上链状态" value={result.onchainStatus || '-'} />
+                <KeyValue label="数据库上链状态" value={result.onchainState || '-'} />
                 <KeyValue label="创建时间" value={result.createdAt || '-'} />
                 <KeyValue label="更新时间" value={result.updatedAt || '-'} />
               </Grid>
@@ -289,6 +303,19 @@ export default function VerifyPage({ onClose }) {
                   )}
                 </>
               )}
+            </InfoPanel>
+
+            <InfoPanel title="时间语义">
+              <Grid>
+                <KeyValue label="数据库语义状态" value={semanticLabel(result.semanticVerification?.dbSemanticState)} />
+                <KeyValue label="链上语义状态" value={semanticLabel(result.semanticVerification?.onchainSemanticState)} />
+                <KeyValue label="语义一致性" value={result.semanticVerification?.semanticMatch ? '一致' : '不一致'} />
+                <KeyValue label="懒释放状态" value={result.semanticVerification?.lazyReleaseState ? '是' : '否'} />
+                <KeyValue label="数据库当前有效" value={result.semanticVerification?.dbCurrentEffective ? '是' : '否'} />
+                <KeyValue label="链上当前有效" value={result.semanticVerification?.onchainCurrentEffective ? '是' : '否'} />
+                <KeyValue label="开始时间(ms)" value={result.semanticVerification?.startAtMs || '-'} mono />
+                <KeyValue label="结束时间(ms)" value={result.semanticVerification?.endAtMs || '-'} mono />
+              </Grid>
             </InfoPanel>
 
             <InfoPanel title="链上与支付状态">

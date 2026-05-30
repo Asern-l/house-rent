@@ -14,6 +14,15 @@ function parseImageUrls(raw) {
   }
 }
 
+function parseClauses(raw) {
+  try {
+    const arr = Array.isArray(raw) ? raw : JSON.parse(raw || '[]');
+    return Array.isArray(arr) ? arr.filter(Boolean).map((x) => String(x).trim()).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
 function resolveImageUrl(url) {
   const network = String(localStorage.getItem('preferredNetwork') || 'sepolia').toLowerCase();
   if (network === 'local' && String(url).startsWith('/uploads/')) {
@@ -59,6 +68,30 @@ function normalizeHistoryBinding(item) {
     eventName: binding.eventName || '',
     blockNumber: binding.blockNumber || 0,
     blockTime: binding.blockTime || 0,
+  };
+}
+
+function isOnchainHistoryAction(action) {
+  return [
+    'create_listing_onchain_commit',
+    'update_status_onchain_commit',
+    'update_terms_onchain_commit',
+  ].includes(String(action || '').trim());
+}
+
+function getHistoryBindingMeta(item) {
+  const requiresBinding = isOnchainHistoryAction(item?.action);
+  if (!requiresBinding) {
+    return {
+      title: '防篡改绑定',
+      statusText: '不适用（本次变更未上链）',
+      statusClassName: 'text-gray-400',
+    };
+  }
+  return {
+    title: '防篡改绑定',
+    statusText: item?.bindingVerified ? '通过' : '未通过/缺失',
+    statusClassName: item?.bindingVerified ? 'text-emerald-400' : 'text-yellow-300',
   };
 }
 
@@ -137,6 +170,7 @@ export default function ListingDetail() {
   const isOwner = user && listing.landlord_id === user.id;
   const minLeaseMonths = Number(listing.min_lease_months || 1);
   const imageUrls = parseImageUrls(listing.image_urls);
+  const clauses = parseClauses(listing.clauses_template_json);
   const maxLeaseMonths = 12;
   const today = new Date();
   const minDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
@@ -147,6 +181,7 @@ export default function ListingDetail() {
   const selectedSnapshot = normalizeHistorySnapshot(selectedHistory);
   const selectedBinding = normalizeHistoryBinding(selectedHistory);
   const selectedImages = selectedSnapshot?.imageUrls || [];
+  const selectedBindingMeta = getHistoryBindingMeta(selectedHistory);
 
   return (
     <div className="mx-auto max-w-4xl animate-fade-in">
@@ -227,6 +262,21 @@ export default function ListingDetail() {
           <p className="leading-relaxed text-gray-300">{listing.description || '暂无描述'}</p>
 
           <div className="rounded-lg border border-gray-700 bg-gray-800/40 p-3">
+            <p className="mb-2 text-sm font-medium text-gray-200">附加条款</p>
+            {clauses.length > 0 ? (
+              <div className="space-y-2 text-sm text-gray-300">
+                {clauses.map((clause, idx) => (
+                  <p key={`${idx}_${clause}`} className="rounded bg-gray-900/50 px-3 py-2">
+                    {idx + 1}. {clause}
+                  </p>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">当前未设置附加条款</p>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-gray-700 bg-gray-800/40 p-3">
             <p className="mb-2 text-sm font-medium text-gray-200">历史版本</p>
             {history.length === 0 ? (
               <p className="text-xs text-gray-500">暂无历史记录</p>
@@ -291,9 +341,9 @@ export default function ListingDetail() {
                           <p className="break-all">contentHash：{selectedSnapshot.contentHash || '-'}</p>
                           <p className="text-gray-400">{selectedSnapshot.description || '无描述'}</p>
                           <div className="mt-2 rounded border border-gray-700 bg-gray-900/70 p-2">
-                            <p className="font-medium text-gray-200">防篡改绑定</p>
-                            <p className={`mt-1 ${selectedHistory?.bindingVerified ? 'text-emerald-400' : 'text-yellow-300'}`}>
-                              绑定校验：{selectedHistory?.bindingVerified ? '通过' : '未通过/缺失'}
+                            <p className="font-medium text-gray-200">{selectedBindingMeta.title}</p>
+                            <p className={`mt-1 ${selectedBindingMeta.statusClassName}`}>
+                              绑定校验：{selectedBindingMeta.statusText}
                             </p>
                             <p className="break-all">本地快照哈希：{selectedHistory?.expectedSnapshotHash || '-'}</p>
                             <p className="break-all">绑定快照哈希：{selectedBinding?.snapshotHash || '-'}</p>
