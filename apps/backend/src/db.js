@@ -89,6 +89,12 @@ function tableSqlContainsAll(sql, fragments) {
   return fragments.every((fragment) => String(sql).includes(fragment));
 }
 
+function ensureColumn(d, tableName, columnName, definitionSql) {
+  const actual = parseResult(d.exec(`PRAGMA table_info(${tableName})`)).map((c) => c.name);
+  if (actual.includes(columnName)) return;
+  d.run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definitionSql}`);
+}
+
 function ensureIndexes(d) {
   d.run('CREATE INDEX IF NOT EXISTS idx_contracts_tenant ON contracts(tenant_id)');
   d.run('CREATE INDEX IF NOT EXISTS idx_contracts_landlord ON contracts(landlord_id)');
@@ -112,7 +118,7 @@ function assertStrictSchema(d) {
   assertRequiredColumns(d, 'listings', [
     'id', 'landlord_id', 'title', 'description', 'address', 'district', 'rent_amount', 'rent_cycle',
     'min_lease_months', 'bedrooms', 'livingrooms', 'bathrooms', 'area', 'clauses_template_json', 'image_urls',
-    'image_hashes', 'content_hash', 'tx_hash', 'status', 'created_at', 'updated_at',
+    'image_hashes', 'image_cids', 'public_snapshot_cid', 'public_snapshot_hash', 'content_hash', 'tx_hash', 'status', 'created_at', 'updated_at',
     'chain_version', 'chain_nonce', 'chain_block_number', 'chain_block_time'
   ]);
 
@@ -149,12 +155,12 @@ function assertStrictSchema(d) {
   ]);
 
   assertRequiredColumns(d, 'listing_feedbacks', [
-    'id', 'listing_id', 'author_id', 'author_role', 'author_wallet', 'feedback_type', 'comment_text', 'comment_hash', 'tx_hash', 'chain_env', 'created_at'
+    'id', 'listing_id', 'author_id', 'author_role', 'author_wallet', 'feedback_type', 'comment_text', 'comment_hash', 'comment_cid', 'tx_hash', 'chain_env', 'created_at'
   ]);
 
   assertRequiredColumns(d, 'contract_reviews', [
     'id', 'contract_id', 'listing_id', 'tenant_id', 'tenant_wallet', 'rating', 'weight',
-    'comment_text', 'comment_hash', 'tx_hash', 'chain_env', 'created_at'
+    'comment_text', 'comment_hash', 'comment_cid', 'tx_hash', 'chain_env', 'created_at'
   ]);
 
   const contractsSql = getTableCreateSql(d, 'contracts');
@@ -187,6 +193,9 @@ async function migrate() {
     clauses_template_json TEXT DEFAULT '[]',
     image_urls TEXT DEFAULT '[]',
     image_hashes TEXT DEFAULT '[]',
+    image_cids TEXT DEFAULT '[]',
+    public_snapshot_cid TEXT DEFAULT '',
+    public_snapshot_hash TEXT DEFAULT '',
     content_hash TEXT NOT NULL DEFAULT '',
     tx_hash TEXT,
     status TEXT NOT NULL DEFAULT 'available' CHECK(status IN ('available','rented','offline','closed')),
@@ -335,6 +344,7 @@ async function migrate() {
     feedback_type TEXT NOT NULL CHECK(feedback_type IN ('mismatch','photos','noise','communication','other')),
     comment_text TEXT NOT NULL,
     comment_hash TEXT NOT NULL,
+    comment_cid TEXT DEFAULT '',
     tx_hash TEXT NOT NULL UNIQUE,
     chain_env TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
@@ -351,6 +361,7 @@ async function migrate() {
     weight INTEGER NOT NULL CHECK(weight >= 1),
     comment_text TEXT NOT NULL,
     comment_hash TEXT NOT NULL,
+    comment_cid TEXT DEFAULT '',
     tx_hash TEXT NOT NULL UNIQUE,
     chain_env TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
@@ -375,6 +386,11 @@ async function migrate() {
   )`);
 
   ensureIndexes(d);
+  ensureColumn(d, 'listings', 'image_cids', "TEXT DEFAULT '[]'");
+  ensureColumn(d, 'listings', 'public_snapshot_cid', "TEXT DEFAULT ''");
+  ensureColumn(d, 'listings', 'public_snapshot_hash', "TEXT DEFAULT ''");
+  ensureColumn(d, 'listing_feedbacks', 'comment_cid', "TEXT DEFAULT ''");
+  ensureColumn(d, 'contract_reviews', 'comment_cid', "TEXT DEFAULT ''");
 
   try {
     assertStrictSchema(d);

@@ -128,7 +128,7 @@ export default function PublishListing({ onClose }) {
 
     setSubmitting(true);
     try {
-      let uploadedImageUrls = [];
+      let uploadedImages = [];
       if (imageFiles.length > 0) {
         const images = [];
         for (const file of imageFiles) {
@@ -136,12 +136,18 @@ export default function PublishListing({ onClose }) {
           images.push({ dataUrl });
         }
         const uploadRes = await apiPost('/listings/upload-images', { images });
-        uploadedImageUrls = Array.isArray(uploadRes?.data?.images)
-          ? uploadRes.data.images.map((item) => item.url).filter(Boolean)
-          : [];
+        uploadedImages = Array.isArray(uploadRes?.data?.images) ? uploadRes.data.images : [];
       }
+      const uploadedImageUrls = uploadedImages.map((item) => item.url).filter(Boolean);
+      const uploadedImageCids = uploadedImages.map((item) => item.cid).filter(Boolean);
+      const uploadedImageHashes = uploadedImages.map((item) => item.hash).filter(Boolean);
 
-      const prepare = await apiPost('/listings/prepare-create', { ...form, imageUrls: uploadedImageUrls });
+      const prepare = await apiPost('/listings/prepare-create', {
+        ...form,
+        imageUrls: uploadedImageUrls,
+        imageCids: uploadedImageCids,
+        imageHashes: uploadedImageHashes,
+      });
       const draft = prepare?.data?.draft;
       const chainAnchor = prepare?.data?.chainAnchor;
       if (!draft || !chainAnchor?.listingId) throw new Error('预创建返回数据无效');
@@ -163,7 +169,9 @@ export default function PublishListing({ onClose }) {
         chainAnchor.contentHash,
         chainAnchor.rentAmountWei,
         Number(chainAnchor.minLeaseMonths),
-        chainAnchor.imageRootHash
+        chainAnchor.imageRootHash,
+        chainAnchor.snapshotHash,
+        chainAnchor.snapshotCid
       );
       await tx.wait();
 

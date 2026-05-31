@@ -395,12 +395,61 @@
                        },
                        {
                            "indexed":  false,
+                           "internalType":  "string",
+                           "name":  "commentCid",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  false,
                            "internalType":  "uint256",
                            "name":  "createdAt",
                            "type":  "uint256"
                        }
                    ],
         "name":  "ListingFeedbackSubmitted",
+        "type":  "event"
+    },
+    {
+        "anonymous":  false,
+        "inputs":  [
+                       {
+                           "indexed":  true,
+                           "internalType":  "string",
+                           "name":  "listingId",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "uint64",
+                           "name":  "version",
+                           "type":  "uint64"
+                       },
+                       {
+                           "indexed":  true,
+                           "internalType":  "bytes32",
+                           "name":  "contentHash",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "bytes32",
+                           "name":  "snapshotHash",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "string",
+                           "name":  "snapshotCid",
+                           "type":  "string"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "uint256",
+                           "name":  "blockTime",
+                           "type":  "uint256"
+                       }
+                   ],
+        "name":  "ListingSnapshotAnchored",
         "type":  "event"
     },
     {
@@ -558,6 +607,12 @@
                            "internalType":  "bytes32",
                            "name":  "commentHash",
                            "type":  "bytes32"
+                       },
+                       {
+                           "indexed":  false,
+                           "internalType":  "string",
+                           "name":  "commentCid",
+                           "type":  "string"
                        },
                        {
                            "indexed":  false,
@@ -777,6 +832,16 @@
                            "internalType":  "bytes32",
                            "name":  "imageRootHash",
                            "type":  "bytes32"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "snapshotHash",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "internalType":  "string",
+                           "name":  "snapshotCid",
+                           "type":  "string"
                        }
                    ],
         "name":  "createListing",
@@ -1311,6 +1376,11 @@
                            "internalType":  "bytes32",
                            "name":  "commentHash",
                            "type":  "bytes32"
+                       },
+                       {
+                           "internalType":  "string",
+                           "name":  "commentCid",
+                           "type":  "string"
                        }
                    ],
         "name":  "submitListingFeedback",
@@ -1336,6 +1406,11 @@
                            "internalType":  "uint8",
                            "name":  "rating",
                            "type":  "uint8"
+                       },
+                       {
+                           "internalType":  "string",
+                           "name":  "commentCid",
+                           "type":  "string"
                        }
                    ],
         "name":  "submitRentalReview",
@@ -1371,6 +1446,16 @@
                            "internalType":  "bytes32",
                            "name":  "newImageRootHash",
                            "type":  "bytes32"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "newSnapshotHash",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "internalType":  "string",
+                           "name":  "newSnapshotCid",
+                           "type":  "string"
                        },
                        {
                            "internalType":  "uint64",

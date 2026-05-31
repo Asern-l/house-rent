@@ -21,6 +21,7 @@ const {
   markOnchainOperationFailed,
 } = require('./onchain-operations');
 const { parseContractEndAtMs } = require('./listing-public-state');
+const { isIpfsEnabled, addJsonToIpfs, sha256Hex } = require('./ipfs');
 const contractRoutes = require('./routes/contracts');
 const listingRoutes = require('./routes/listings');
 const { AppError, error: buildError } = require('./app-error');
@@ -263,6 +264,63 @@ function safeParseJsonObject(raw, fallback = {}) {
   }
 }
 
+function buildListingPublicSnapshotPayload({
+  listingId,
+  landlordId = '',
+  title,
+  description,
+  address,
+  district = '',
+  rentAmount,
+  rentCycle = 'month',
+  minLeaseMonths = 1,
+  bedrooms = 1,
+  livingrooms = 1,
+  bathrooms = 1,
+  area = 0,
+  clauses = [],
+  imageUrls = [],
+  imageHashes = [],
+  imageCids = [],
+  contentHash = '',
+  status = 'available',
+  txHash = '',
+}) {
+  return {
+    listingId: String(listingId || ''),
+    landlordId: String(landlordId || ''),
+    title: String(title || '').trim(),
+    description: String(description || '').trim(),
+    address: String(address || '').trim(),
+    district: String(district || '').trim(),
+    rentAmount: String(rentAmount || '').trim(),
+    rentCycle: String(rentCycle || 'month').trim(),
+    minLeaseMonths: Number(minLeaseMonths || 1),
+    bedrooms: Number(bedrooms || 1),
+    livingrooms: Number(livingrooms || 1),
+    bathrooms: Number(bathrooms || 1),
+    area: Number(area || 0),
+    clauses: Array.isArray(clauses) ? clauses : [],
+    imageUrls: Array.isArray(imageUrls) ? imageUrls : [],
+    imageHashes: Array.isArray(imageHashes) ? imageHashes.map((item) => String(item || '').toLowerCase()) : [],
+    imageCids: Array.isArray(imageCids) ? imageCids.map((item) => String(item || '').trim()) : [],
+    contentHash: String(contentHash || '').trim().toLowerCase(),
+    status: String(status || 'available').trim().toLowerCase(),
+    txHash: String(txHash || '').trim().toLowerCase(),
+  };
+}
+
+async function storeListingPublicSnapshot(snapshot) {
+  const json = JSON.stringify(snapshot);
+  if (!isIpfsEnabled()) {
+    return { cid: '', contentHash: sha256Hex(json) };
+  }
+  const uploaded = await addJsonToIpfs(snapshot, {
+    fileName: `listing-snapshot-${String(snapshot.listingId || 'unknown')}.json`,
+  });
+  return { cid: uploaded.cid, contentHash: uploaded.contentHash };
+}
+
 function normalizeEventArgs(args) {
   const obj = typeof args?.toObject === 'function' ? args.toObject() : (args || {});
   const result = {};
@@ -376,15 +434,34 @@ async function reconcileUnifiedOnchainOperations() {
             });
             continue;
           }
+          const snapshotLog = loaded.parsedLogs.find((log) =>
+            log.name === 'ListingSnapshotAnchored'
+            && String(log.args?.listingId || '').toLowerCase() === ethers.id(String(draft.listingId || '')).toLowerCase()
+            && Number(log.args?.version || 0) === Number(createdLog.args?.version || 0)
+            && toLowerHex(log.args?.contentHash) === toLowerHex(chainAnchor.contentHash)
+            && toLowerHex(log.args?.snapshotHash) === toLowerHex(chainAnchor.snapshotHash)
+            && String(log.args?.snapshotCid || '').trim() === String(chainAnchor.snapshotCid || '').trim()
+          );
+          if (!snapshotLog) {
+            markOnchainOperationFailed(db, {
+              opId: op.op_id,
+              entityType: op.entity_type,
+              entityId: op.entity_id,
+              operationKind: op.operation_kind,
+              txHash: op.tx_hash,
+              errorMessage: 'listing_snapshot_anchor_mismatch',
+            });
+            continue;
+          }
 
           const existed = parseResult(db.exec('SELECT id, tx_hash FROM listings WHERE id = ?', [payload.listingId || op.entity_id]))[0];
           if (!existed) {
             db.run(`INSERT INTO listings (
               id, landlord_id, title, description, address, district, rent_amount,
               rent_cycle, min_lease_months, bedrooms, livingrooms, bathrooms, area,
-              clauses_template_json, image_urls, image_hashes, tx_hash, status,
+              clauses_template_json, image_urls, image_hashes, image_cids, public_snapshot_cid, public_snapshot_hash, tx_hash, status,
               chain_version, chain_nonce, chain_block_number, chain_block_time, content_hash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?, ?, ?, ?)`, [
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?, ?, ?, ?)`, [
               draft.listingId,
               payload.landlordId || '',
               draft.title || '',
@@ -401,6 +478,9 @@ async function reconcileUnifiedOnchainOperations() {
               JSON.stringify(Array.isArray(draft.clauses) ? draft.clauses : []),
               JSON.stringify(Array.isArray(draft.imageUrls) ? draft.imageUrls : []),
               JSON.stringify(Array.isArray(draft.imageHashes) ? draft.imageHashes : []),
+              JSON.stringify(Array.isArray(draft.imageCids) ? draft.imageCids : []),
+              String(chainAnchor.snapshotCid || '').trim(),
+              String(chainAnchor.snapshotHash || '').trim().toLowerCase(),
               op.tx_hash,
               Number(createdLog.args?.version || 0),
               Number(createdLog.args?.nonce || 0),
@@ -412,6 +492,9 @@ async function reconcileUnifiedOnchainOperations() {
             db.run(
                 `UPDATE listings
                  SET tx_hash = ?,
+                    image_cids = CASE WHEN COALESCE(image_cids, '') = '' OR image_cids = '[]' THEN ? ELSE image_cids END,
+                    public_snapshot_cid = CASE WHEN COALESCE(public_snapshot_cid, '') = '' THEN ? ELSE public_snapshot_cid END,
+                    public_snapshot_hash = CASE WHEN COALESCE(public_snapshot_hash, '') = '' THEN ? ELSE public_snapshot_hash END,
                     chain_version = ?,
                     chain_nonce = ?,
                     chain_block_number = ?,
@@ -421,6 +504,9 @@ async function reconcileUnifiedOnchainOperations() {
                WHERE id = ?`,
               [
                 op.tx_hash,
+                JSON.stringify(Array.isArray(draft.imageCids) ? draft.imageCids : []),
+                String(chainAnchor.snapshotCid || '').trim(),
+                String(chainAnchor.snapshotHash || '').trim().toLowerCase(),
                 Number(createdLog.args?.version || 0),
                 Number(createdLog.args?.nonce || 0),
                 Number(loaded.receipt.blockNumber || 0),
@@ -524,6 +610,25 @@ async function reconcileUnifiedOnchainOperations() {
             });
             continue;
           }
+          const snapshotLog = loaded.parsedLogs.find((log) =>
+            log.name === 'ListingSnapshotAnchored'
+            && String(log.args?.listingId || '').toLowerCase() === ethers.id(String(payload.listingId || op.entity_id)).toLowerCase()
+            && Number(log.args?.version || 0) === Number(termsLog.args?.version || 0)
+            && toLowerHex(log.args?.contentHash) === toLowerHex(payload.contentHash)
+            && toLowerHex(log.args?.snapshotHash) === toLowerHex(payload.snapshotHash)
+            && String(log.args?.snapshotCid || '').trim() === String(payload.snapshotCid || '').trim()
+          );
+          if (!snapshotLog) {
+            markOnchainOperationFailed(db, {
+              opId: op.op_id,
+              entityType: op.entity_type,
+              entityId: op.entity_id,
+              operationKind: op.operation_kind,
+              txHash: op.tx_hash,
+              errorMessage: 'listing_snapshot_anchor_mismatch',
+            });
+            continue;
+          }
           db.run(
             `UPDATE listings
              SET rent_amount = ?,
@@ -531,6 +636,9 @@ async function reconcileUnifiedOnchainOperations() {
                  clauses_template_json = ?,
                  image_urls = ?,
                  image_hashes = ?,
+                 image_cids = ?,
+                 public_snapshot_cid = ?,
+                 public_snapshot_hash = ?,
                  tx_hash = ?,
                  chain_version = ?,
                  chain_nonce = ?,
@@ -544,6 +652,9 @@ async function reconcileUnifiedOnchainOperations() {
               JSON.stringify(Array.isArray(payload.clauses) ? payload.clauses : []),
               JSON.stringify(Array.isArray(payload.imageUrls) ? payload.imageUrls : []),
               JSON.stringify(Array.isArray(payload.imageHashes) ? payload.imageHashes : []),
+              JSON.stringify(Array.isArray(payload.imageCids) ? payload.imageCids : []),
+              String(payload.snapshotCid || '').trim(),
+              String(payload.snapshotHash || '').trim().toLowerCase(),
               op.tx_hash,
               Number(termsLog.args?.version || 0),
               Number(termsLog.args?.nonce || 0),

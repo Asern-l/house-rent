@@ -122,9 +122,18 @@ export default function ListingReviewsPage() {
 
       const contract = new ethers.Contract(contractAddress, RentalChainABI, signer);
       const commentHash = buildCommentHash(normalizedComment);
-      await contract.submitListingFeedback.staticCall(id, option.code, commentHash);
-      const estimatedGas = await contract.submitListingFeedback.estimateGas(id, option.code, commentHash);
-      const tx = await contract.submitListingFeedback(id, option.code, commentHash, {
+      const prepare = await apiPost(`/listings/${id}/feedbacks/prepare-onchain`, {
+        feedbackType,
+        commentText: normalizedComment,
+        commentHash,
+      });
+      const commentCid = String(prepare?.data?.commentCid || '').trim();
+      if (!commentCid) {
+        throw new Error('反馈 commentCid 生成失败');
+      }
+      await contract.submitListingFeedback.staticCall(id, option.code, commentHash, commentCid);
+      const estimatedGas = await contract.submitListingFeedback.estimateGas(id, option.code, commentHash, commentCid);
+      const tx = await contract.submitListingFeedback(id, option.code, commentHash, commentCid, {
         gasLimit: (estimatedGas * 120n) / 100n,
       });
       await tx.wait();
@@ -134,6 +143,7 @@ export default function ListingReviewsPage() {
         feedbackType,
         commentText: normalizedComment,
         commentHash,
+        commentCid,
       });
 
       toast.success('房源反馈已提交');

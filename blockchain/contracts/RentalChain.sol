@@ -147,6 +147,15 @@ contract RentalChain is ReentrancyGuard {
         uint256 blockTime
     );
 
+    event ListingSnapshotAnchored(
+        string indexed listingId,
+        uint64 indexed version,
+        bytes32 indexed contentHash,
+        bytes32 snapshotHash,
+        string snapshotCid,
+        uint256 blockTime
+    );
+
     event GasCompEscrowLocked(bytes32 indexed authId, string indexed contractId, address indexed tenant, address landlord, uint256 capWei, uint256 deadlineMs);
     event GasCompRevoked(bytes32 indexed authId, string indexed contractId, address indexed tenant, uint256 refundedWei);
     event GasCompSettledOnCreate(bytes32 indexed authId, string indexed contractId, address indexed landlord, uint256 compensationWei, uint256 refundWei);
@@ -193,6 +202,7 @@ contract RentalChain is ReentrancyGuard {
         address indexed tenant,
         uint8 rating,
         bytes32 commentHash,
+        string commentCid,
         uint256 ratedAt
     );
     event ListingFeedbackSubmitted(
@@ -200,6 +210,7 @@ contract RentalChain is ReentrancyGuard {
         address indexed sender,
         uint8 feedbackType,
         bytes32 commentHash,
+        string commentCid,
         uint256 createdAt
     );
 
@@ -385,9 +396,11 @@ contract RentalChain is ReentrancyGuard {
         bytes32 contentHash,
         uint256 rentAmountWei,
         uint16 minLeaseMonths,
-        bytes32 imageRootHash
+        bytes32 imageRootHash,
+        bytes32 snapshotHash,
+        string calldata snapshotCid
     ) external {
-        _createListing(listingId, contentHash, rentAmountWei, minLeaseMonths, imageRootHash);
+        _createListing(listingId, contentHash, rentAmountWei, minLeaseMonths, imageRootHash, snapshotHash, snapshotCid);
     }
 
     function _createListing(
@@ -395,13 +408,17 @@ contract RentalChain is ReentrancyGuard {
         bytes32 contentHash,
         uint256 rentAmountWei,
         uint16 minLeaseMonths,
-        bytes32 imageRootHash
+        bytes32 imageRootHash,
+        bytes32 snapshotHash,
+        string memory snapshotCid
     ) internal {
         require(bytes(listingId).length > 0, "listingId required");
         require(!_listings[listingId].exists, "listing already exists");
         require(contentHash != bytes32(0), "contentHash required");
         require(rentAmountWei > 0, "rentAmountWei must > 0");
         require(minLeaseMonths > 0, "minLeaseMonths must > 0");
+        require(snapshotHash != bytes32(0), "snapshotHash required");
+        require(bytes(snapshotCid).length > 0, "snapshotCid required");
 
         ListingRecord storage record = _listings[listingId];
         record.listingId = listingId;
@@ -419,6 +436,7 @@ contract RentalChain is ReentrancyGuard {
 
         _allListingIds.push(listingId);
         emit ListingCreated(listingId, msg.sender, contentHash, rentAmountWei, minLeaseMonths, imageRootHash, record.version, record.nonce, block.timestamp);
+        emit ListingSnapshotAnchored(listingId, record.version, contentHash, snapshotHash, snapshotCid, block.timestamp);
     }
 
     function createContractRecord(CreateContractParams calldata p) external nonReentrant {
@@ -454,6 +472,8 @@ contract RentalChain is ReentrancyGuard {
         uint256 newRentAmountWei,
         uint16 newMinLeaseMonths,
         bytes32 newImageRootHash,
+        bytes32 newSnapshotHash,
+        string calldata newSnapshotCid,
         uint64 expectedVersion,
         uint64 expectedNonce
     ) external nonReentrant onlyLandlord(listingId) {
@@ -463,6 +483,8 @@ contract RentalChain is ReentrancyGuard {
         require(newContentHash != bytes32(0), "newContentHash required");
         require(newRentAmountWei > 0, "newRentAmountWei must > 0");
         require(newMinLeaseMonths > 0, "newMinLeaseMonths must > 0");
+        require(newSnapshotHash != bytes32(0), "newSnapshotHash required");
+        require(bytes(newSnapshotCid).length > 0, "newSnapshotCid required");
         require(record.version == expectedVersion, "version mismatch");
         require(record.nonce == expectedNonce, "nonce mismatch");
 
@@ -475,6 +497,7 @@ contract RentalChain is ReentrancyGuard {
         record.updatedAt = block.timestamp;
 
         emit ListingContentUpdated(listingId, newContentHash, newRentAmountWei, newMinLeaseMonths, newImageRootHash, record.version, record.nonce, msg.sender, block.timestamp);
+        emit ListingSnapshotAnchored(listingId, record.version, newContentHash, newSnapshotHash, newSnapshotCid, block.timestamp);
     }
 
     function setListingStatus(
@@ -603,11 +626,13 @@ contract RentalChain is ReentrancyGuard {
     function submitRentalReview(
         string calldata contractId,
         bytes32 commentHash,
-        uint8 rating
+        uint8 rating,
+        string calldata commentCid
     ) external {
         require(bytes(contractId).length > 0, "contractId required");
         require(commentHash != bytes32(0), "commentHash required");
         require(rating >= 1 && rating <= 5, "rating out of range");
+        require(bytes(commentCid).length > 0, "commentCid required");
 
         ContractRecord storage record = _contracts[contractId];
         require(record.exists, "contract not found");
@@ -625,22 +650,24 @@ contract RentalChain is ReentrancyGuard {
         review.ratedAt = uint64(block.timestamp);
         review.tenant = msg.sender;
 
-        emit RentalReviewSubmitted(contractId, record.listingId, msg.sender, rating, commentHash, block.timestamp);
+        emit RentalReviewSubmitted(contractId, record.listingId, msg.sender, rating, commentHash, commentCid, block.timestamp);
     }
 
     function submitListingFeedback(
         string calldata listingId,
         uint8 feedbackType,
-        bytes32 commentHash
+        bytes32 commentHash,
+        string calldata commentCid
     ) external {
         require(bytes(listingId).length > 0, "listingId required");
         require(commentHash != bytes32(0), "commentHash required");
         require(feedbackType >= 1 && feedbackType <= 5, "feedbackType out of range");
+        require(bytes(commentCid).length > 0, "commentCid required");
 
         ListingRecord storage listing = _listings[listingId];
         require(listing.exists, "listing not found");
 
-        emit ListingFeedbackSubmitted(listingId, msg.sender, feedbackType, commentHash, block.timestamp);
+        emit ListingFeedbackSubmitted(listingId, msg.sender, feedbackType, commentHash, commentCid, block.timestamp);
     }
 
     function completeExpiredContract(string calldata contractId) external {

@@ -17,6 +17,9 @@ blockchain/.ganache-db/
 blockchain/deployments-rental-localhost.json
 blockchain/deployments-rental-sepolia.json
 old-docs/
+.ipfs-data/
+tmp/ipfs/
+.tools/ipfs/
 
 # Environment files
 .env

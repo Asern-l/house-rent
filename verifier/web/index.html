@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>独立验真工具</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="app">
+    <header class="hero">
+      <h1>独立验真工具</h1>
+      <p>不依赖平台账号系统。直接读取本地 PDF、链上记录和 IPFS 材料，完成合同、房源、反馈和租后评价的独立验真。</p>
+    </header>
+
+    <section class="tabs">
+      <button class="tab is-active" data-tab="contract">合同 PDF 验真</button>
+      <button class="tab" data-tab="listing">房源验真</button>
+    </section>
+
+    <section class="panel is-active" data-panel="contract">
+      <form id="contract-form" class="card">
+        <label class="field">
+          <span>网络</span>
+          <select name="network">
+            <option value="sepolia">sepolia</option>
+            <option value="local">local</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>合同 PDF</span>
+          <input type="file" name="pdf" accept=".pdf,application/pdf" required>
+        </label>
+        <label class="field">
+          <span>RPC URL（可选）</span>
+          <input type="text" name="rpcUrl" placeholder="留空则使用默认 RPC">
+        </label>
+        <label class="field">
+          <span>合约地址（可选）</span>
+          <input type="text" name="contractAddress" placeholder="留空则读取部署文件">
+        </label>
+        <div class="actions">
+          <button type="submit">开始验真</button>
+        </div>
+        <p class="hint">合同会同时顺带校验关联房源。若 PDF 内含房源标识，将继续校验房源公开快照以及链上评论材料。</p>
+      </form>
+    </section>
+
+    <section class="panel" data-panel="listing">
+      <form id="listing-form" class="card">
+        <label class="field">
+          <span>网络</span>
+          <select name="network">
+            <option value="sepolia">sepolia</option>
+            <option value="local">local</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>房源 ID</span>
+          <input type="text" name="listingId" placeholder="lst_xxx" required>
+        </label>
+        <label class="field">
+          <span>快照 CID（可选）</span>
+          <input type="text" name="snapshotCid" placeholder="不填则只做链上房源验真">
+        </label>
+        <label class="field">
+          <span>快照哈希（可选）</span>
+          <input type="text" name="snapshotHash" placeholder="0x...">
+        </label>
+        <label class="field">
+          <span>追溯时间戳秒（可选）</span>
+          <input type="number" name="atSec" placeholder="例如 1780209098">
+        </label>
+        <label class="field">
+          <span>RPC URL（可选）</span>
+          <input type="text" name="rpcUrl" placeholder="留空则使用默认 RPC">
+        </label>
+        <label class="field">
+          <span>合约地址（可选）</span>
+          <input type="text" name="contractAddress" placeholder="留空则读取部署文件">
+        </label>
+        <div class="actions">
+          <button type="submit">开始验真</button>
+        </div>
+        <p class="hint">房源验真默认核对当前链上房源。若提供快照 CID / 哈希，会继续校验 IPFS 公开快照；评论和租后评价则直接按链上 commentCid 联动读取。</p>
+      </form>
+    </section>
+
+    <section class="result card">
+      <div id="status" class="status">等待开始</div>
+      <div id="result" class="result-body">
+        <p class="muted">尚未执行验真。</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

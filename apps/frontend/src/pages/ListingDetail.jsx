@@ -325,7 +325,7 @@ export default function ListingDetail() {
                             <p className={`mt-1 ${selectedHistory?.bindingVerified ? 'text-emerald-400' : 'text-yellow-300'}`}>
                               绑定校验：{selectedHistory?.bindingVerified ? '通过' : '未通过/缺失'}
                             </p>
-                            <p className="break-all">本地快照哈希：{selectedHistory?.expectedSnapshotHash || '-'}</p>
+                            <p className="break-all">公开快照哈希：{selectedHistory?.expectedSnapshotHash || '-'}</p>
                             <p className="break-all">绑定快照哈希：{selectedBinding?.snapshotHash || '-'}</p>
                             <p>链上版本号：{selectedBinding?.chainVersion || '-'}</p>
                             <p>链上操作序号：{selectedBinding?.chainNonce || '-'}</p>

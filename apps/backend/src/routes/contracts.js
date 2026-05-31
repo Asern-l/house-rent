@@ -21,6 +21,7 @@ const {
 const { authMiddleware, requireRole } = require('../auth');
 const { logSignFlow, logRiskEvent } = require('../logger');
 const { resolveListingPublicState } = require('../listing-public-state');
+const { isIpfsEnabled, addJsonToIpfs, buildGatewayUrl } = require('../ipfs');
 
 const router = express.Router();
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -2036,8 +2037,77 @@ router.post('/:id/cancel', authMiddleware, asyncHandler(async (req, res) => {
   });
 }));
 
+router.post('/:id/review/prepare-onchain', authMiddleware, requireRole('tenant'), asyncHandler(async (req, res) => {
+  if (!isIpfsEnabled()) {
+    return sendError(res, 503, 'IPFS_COMMENT_CID_UNAVAILABLE', 'IPFS 未启用，当前不能生成评价 commentCid');
+  }
+  const ratingNum = Number(req.body?.rating);
+  if (!Number.isInteger(ratingNum) || ratingNum < 1 || ratingNum > 5) {
+    return sendError(res, 400, 'REVIEW_RATING_INVALID', '评分必须是 1 到 5 的整数');
+  }
+  const normalizedCommentText = normalizePublicComment(req.body?.commentText, 500);
+  if (!normalizedCommentText) {
+    return sendError(res, 400, 'REVIEW_COMMENT_INVALID', '评价内容不能为空且不能超过 500 字');
+  }
+  const normalizedCommentHash = String(req.body?.commentHash || '').trim().toLowerCase();
+  const expectedCommentHash = buildReviewCommentHash(normalizedCommentText).toLowerCase();
+  if (normalizedCommentHash !== expectedCommentHash) {
+    return sendError(res, 400, 'REVIEW_COMMENT_HASH_MISMATCH', '评价哈希与评价内容不一致');
+  }
+
+  const db = await getDb();
+  const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
+  if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
+  const contract = rows[0];
+  if (contract.tenant_id !== req.user.id) {
+    return sendError(res, 403, 'REVIEW_FORBIDDEN', '仅合同租客可提交租后评价');
+  }
+  const existed = parseResult(db.exec('SELECT id FROM contract_reviews WHERE contract_id = ? LIMIT 1', [req.params.id]));
+  if (existed.length > 0) {
+    return sendError(res, 409, 'REVIEW_ALREADY_EXISTS', '该合同已提交过租后评价');
+  }
+  const reviewState = getContractReviewState(contract);
+  if (!reviewState.canReview) {
+    return sendError(res, 400, 'REVIEW_NOT_OPEN', '当前合同不在可评价时间窗口内');
+  }
+
+  const content = typeof contract.content_json === 'string' ? JSON.parse(contract.content_json) : (contract.content_json || {});
+  const tenantWallet = normalizeWalletAddress(content?.tenant?.walletAddress || '');
+  if (!tenantWallet) {
+    return sendError(res, 400, 'REVIEW_TENANT_WALLET_INVALID', '合同绑定租客钱包无效，无法生成评价 CID');
+  }
+
+  const reviewId = `crvprep_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const uploaded = await addJsonToIpfs({
+    type: 'contract_review',
+    contractId: contract.id,
+    listingId: contract.listing_id,
+    tenantWallet,
+    rating: ratingNum,
+    weight: reviewState.weight,
+    commentText: normalizedCommentText,
+    commentHash: normalizedCommentHash,
+    chainEnv: CHAIN_ENV,
+  }, {
+    fileName: `contract-review-${contract.id}-${reviewId}.json`,
+  });
+
+  res.json({
+    success: true,
+    data: {
+      contractId: contract.id,
+      listingId: contract.listing_id,
+      rating: ratingNum,
+      commentText: normalizedCommentText,
+      commentHash: normalizedCommentHash,
+      commentCid: uploaded.cid,
+      commentGatewayUrl: buildGatewayUrl(uploaded.cid),
+    },
+  });
+}));
+
 router.post('/:id/review/onchain', authMiddleware, requireRole('tenant'), asyncHandler(async (req, res) => {
-  const { txHash, rating, commentText, commentHash } = req.body || {};
+  const { txHash, rating, commentText, commentHash, commentCid } = req.body || {};
   const normalizedReviewTxHash = String(txHash || '').trim().toLowerCase();
   if (!/^0x[a-fA-F0-9]{64}$/.test(normalizedReviewTxHash)) {
     return sendError(res, 400, 'REVIEW_TX_HASH_INVALID', '评价交易哈希无效');
@@ -2054,6 +2124,10 @@ router.post('/:id/review/onchain', authMiddleware, requireRole('tenant'), asyncH
   const expectedCommentHash = buildReviewCommentHash(normalizedCommentText).toLowerCase();
   if (normalizedCommentHash !== expectedCommentHash) {
     return sendError(res, 400, 'REVIEW_COMMENT_HASH_MISMATCH', '评价哈希与评价内容不一致');
+  }
+  const normalizedCommentCid = String(commentCid || '').trim();
+  if (!normalizedCommentCid) {
+    return sendError(res, 400, 'REVIEW_COMMENT_CID_REQUIRED', '评价 commentCid 缺失');
   }
 
   const db = await getDb();
@@ -2105,6 +2179,9 @@ router.post('/:id/review/onchain', authMiddleware, requireRole('tenant'), asyncH
   if (Number(parsedTx.args?.[2] || 0) !== ratingNum) {
     return sendError(res, 400, 'REVIEW_RATING_ONCHAIN_MISMATCH', '链上评分与提交评分不一致');
   }
+  if (String(parsedTx.args?.[3] || '').trim() !== normalizedCommentCid) {
+    return sendError(res, 400, 'REVIEW_COMMENT_CID_ONCHAIN_MISMATCH', '链上评价 CID 与提交内容不一致');
+  }
 
   const reviewEvent = parsedLogs.find((log) =>
     log.name === 'RentalReviewSubmitted'
@@ -2121,12 +2198,15 @@ router.post('/:id/review/onchain', authMiddleware, requireRole('tenant'), asyncH
   if (toLowerHex(reviewEvent.args?.commentHash) !== normalizedCommentHash) {
     return sendError(res, 400, 'REVIEW_EVENT_COMMENT_HASH_MISMATCH', '链上评价事件哈希与提交内容不一致');
   }
+  if (String(reviewEvent.args?.commentCid || '').trim() !== normalizedCommentCid) {
+    return sendError(res, 400, 'REVIEW_EVENT_COMMENT_CID_MISMATCH', '链上评价事件 CID 与提交内容不一致');
+  }
 
   const reviewId = `crv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   db.run(
     `INSERT INTO contract_reviews (
-      id, contract_id, listing_id, tenant_id, tenant_wallet, rating, weight, comment_text, comment_hash, tx_hash, chain_env
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id, contract_id, listing_id, tenant_id, tenant_wallet, rating, weight, comment_text, comment_hash, comment_cid, tx_hash, chain_env
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       reviewId,
       contract.id,
@@ -2137,6 +2217,7 @@ router.post('/:id/review/onchain', authMiddleware, requireRole('tenant'), asyncH
       reviewState.weight,
       normalizedCommentText,
       normalizedCommentHash,
+      normalizedCommentCid,
       normalizedReviewTxHash,
       CHAIN_ENV,
     ]
@@ -2153,6 +2234,8 @@ router.post('/:id/review/onchain', authMiddleware, requireRole('tenant'), asyncH
       weight: reviewState.weight,
       comment_text: normalizedCommentText,
       comment_hash: normalizedCommentHash,
+      comment_cid: normalizedCommentCid,
+      comment_gateway_url: buildGatewayUrl(normalizedCommentCid),
       tx_hash: normalizedReviewTxHash,
       created_at: getCnDateTime(new Date()),
     },
@@ -2191,6 +2274,14 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   const contentHashSpec = buildContentHashSpec(content);
   const tenantMessageHash = buildMessageHash(contract.tenant_signature_message || '');
   const landlordMessageHash = buildMessageHash(contract.landlord_signature_message || '');
+  const listingRows = parseResult(db.exec(
+    `SELECT id, public_snapshot_cid, public_snapshot_hash
+     FROM listings
+     WHERE id = ?
+     LIMIT 1`,
+    [contract.listing_id]
+  ));
+  const listingMeta = listingRows[0] || {};
   const payments = parseResult(db.exec(
     `SELECT pay_type, amount, period, tx_hash, paid_at
      FROM payments
@@ -2201,7 +2292,7 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
 
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${contract.id}.pdf"`);
-  const doc = new PDFDocument({ margin: 48 });
+  const doc = new PDFDocument({ margin: 48, compress: false });
   doc.pipe(res);
   const cnFontPath = resolvePdfChineseFontPath();
   if (cnFontPath) {
@@ -2282,6 +2373,21 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   doc.fontSize(8).fillColor('gray').text(`算法：${contentHashSpec.algorithm}`);
   doc.fontSize(8).fillColor('gray').text(`字段：${JSON.stringify(contentHashSpec.fields)}`);
   doc.fontSize(8).fillColor('gray').text(`生成时间：${getCnDateTime(new Date())}`);
+  doc.moveDown();
+  doc.fontSize(10).fillColor('black').text('PDF 验真标记');
+  doc.fontSize(8).fillColor('black').text(`VERIFY_CONTRACT_ID=${contract.id}`);
+  doc.fontSize(8).fillColor('black').text(`VERIFY_CONTENT_HASH=${contract.content_hash}`);
+  doc.fontSize(8).fillColor('black').text(`VERIFY_TX_HASH=${contract.tx_hash || ''}`);
+  doc.fontSize(8).fillColor('black').text(`VERIFY_TENANT_SIGNER=${contract.tenant_signer_address || ''}`);
+  doc.fontSize(8).fillColor('black').text(`VERIFY_LANDLORD_SIGNER=${contract.landlord_signer_address || ''}`);
+  doc.fontSize(8).fillColor('black').text(`VERIFY_TENANT_MESSAGE_HASH=${tenantMessageHash || ''}`);
+  doc.fontSize(8).fillColor('black').text(`VERIFY_LANDLORD_MESSAGE_HASH=${landlordMessageHash || ''}`);
+  doc.fontSize(8).fillColor('black').text(`VERIFY_LISTING_ID=${contract.listing_id || ''}`);
+  doc.fontSize(8).fillColor('black').text(`VERIFY_LISTING_SNAPSHOT_CID=${listingMeta.public_snapshot_cid || ''}`);
+  doc.fontSize(8).fillColor('black').text(`VERIFY_LISTING_SNAPSHOT_HASH=${listingMeta.public_snapshot_hash || ''}`);
+  doc.info.Title = `CCL Contract ${contract.id}`;
+  doc.info.Subject = `VERIFY_CONTRACT_ID=${contract.id};VERIFY_CONTENT_HASH=${contract.content_hash};VERIFY_TX_HASH=${contract.tx_hash || ''};VERIFY_TENANT_SIGNER=${contract.tenant_signer_address || ''};VERIFY_LANDLORD_SIGNER=${contract.landlord_signer_address || ''};VERIFY_TENANT_MESSAGE_HASH=${tenantMessageHash || ''};VERIFY_LANDLORD_MESSAGE_HASH=${landlordMessageHash || ''};VERIFY_LISTING_ID=${contract.listing_id || ''};VERIFY_LISTING_SNAPSHOT_CID=${listingMeta.public_snapshot_cid || ''};VERIFY_LISTING_SNAPSHOT_HASH=${listingMeta.public_snapshot_hash || ''}`;
+  doc.info.Keywords = `contract,verify,${contract.id},${contract.content_hash}`;
   doc.end();
 }));
 // 函数 8-3: 租客基于原合同发起续约合同。
@@ -2405,7 +2511,8 @@ router.get('/', authMiddleware, asyncHandler(async (req, res) => {
 router.get('/:id', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getDb();
   const userDb = await getUserDb();
-  const rows = parseResult(db.exec(`SELECT c.*, l.title AS listing_title, l.address AS listing_address
+  const rows = parseResult(db.exec(`SELECT c.*, l.title AS listing_title, l.address AS listing_address,
+      l.public_snapshot_cid AS listing_public_snapshot_cid, l.public_snapshot_hash AS listing_public_snapshot_hash
     FROM contracts c JOIN listings l ON c.listing_id = l.id WHERE c.id = ?`, [req.params.id]));
   if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
   const contract = rows[0];
@@ -2438,7 +2545,7 @@ router.get('/:id', authMiddleware, asyncHandler(async (req, res) => {
   contract.renewal_child_contract = renewalChildRows[0] || null;
   contract.is_renewal = !!String(contract.parent_contract_id || '').trim();
   const reviewRows = parseResult(db.exec(
-    `SELECT id, contract_id, listing_id, tenant_id, tenant_wallet, rating, weight, comment_text, comment_hash, tx_hash, created_at
+    `SELECT id, contract_id, listing_id, tenant_id, tenant_wallet, rating, weight, comment_text, comment_hash, comment_cid, tx_hash, created_at
      FROM contract_reviews
      WHERE contract_id = ?
      LIMIT 1`,
@@ -2449,6 +2556,7 @@ router.get('/:id', authMiddleware, asyncHandler(async (req, res) => {
         ...reviewRows[0],
         rating: Number(reviewRows[0].rating || 0),
         weight: Number(reviewRows[0].weight || 1),
+        comment_gateway_url: buildGatewayUrl(reviewRows[0].comment_cid),
       }
     : null;
   const reviewState = getContractReviewState(contract);
@@ -2464,6 +2572,7 @@ router.get('/:id', authMiddleware, asyncHandler(async (req, res) => {
     contract.onchain_error_message = onchain.errorMessage;
     contract.onchain_tx_hash = onchain.txHash;
   }
+  contract.listing_public_snapshot_gateway_url = buildGatewayUrl(contract.listing_public_snapshot_cid);
   res.json({ success: true, data: contract });
 }));
 

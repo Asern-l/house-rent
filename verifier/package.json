@@ -1,0 +1,16 @@
+{
+  "name": "ccl-housing-verifier",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Independent verifier for contracts and listings",
+  "scripts": {
+    "start": "node server.js",
+    "cli:contract": "node scripts/verify-contract-pdf.js",
+    "cli:listing": "node scripts/verify-listing.js"
+  },
+  "dependencies": {
+    "ethers": "^6.12.0",
+    "express": "^4.21.2",
+    "multer": "^2.0.2"
+  }
+}

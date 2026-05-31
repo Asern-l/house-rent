@@ -22,6 +22,14 @@ const {
   resolveListingPublicState,
 } = require('../listing-public-state');
 const { logListingError, logRiskEvent } = require('../logger');
+const {
+  isIpfsEnabled,
+  addBufferToIpfs,
+  addJsonToIpfs,
+  buildGatewayUrl,
+  readIpfsText,
+  sha256Hex,
+} = require('../ipfs');
 
 const router = express.Router();
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -145,6 +153,82 @@ function buildListingFeedbackCommentHash(commentText) {
   return ethers.keccak256(ethers.toUtf8Bytes(String(commentText || '')));
 }
 
+function normalizeImageCids(imageCids, expectedCount = null) {
+  if (!Array.isArray(imageCids)) return null;
+  if (expectedCount !== null && imageCids.length !== expectedCount) return null;
+  const out = [];
+  for (const item of imageCids) {
+    const cid = String(item || '').trim();
+    if (!cid) return null;
+    out.push(cid);
+  }
+  return out;
+}
+
+function buildListingPublicSnapshotPayload({
+  listingId,
+  landlordId = '',
+  title,
+  description,
+  address,
+  district = '',
+  rentAmount,
+  rentCycle = 'month',
+  minLeaseMonths = 1,
+  bedrooms = 1,
+  livingrooms = 1,
+  bathrooms = 1,
+  area = 0,
+  clauses = [],
+  imageUrls = [],
+  imageHashes = [],
+  imageCids = [],
+  contentHash = '',
+  status = 'available',
+  txHash = '',
+}) {
+  return {
+    listingId: String(listingId || ''),
+    landlordId: String(landlordId || ''),
+    title: String(title || '').trim(),
+    description: String(description || '').trim(),
+    address: String(address || '').trim(),
+    district: String(district || '').trim(),
+    rentAmount: String(rentAmount || '').trim(),
+    rentCycle: String(rentCycle || 'month').trim(),
+    minLeaseMonths: Number(minLeaseMonths || 1),
+    bedrooms: Number(bedrooms || 1),
+    livingrooms: Number(livingrooms || 1),
+    bathrooms: Number(bathrooms || 1),
+    area: Number(area || 0),
+    clauses: Array.isArray(clauses) ? clauses.map((item) => String(item || '').trim()).filter(Boolean) : [],
+    imageUrls: Array.isArray(imageUrls) ? imageUrls.map((item) => String(item || '').trim()).filter(Boolean) : [],
+    imageHashes: Array.isArray(imageHashes) ? imageHashes.map((item) => String(item || '').trim().toLowerCase()) : [],
+    imageCids: Array.isArray(imageCids) ? imageCids.map((item) => String(item || '').trim()) : [],
+    contentHash: String(contentHash || '').trim().toLowerCase(),
+    status: String(status || 'available').trim().toLowerCase(),
+    txHash: String(txHash || '').trim().toLowerCase(),
+  };
+}
+
+async function storeListingPublicSnapshot(snapshot) {
+  if (!isIpfsEnabled()) {
+    return {
+      cid: '',
+      contentHash: sha256Hex(JSON.stringify(snapshot)),
+      gatewayUrl: '',
+    };
+  }
+  const uploaded = await addJsonToIpfs(snapshot, {
+    fileName: `listing-snapshot-${String(snapshot.listingId || 'unknown')}.json`,
+  });
+  return {
+    cid: uploaded.cid,
+    contentHash: uploaded.contentHash,
+    gatewayUrl: uploaded.gatewayUrl,
+  };
+}
+
 // 函数 5-2: 生成房源完整快照（用于历史回放渲染）。
 function buildListingSnapshot(row, overrides = {}) {
   const base = {
@@ -157,8 +241,11 @@ function buildListingSnapshot(row, overrides = {}) {
     minLeaseMonths: Number(row.min_lease_months || 1),
     imageUrls: parseJsonArray(row.image_urls),
     imageHashes: parseJsonArray(row.image_hashes),
+    imageCids: parseJsonArray(row.image_cids),
     status: row.status,
     contentHash: row.content_hash || '',
+    publicSnapshotCid: row.public_snapshot_cid || '',
+    publicSnapshotHash: row.public_snapshot_hash || '',
     txHash: row.tx_hash || '',
     updatedAt: row.updated_at || '',
   };
@@ -173,7 +260,8 @@ function calcSnapshotHash(snapshot) {
 // 函数 5-4: 构建历史记录链上绑定信息。
 function buildHistoryBinding({ snapshot, verified, txHash }) {
   return {
-    snapshotHash: calcSnapshotHash(snapshot),
+    snapshotHash: String(snapshot?.publicSnapshotHash || '').trim().toLowerCase() || calcSnapshotHash(snapshot),
+    snapshotCid: String(snapshot?.publicSnapshotCid || '').trim(),
     chainVersion: Number(verified?.args?.version || 0),
     chainNonce: Number(verified?.args?.nonce || 0),
     txHash: String(txHash || '').toLowerCase(),
@@ -377,6 +465,7 @@ async function verifyOnchainTx({
     blockTime: Number(block?.timestamp || 0),
     eventName,
     args: matched.args,
+    parsedLogs: candidates,
   };
 }
 
@@ -482,11 +571,20 @@ router.post('/upload-images', authMiddleware, requireRole('landlord'), asyncHand
       const fileName = `${Date.now()}_${hash.slice(0, 16)}.${ext}`;
       const savePath = path.join(UPLOAD_ROOT, fileName);
       fs.writeFileSync(savePath, parsed.buffer);
+      let ipfs = { cid: '', gatewayUrl: '' };
+      if (isIpfsEnabled()) {
+        ipfs = await addBufferToIpfs(parsed.buffer, {
+          fileName,
+          contentType: parsed.mime,
+        });
+      }
       uploaded.push({
         url: `/uploads/listings/${fileName}`,
         hash: `0x${hash}`,
         size: parsed.buffer.length,
         mime: parsed.mime,
+        cid: ipfs.cid,
+        ipfsUrl: ipfs.gatewayUrl,
       });
     }
 
@@ -534,7 +632,7 @@ router.post('/prepare-create', authMiddleware, requireRole('landlord'), asyncHan
   const {
     title, description, address, district = '', rentAmount,
     rentCycle = 'month', minLeaseMonths = 1, bedrooms = 1,
-    livingrooms = 1, bathrooms = 1, area = 0, imageUrls = [], clauses = [],
+    livingrooms = 1, bathrooms = 1, area = 0, imageUrls = [], imageCids = [], imageHashes = [], clauses = [],
   } = req.body || {};
 
   if (!title || !description || !address || rentAmount === undefined || rentAmount === null || rentAmount === '') {
@@ -548,6 +646,7 @@ router.post('/prepare-create', authMiddleware, requireRole('landlord'), asyncHan
   }
   const normalizedImageUrls = normalizeImageUrls(imageUrls);
   if (!normalizedImageUrls) return sendError(res, 400, 'IMAGE_URLS_INVALID', `imageUrls 格式不正确，且最多 ${MAX_IMAGE_COUNT} 张`);
+  const normalizedImageCids = normalizeImageCids(imageCids, normalizedImageUrls.length);
   const normalizedClauses = normalizeClauses(clauses);
   if (!normalizedClauses) return sendError(res, 400, 'CLAUSES_INVALID', '默认条款格式不正确（最多 50 条，每条不超过 200 字）');
 
@@ -560,17 +659,48 @@ router.post('/prepare-create', authMiddleware, requireRole('landlord'), asyncHan
   }
 
   const listingId = `lst_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-  const imageHashes = normalizedImageUrls.map((u) => `0x${crypto.createHash('sha256').update(u).digest('hex')}`);
+  const normalizedImageHashes = Array.isArray(imageHashes) && imageHashes.length === normalizedImageUrls.length
+    ? imageHashes.map((item) => String(item || '').trim().toLowerCase())
+    : normalizedImageUrls.map((u) => `0x${crypto.createHash('sha256').update(u).digest('hex')}`);
+  if (normalizedImageHashes.some((item) => !isBytes32Hex(item))) {
+    return sendError(res, 400, 'IMAGE_HASHES_INVALID', 'imageHashes 格式不正确');
+  }
   const rentAmountWei = toWeiString(normalizedRentAmount);
   if (!rentAmountWei) return sendError(res, 400, 'RENT_AMOUNT_WEI_INVALID', '租金转换 wei 失败');
-  const imageRootHash = calcImageRootHash(imageHashes);
+  const imageRootHash = calcImageRootHash(normalizedImageHashes);
   const draft = {
     listingId, title, description, address, district,
     rentAmount: normalizedRentAmount, rentCycle, minLeaseMonths: minLeaseMonthsNum,
     bedrooms: Number(bedrooms), livingrooms: Number(livingrooms), bathrooms: Number(bathrooms), area: Number(area),
-    imageUrls: normalizedImageUrls, imageHashes, landlordWallet, clauses: normalizedClauses,
+    imageUrls: normalizedImageUrls, imageCids: normalizedImageCids || [], imageHashes: normalizedImageHashes, landlordWallet, clauses: normalizedClauses,
   };
   const contentHash = calcListingContentHash(draft);
+  const publicSnapshot = buildListingPublicSnapshotPayload({
+    listingId,
+    landlordId: req.user.id,
+    title,
+    description,
+    address,
+    district,
+    rentAmount: normalizedRentAmount,
+    rentCycle,
+    minLeaseMonths: minLeaseMonthsNum,
+    bedrooms: Number(bedrooms),
+    livingrooms: Number(livingrooms),
+    bathrooms: Number(bathrooms),
+    area: Number(area),
+    clauses: normalizedClauses,
+    imageUrls: normalizedImageUrls,
+    imageHashes: normalizedImageHashes,
+    imageCids: normalizedImageCids || [],
+    contentHash,
+    status: 'available',
+    txHash: '',
+  });
+  const storedSnapshot = await storeListingPublicSnapshot(publicSnapshot);
+  if (!String(storedSnapshot.cid || '').trim()) {
+    return sendError(res, 503, 'IPFS_SNAPSHOT_UNAVAILABLE', 'IPFS 快照写入失败，当前不能创建链上房源');
+  }
   res.json({
     success: true,
     data: {
@@ -582,6 +712,8 @@ router.post('/prepare-create', authMiddleware, requireRole('landlord'), asyncHan
         rentAmountWei,
         minLeaseMonths: minLeaseMonthsNum,
         imageRootHash,
+        snapshotCid: storedSnapshot.cid,
+        snapshotHash: storedSnapshot.contentHash,
       },
     },
   });
@@ -602,6 +734,8 @@ router.post('/commit-create', authMiddleware, requireRole('landlord'), asyncHand
   if (String(chainAnchor.rentAmountWei || '') !== String(expectedWei || '')) return sendError(res, 400, 'RENT_AMOUNT_WEI_MISMATCH', 'rentAmountWei 校验失败，请重新发起发布流程');
   if (Number(chainAnchor.minLeaseMonths || 0) !== Number(draft.minLeaseMonths || 0)) return sendError(res, 400, 'MIN_LEASE_MONTHS_MISMATCH', 'minLeaseMonths 校验失败，请重新发起发布流程');
   if (String(chainAnchor.imageRootHash || '').toLowerCase() !== String(expectedImageRootHash || '').toLowerCase()) return sendError(res, 400, 'IMAGE_ROOT_HASH_MISMATCH', 'imageRootHash 校验失败，请重新发起发布流程');
+  if (!String(chainAnchor.snapshotCid || '').trim()) return sendError(res, 400, 'SNAPSHOT_CID_MISSING', 'snapshotCid 缺失，请重新发起发布流程');
+  if (!isBytes32Hex(String(chainAnchor.snapshotHash || '').trim().toLowerCase())) return sendError(res, 400, 'SNAPSHOT_HASH_INVALID', 'snapshotHash 格式不正确，请重新发起发布流程');
 
   const userDb = await getUserDb();
   const users = parseUserResult(userDb.exec('SELECT wallet_address FROM users WHERE id = ?', [req.user.id]));
@@ -676,16 +810,38 @@ router.post('/commit-create', authMiddleware, requireRole('landlord'), asyncHand
     });
     throw error;
   }
+  const snapshotLog = (verified.parsedLogs || []).find((log) => (
+    log.name === 'ListingSnapshotAnchored'
+    && String(log.args?.listingId || '').toLowerCase() === ethers.id(String(draft.listingId)).toLowerCase()
+    && Number(log.args?.version || 0) === Number(verified.args.version || 0)
+    && String(log.args?.contentHash || '').toLowerCase() === String(expectedHash).toLowerCase()
+    && String(log.args?.snapshotHash || '').toLowerCase() === String(chainAnchor.snapshotHash).toLowerCase()
+    && String(log.args?.snapshotCid || '').trim() === String(chainAnchor.snapshotCid).trim()
+  ));
+  if (!snapshotLog) {
+    markOnchainOperationFailed(db, {
+      opId,
+      entityType: 'listing',
+      entityId: draft.listingId,
+      operationKind: 'listing.create',
+      txHash: normalizedTxHash,
+      requestId: req.requestId,
+      payload: { listingId: draft.listingId, landlordId: req.user.id },
+      errorMessage: 'listing_snapshot_anchor_mismatch',
+    });
+    return sendError(res, 400, 'ONCHAIN_SNAPSHOT_EVENT_MISSING', '链上房源快照锚点事件不匹配');
+  }
 
   db.run(`INSERT INTO listings (
     id, landlord_id, title, description, address, district, rent_amount,
     rent_cycle, min_lease_months, bedrooms, livingrooms, bathrooms, area,
-    clauses_template_json, image_urls, image_hashes, tx_hash, status
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available')`, [
+    clauses_template_json, image_urls, image_hashes, image_cids, public_snapshot_cid, public_snapshot_hash, content_hash, tx_hash, status
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
     draft.listingId, req.user.id, draft.title, draft.description, draft.address, draft.district || '', draft.rentAmount,
     draft.rentCycle || 'month', Number(draft.minLeaseMonths || 1), Number(draft.bedrooms || 1), Number(draft.livingrooms || 1),
     Number(draft.bathrooms || 1), Number(draft.area || 0), JSON.stringify(Array.isArray(draft.clauses) ? draft.clauses : []), JSON.stringify(Array.isArray(draft.imageUrls) ? draft.imageUrls : []),
-    JSON.stringify(Array.isArray(draft.imageHashes) ? draft.imageHashes : []), normalizedTxHash,
+    JSON.stringify(Array.isArray(draft.imageHashes) ? draft.imageHashes : []), JSON.stringify(Array.isArray(draft.imageCids) ? draft.imageCids : []),
+    String(chainAnchor.snapshotCid || '').trim(), String(chainAnchor.snapshotHash || '').trim().toLowerCase(), expectedHash, normalizedTxHash, 'available',
   ]);
 
   db.run(
@@ -711,6 +867,9 @@ router.post('/commit-create', authMiddleware, requireRole('landlord'), asyncHand
     minLeaseMonths: Number(draft.minLeaseMonths || 1),
     imageUrls: Array.isArray(draft.imageUrls) ? draft.imageUrls : [],
     imageHashes: Array.isArray(draft.imageHashes) ? draft.imageHashes : [],
+    imageCids: Array.isArray(draft.imageCids) ? draft.imageCids : [],
+    publicSnapshotCid: String(chainAnchor.snapshotCid || '').trim(),
+    publicSnapshotHash: String(chainAnchor.snapshotHash || '').trim().toLowerCase(),
     status: 'available',
     contentHash: expectedHash,
     txHash: normalizedTxHash,
@@ -872,7 +1031,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   const [detailWithState] = await attachPublicListingState(rows);
   const [detail] = await attachLandlordProfile([detailWithState]);
   const feedbacks = parseResult(db.exec(
-    `SELECT id, author_wallet, feedback_type, comment_text, comment_hash, tx_hash, created_at
+    `SELECT id, author_wallet, feedback_type, comment_text, comment_hash, comment_cid, tx_hash, created_at
      FROM listing_feedbacks
      WHERE listing_id = ?
      ORDER BY created_at DESC
@@ -884,11 +1043,13 @@ router.get('/:id', asyncHandler(async (req, res) => {
     feedback_type: item.feedback_type,
     comment_text: item.comment_text,
     comment_hash: String(item.comment_hash || '').trim().toLowerCase(),
+    comment_cid: String(item.comment_cid || '').trim(),
+    comment_gateway_url: buildGatewayUrl(item.comment_cid),
     tx_hash: String(item.tx_hash || '').trim().toLowerCase(),
     created_at: item.created_at,
   }));
   const tenantReviews = parseResult(db.exec(
-    `SELECT id, contract_id, tenant_wallet, rating, weight, comment_text, created_at
+    `SELECT id, contract_id, tenant_wallet, rating, weight, comment_text, comment_cid, comment_hash, created_at
      FROM contract_reviews
      WHERE listing_id = ?
      ORDER BY created_at DESC
@@ -901,6 +1062,9 @@ router.get('/:id', asyncHandler(async (req, res) => {
     rating: Number(item.rating || 0),
     weight: Number(item.weight || 1),
     comment_text: item.comment_text,
+    comment_hash: String(item.comment_hash || '').trim().toLowerCase(),
+    comment_cid: String(item.comment_cid || '').trim(),
+    comment_gateway_url: buildGatewayUrl(item.comment_cid),
     created_at: item.created_at,
   }));
   const reviewCount = tenantReviews.length;
@@ -908,6 +1072,8 @@ router.get('/:id', asyncHandler(async (req, res) => {
   const weightedScoreSum = tenantReviews.reduce((sum, item) => sum + Number(item.rating || 0) * Number(item.weight || 1), 0);
   detail.feedbacks = feedbacks;
   detail.tenant_reviews = tenantReviews;
+  detail.image_cids = parseJsonArray(detail.image_cids);
+  detail.public_snapshot_gateway_url = buildGatewayUrl(detail.public_snapshot_cid);
   detail.review_summary = {
     review_count: reviewCount,
     weight_sum: weightSum,
@@ -919,6 +1085,62 @@ router.get('/:id', asyncHandler(async (req, res) => {
     sample_threshold: 3,
   };
   res.json({ success: true, data: detail });
+}));
+
+router.post('/:id/feedbacks/prepare-onchain', authMiddleware, asyncHandler(async (req, res) => {
+  const db = await getDb();
+  const rows = parseResult(db.exec('SELECT id, landlord_id FROM listings WHERE id = ?', [req.params.id]));
+  if (!rows.length) {
+    return sendError(res, 404, 'LISTING_NOT_FOUND', '房源不存在');
+  }
+  const listing = rows[0];
+  if (listing.landlord_id === req.user.id) {
+    return sendError(res, 400, 'LISTING_FEEDBACK_OWNER_FORBIDDEN', '房东不能给自己的房源提交反馈');
+  }
+  if (!isIpfsEnabled()) {
+    return sendError(res, 503, 'IPFS_COMMENT_CID_UNAVAILABLE', 'IPFS 未启用，当前不能生成反馈 commentCid');
+  }
+  const authorWallet = normalizeWalletAddress(req.user.walletAddress || '');
+  if (!authorWallet) {
+    return sendError(res, 400, 'LISTING_FEEDBACK_WALLET_REQUIRED', '当前登录会话缺少有效钱包地址');
+  }
+  const feedbackType = String(req.body?.feedbackType || '').trim();
+  if (!LISTING_FEEDBACK_TYPES.has(feedbackType)) {
+    return sendError(res, 400, 'LISTING_FEEDBACK_TYPE_INVALID', '反馈类型不合法');
+  }
+  const commentText = normalizePublicComment(req.body?.commentText, 300);
+  if (!commentText) {
+    return sendError(res, 400, 'LISTING_FEEDBACK_COMMENT_INVALID', '反馈内容不能为空且不能超过 300 字');
+  }
+  const normalizedCommentHash = String(req.body?.commentHash || '').trim().toLowerCase();
+  const expectedCommentHash = buildListingFeedbackCommentHash(commentText).toLowerCase();
+  if (normalizedCommentHash !== expectedCommentHash) {
+    return sendError(res, 400, 'LISTING_FEEDBACK_COMMENT_HASH_MISMATCH', '反馈内容哈希不匹配');
+  }
+  const preparedId = `lfbprep_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const uploaded = await addJsonToIpfs({
+    type: 'listing_feedback',
+    listingId: req.params.id,
+    authorWallet,
+    feedbackType,
+    commentText,
+    commentHash: normalizedCommentHash,
+    chainEnv: CHAIN_ENV,
+  }, {
+    fileName: `listing-feedback-${req.params.id}-${preparedId}.json`,
+  });
+
+  res.json({
+    success: true,
+    data: {
+      listingId: req.params.id,
+      feedbackType,
+      commentText,
+      commentHash: normalizedCommentHash,
+      commentCid: uploaded.cid,
+      commentGatewayUrl: buildGatewayUrl(uploaded.cid),
+    },
+  });
 }));
 
 router.post('/:id/feedbacks', authMiddleware, asyncHandler(async (req, res) => {
@@ -956,6 +1178,10 @@ router.post('/:id/feedbacks', authMiddleware, asyncHandler(async (req, res) => {
   if (normalizedCommentHash !== expectedCommentHash) {
     return sendError(res, 400, 'LISTING_FEEDBACK_COMMENT_HASH_MISMATCH', '反馈内容哈希不匹配');
   }
+  const commentCid = String(req.body?.commentCid || '').trim();
+  if (!commentCid) {
+    return sendError(res, 400, 'LISTING_FEEDBACK_COMMENT_CID_REQUIRED', '反馈 commentCid 缺失');
+  }
   const existed = parseResult(db.exec('SELECT id FROM listing_feedbacks WHERE tx_hash = ? LIMIT 1', [normalizedTxHash]));
   if (existed.length > 0) {
     return sendError(res, 409, 'LISTING_FEEDBACK_TX_DUPLICATED', '该反馈交易已回写');
@@ -968,14 +1194,15 @@ router.post('/:id/feedbacks', authMiddleware, asyncHandler(async (req, res) => {
       String(args.listingId || '') === req.params.id
       && Number(args.feedbackType || 0) === feedbackTypeCode
       && String(args.commentHash || '').trim().toLowerCase() === normalizedCommentHash
+      && String(args.commentCid || '').trim() === commentCid
       && normalizeWalletAddress(args.sender || '') === authorWallet
     ),
   });
   const feedbackId = `lfb_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   db.run(
-    `INSERT INTO listing_feedbacks (id, listing_id, author_id, author_role, author_wallet, feedback_type, comment_text, comment_hash, tx_hash, chain_env)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [feedbackId, req.params.id, req.user.id, String(req.user.role || ''), authorWallet, feedbackType, commentText, normalizedCommentHash, normalizedTxHash, CHAIN_ENV]
+    `INSERT INTO listing_feedbacks (id, listing_id, author_id, author_role, author_wallet, feedback_type, comment_text, comment_hash, comment_cid, tx_hash, chain_env)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [feedbackId, req.params.id, req.user.id, String(req.user.role || ''), authorWallet, feedbackType, commentText, normalizedCommentHash, commentCid, normalizedTxHash, CHAIN_ENV]
   );
   saveDb();
   res.json({
@@ -987,6 +1214,8 @@ router.post('/:id/feedbacks', authMiddleware, asyncHandler(async (req, res) => {
       feedback_type: feedbackType,
       comment_text: commentText,
       comment_hash: normalizedCommentHash,
+      comment_cid: commentCid,
+      comment_gateway_url: buildGatewayUrl(commentCid),
       tx_hash: normalizedTxHash,
       created_at: getCnDateTime(new Date((verified.blockTime || Math.floor(Date.now() / 1000)) * 1000)),
     },
@@ -1021,7 +1250,7 @@ router.get('/:id/history', asyncHandler(async (req, res) => {
         })()
         : after);
     const binding = after?.binding || null;
-    const expectedSnapshotHash = snapshot && typeof snapshot === 'object' ? calcSnapshotHash(snapshot) : '';
+    const expectedSnapshotHash = String(snapshot?.publicSnapshotHash || '').trim().toLowerCase();
     const bindingVerified = Boolean(
       binding &&
       binding.snapshotHash &&
@@ -1243,8 +1472,11 @@ router.post('/:id/terms/prepare', authMiddleware, requireRole('landlord'), async
   const rentAmount = normalizeAmount(req.body?.rentAmount);
   const minLeaseMonths = Number(req.body?.minLeaseMonths ?? listing.min_lease_months);
   let imageUrls = Array.isArray(req.body?.imageUrls) ? req.body.imageUrls : parseJsonArray(listing.image_urls);
+  let imageCids = Array.isArray(req.body?.imageCids) ? req.body.imageCids : parseJsonArray(listing.image_cids);
+  let imageHashes = Array.isArray(req.body?.imageHashes) ? req.body.imageHashes : parseJsonArray(listing.image_hashes);
   const clauses = normalizeClauses(req.body?.clauses ?? parseJsonArray(listing.clauses_template_json));
   imageUrls = normalizeImageUrls(imageUrls);
+  imageCids = normalizeImageCids(imageCids, imageUrls?.length ?? 0);
   if (!rentAmount) return sendError(res, 400, 'RENT_AMOUNT_INVALID', '租金必须为大于 0 的数字');
   if (!Number.isInteger(minLeaseMonths) || minLeaseMonths < 1 || minLeaseMonths > 12) {
     return sendError(res, 400, 'MIN_LEASE_MONTHS_INVALID', '最少租期必须为 1-12 月的整数');
@@ -1256,10 +1488,39 @@ router.post('/:id/terms/prepare', authMiddleware, requireRole('landlord'), async
     return sendError(res, 400, 'CONTENT_HASH_INVALID', '当前房源 contentHash 无效，请先重新发布或完成一次上链修复');
   }
 
-  const imageHashes = imageUrls.map((u) => `0x${crypto.createHash('sha256').update(u).digest('hex')}`);
+  imageHashes = Array.isArray(imageHashes) && imageHashes.length === imageUrls.length
+    ? imageHashes.map((u) => String(u || '').trim().toLowerCase())
+    : imageUrls.map((u) => `0x${crypto.createHash('sha256').update(u).digest('hex')}`);
+  if (imageHashes.some((item) => !isBytes32Hex(item))) return sendError(res, 400, 'IMAGE_HASHES_INVALID', 'imageHashes 格式不正确');
   const rentAmountWei = toWeiString(rentAmount);
   const imageRootHash = calcImageRootHash(imageHashes);
   if (!rentAmountWei) return sendError(res, 400, 'RENT_AMOUNT_WEI_INVALID', '租金转换 wei 失败');
+  const publicSnapshot = buildListingPublicSnapshotPayload({
+    listingId: req.params.id,
+    landlordId: req.user.id,
+    title: listing.title,
+    description: listing.description,
+    address: listing.address,
+    district: listing.district || '',
+    rentAmount,
+    rentCycle: listing.rent_cycle || 'month',
+    minLeaseMonths,
+    bedrooms: Number(listing.bedrooms || 1),
+    livingrooms: Number(listing.livingrooms || 1),
+    bathrooms: Number(listing.bathrooms || 1),
+    area: Number(listing.area || 0),
+    clauses,
+    imageUrls,
+    imageHashes,
+    imageCids: imageCids || [],
+    contentHash,
+    status: listing.status,
+    txHash: '',
+  });
+  const storedSnapshot = await storeListingPublicSnapshot(publicSnapshot);
+  if (!String(storedSnapshot.cid || '').trim()) {
+    return sendError(res, 503, 'IPFS_SNAPSHOT_UNAVAILABLE', 'IPFS 快照写入失败，当前不能更新链上房源');
+  }
 
   res.json({
     success: true,
@@ -1269,6 +1530,7 @@ router.post('/:id/terms/prepare', authMiddleware, requireRole('landlord'), async
       rentAmount,
       minLeaseMonths,
       imageUrls,
+      imageCids: imageCids || [],
       imageHashes,
       clauses,
       chainAnchor: {
@@ -1277,6 +1539,8 @@ router.post('/:id/terms/prepare', authMiddleware, requireRole('landlord'), async
         rentAmountWei,
         minLeaseMonths,
         imageRootHash,
+        snapshotCid: storedSnapshot.cid,
+        snapshotHash: storedSnapshot.contentHash,
       },
     },
   });
@@ -1284,7 +1548,7 @@ router.post('/:id/terms/prepare', authMiddleware, requireRole('landlord'), async
 
 // 函数 6-5: 条款更新回写（链上成功后入库）。
 router.post('/:id/terms/commit', authMiddleware, requireRole('landlord'), asyncHandler(async (req, res) => {
-  const { rentAmount, minLeaseMonths, imageUrls, clauses, txHash, chainAnchor, operationId = '' } = req.body || {};
+  const { rentAmount, minLeaseMonths, imageUrls, imageCids, imageHashes, clauses, txHash, chainAnchor, operationId = '' } = req.body || {};
   const normalizedTxHash = normalizeTxHash(txHash);
   if (!normalizedTxHash) return sendError(res, 400, 'TX_HASH_INVALID', 'txHash 格式不正确');
   const db = await getDb();
@@ -1298,6 +1562,7 @@ router.post('/:id/terms/commit', authMiddleware, requireRole('landlord'), asyncH
   const normalizedRentAmount = normalizeAmount(rentAmount);
   const minLeaseMonthsNum = Number(minLeaseMonths);
   const normalizedImageUrls = normalizeImageUrls(Array.isArray(imageUrls) ? imageUrls : []);
+  const normalizedImageCids = normalizeImageCids(Array.isArray(imageCids) ? imageCids : [], normalizedImageUrls?.length ?? 0);
   const normalizedClauses = normalizeClauses(clauses);
   if (!normalizedRentAmount) return sendError(res, 400, 'RENT_AMOUNT_INVALID', '租金必须为大于 0 的数字');
   if (!Number.isInteger(minLeaseMonthsNum) || minLeaseMonthsNum < 1 || minLeaseMonthsNum > 12) {
@@ -1311,7 +1576,10 @@ router.post('/:id/terms/commit', authMiddleware, requireRole('landlord'), asyncH
   }
 
   const expectedRentAmountWei = toWeiString(normalizedRentAmount);
-  const expectedImageHashes = normalizedImageUrls.map((u) => `0x${crypto.createHash('sha256').update(u).digest('hex')}`);
+  const expectedImageHashes = Array.isArray(imageHashes) && imageHashes.length === normalizedImageUrls.length
+    ? imageHashes.map((u) => String(u || '').trim().toLowerCase())
+    : normalizedImageUrls.map((u) => `0x${crypto.createHash('sha256').update(u).digest('hex')}`);
+  if (expectedImageHashes.some((item) => !isBytes32Hex(item))) return sendError(res, 400, 'IMAGE_HASHES_INVALID', 'imageHashes 格式不正确');
   const expectedImageRootHash = calcImageRootHash(expectedImageHashes);
   if (String(chainAnchor?.contentHash || '').toLowerCase() !== contentHash) {
     return sendError(res, 400, 'CONTENT_HASH_MISMATCH', 'contentHash 必须保持与当前一致');
@@ -1319,6 +1587,8 @@ router.post('/:id/terms/commit', authMiddleware, requireRole('landlord'), asyncH
   if (String(chainAnchor?.rentAmountWei || '') !== String(expectedRentAmountWei || '')) return sendError(res, 400, 'RENT_AMOUNT_WEI_MISMATCH', 'rentAmountWei 校验失败');
   if (Number(chainAnchor?.minLeaseMonths || 0) !== minLeaseMonthsNum) return sendError(res, 400, 'MIN_LEASE_MONTHS_MISMATCH', 'minLeaseMonths 校验失败');
   if (String(chainAnchor?.imageRootHash || '').toLowerCase() !== String(expectedImageRootHash || '').toLowerCase()) return sendError(res, 400, 'IMAGE_ROOT_HASH_MISMATCH', 'imageRootHash 校验失败');
+  if (!String(chainAnchor?.snapshotCid || '').trim()) return sendError(res, 400, 'SNAPSHOT_CID_MISSING', 'snapshotCid 缺失');
+  if (!isBytes32Hex(String(chainAnchor?.snapshotHash || '').trim().toLowerCase())) return sendError(res, 400, 'SNAPSHOT_HASH_INVALID', 'snapshotHash 格式不正确');
   const opId = String(operationId || `op_terms_${req.params.id}_${normalizedTxHash}`).trim();
   const existedOp = getOnchainOperationByOpId(db, opId);
   if (existedOp && existedOp.status === 'confirmed') {
@@ -1347,11 +1617,14 @@ router.post('/:id/terms/commit', authMiddleware, requireRole('landlord'), asyncH
       rentAmount: normalizedRentAmount,
       minLeaseMonths: minLeaseMonthsNum,
       imageUrls: normalizedImageUrls,
+      imageCids: normalizedImageCids || [],
       imageHashes: expectedImageHashes,
       clauses: normalizedClauses,
       contentHash,
       expectedRentAmountWei,
       expectedImageRootHash,
+      snapshotCid: String(chainAnchor?.snapshotCid || '').trim(),
+      snapshotHash: String(chainAnchor?.snapshotHash || '').trim().toLowerCase(),
       expectedVersion: Number(listing.chain_version || 0),
       expectedNonce: Number(listing.chain_nonce || 0),
     },
@@ -1394,10 +1667,31 @@ router.post('/:id/terms/commit', authMiddleware, requireRole('landlord'), asyncH
     });
     throw error;
   }
+  const snapshotLog = (verified.parsedLogs || []).find((log) => (
+    log.name === 'ListingSnapshotAnchored'
+    && String(log.args?.listingId || '').toLowerCase() === ethers.id(String(req.params.id)).toLowerCase()
+    && Number(log.args?.version || 0) === Number(verified.args.version || 0)
+    && String(log.args?.contentHash || '').toLowerCase() === String(contentHash).toLowerCase()
+    && String(log.args?.snapshotHash || '').toLowerCase() === String(chainAnchor.snapshotHash).toLowerCase()
+    && String(log.args?.snapshotCid || '').trim() === String(chainAnchor.snapshotCid).trim()
+  ));
+  if (!snapshotLog) {
+    markOnchainOperationFailed(db, {
+      opId,
+      entityType: 'listing',
+      entityId: req.params.id,
+      operationKind: 'listing.terms',
+      txHash: normalizedTxHash,
+      requestId: req.requestId,
+      payload: { listingId: req.params.id },
+      errorMessage: 'listing_snapshot_anchor_mismatch',
+    });
+    return sendError(res, 400, 'ONCHAIN_SNAPSHOT_EVENT_MISSING', '链上房源快照锚点事件不匹配');
+  }
 
   db.run(
      `UPDATE listings
-         SET rent_amount = ?, min_lease_months = ?, clauses_template_json = ?, image_urls = ?, image_hashes = ?, tx_hash = ?,
+         SET rent_amount = ?, min_lease_months = ?, clauses_template_json = ?, image_urls = ?, image_hashes = ?, image_cids = ?, public_snapshot_cid = ?, public_snapshot_hash = ?, tx_hash = ?,
              chain_version = ?, chain_nonce = ?, chain_block_number = ?, chain_block_time = ?,
              updated_at = datetime('now', '+8 hours')
          WHERE id = ? AND landlord_id = ? AND status IN ('available','offline')`,
@@ -1407,6 +1701,9 @@ router.post('/:id/terms/commit', authMiddleware, requireRole('landlord'), asyncH
         JSON.stringify(normalizedClauses),
         JSON.stringify(normalizedImageUrls),
         JSON.stringify(expectedImageHashes),
+        JSON.stringify(normalizedImageCids || []),
+        String(chainAnchor.snapshotCid || '').trim(),
+        String(chainAnchor.snapshotHash || '').trim().toLowerCase(),
         normalizedTxHash,
       Number(verified.args.version || 0),
       Number(verified.args.nonce || 0),

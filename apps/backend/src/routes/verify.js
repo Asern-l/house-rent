@@ -14,6 +14,7 @@ const {
   normalizeListingBodyStatus,
   resolveListingPublicState,
 } = require('../listing-public-state');
+const { buildGatewayUrl, readIpfsText, sha256Hex } = require('../ipfs');
 
 const RENTAL_CHAIN_ABI = require('../../../frontend/src/shared/blockchain/RentalChainABI.json');
 const LISTING_ONCHAIN_KINDS = ['listing.create', 'listing.status', 'listing.terms'];
@@ -278,6 +279,18 @@ function computeContractDeadlineMs(contract) {
   const parsed = new Date(raw.includes('T') ? raw : raw.replace(' ', 'T'));
   return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime() + 26 * 60 * 60 * 1000;
 }
+function extractPdfVerificationMarkers(pdfBuffer) {
+  const raw = Buffer.isBuffer(pdfBuffer) ? pdfBuffer.toString('latin1') : String(pdfBuffer || '');
+  const contractIdMatch = /VERIFY_CONTRACT_ID=([A-Za-z0-9_-]+)/.exec(raw);
+  const contentHashMatch = /VERIFY_CONTENT_HASH=(0x[a-fA-F0-9]{64})/.exec(raw);
+  const txHashMatch = /VERIFY_TX_HASH=(0x[a-fA-F0-9]{64})/.exec(raw);
+  return {
+    contractId: String(contractIdMatch?.[1] || '').trim(),
+    contentHash: String(contentHashMatch?.[1] || '').trim().toLowerCase(),
+    txHash: String(txHashMatch?.[1] || '').trim(),
+  };
+}
+
 
 function verifyStoredContractSignature({ contract, content, role }) {
   const isTenant = role === 'tenant';
@@ -376,152 +389,7 @@ async function readOnchainContractVerification(contractId, txHash) {
   return onchain;
 }
 
-router.get('/listing/:id', asyncHandler(async (req, res) => {
-  const db = await getDb();
-  const userDb = await getUserDb();
-  let rows = parseResult(db.exec('SELECT * FROM listings WHERE id = ?', [req.params.id]));
-  if (!rows.length) return res.json({ success: true, data: { exists: false, message: '房源不存在' } });
-
-  let listing = rows[0];
-  const landlordRows = parseUserResult(userDb.exec('SELECT wallet_address FROM users WHERE id = ?', [listing.landlord_id]));
-  const landlordWallet = String(landlordRows[0]?.wallet_address || '').trim().toLowerCase();
-  const imageHashes = parseJsonArray(listing.image_hashes);
-  const imageUrls = parseJsonArray(listing.image_urls);
-  const expectedRentAmountWei = toWeiString(listing.rent_amount) || '';
-  const expectedImageRootHash = calcImageRootHash(imageHashes);
-  const rebuiltContentHash = calcListingContentHash({ listingId: listing.id, landlordWallet, listing });
-  const dbContentHash = String(listing.content_hash || '').trim().toLowerCase() || rebuiltContentHash;
-  const dbContractMapping = resolveDbListingContractMapping(db, listing.id);
-  if (!String(listing.content_hash || '').trim() && /^0x[a-f0-9]{64}$/i.test(rebuiltContentHash)) {
-    db.run("UPDATE listings SET content_hash = ?, updated_at = datetime('now', '+8 hours') WHERE id = ?", [rebuiltContentHash, listing.id]);
-    saveDb();
-    listing.content_hash = rebuiltContentHash;
-  }
-
-let onchain = null;
-  try {
-    onchain = await readOnchainListing(listing.id);
-  } catch (error) {
-    onchain = { readable: false, reason: error?.message || '读取链上房源失败' };
-  }
-  if (onchain?.exists) {
-    const nextStatus = String(onchain.status || '').trim().toLowerCase();
-    const nextRentAmount = formatWeiToEthString(onchain.rentAmountWei);
-    const nextMinLeaseMonths = Number(onchain.minLeaseMonths || 0);
-    const nextContentHash = String(onchain.contentHash || '').trim().toLowerCase();
-    const nextVersion = Number(onchain.version || 0);
-    const nextNonce = Number(onchain.nonce || 0);
-    const shouldSync =
-      nextVersion > Number(listing.chain_version || 0) ||
-      nextNonce > Number(listing.chain_nonce || 0) ||
-      nextStatus !== String(listing.status || '').trim().toLowerCase() ||
-      (nextRentAmount && nextRentAmount !== String(listing.rent_amount || '').trim()) ||
-      (nextMinLeaseMonths > 0 && nextMinLeaseMonths !== Number(listing.min_lease_months || 0)) ||
-      (nextContentHash && nextContentHash !== String(listing.content_hash || '').trim().toLowerCase());
-    if (shouldSync) {
-      db.run(
-        `UPDATE listings
-         SET status = ?,
-             rent_amount = CASE WHEN ? <> '' THEN ? ELSE rent_amount END,
-             min_lease_months = CASE WHEN ? > 0 THEN ? ELSE min_lease_months END,
-             content_hash = CASE WHEN ? <> '' THEN ? ELSE content_hash END,
-             chain_version = CASE WHEN ? > chain_version THEN ? ELSE chain_version END,
-             chain_nonce = CASE WHEN ? > chain_nonce THEN ? ELSE chain_nonce END,
-             updated_at = datetime('now', '+8 hours')
-         WHERE id = ?`,
-        [
-          nextStatus,
-          nextRentAmount,
-          nextRentAmount,
-          nextMinLeaseMonths,
-          nextMinLeaseMonths,
-          nextContentHash,
-          nextContentHash,
-          nextVersion,
-          nextVersion,
-          nextNonce,
-          nextNonce,
-          listing.id,
-        ]
-      );
-      saveDb();
-      rows = parseResult(db.exec('SELECT * FROM listings WHERE id = ?', [req.params.id]));
-      listing = rows[0];
-    }
-  }
-  const syncedImageHashes = parseJsonArray(listing.image_hashes);
-  const syncedImageUrls = parseJsonArray(listing.image_urls);
-  const syncedRentAmountWei = toWeiString(listing.rent_amount) || '';
-  const syncedImageRootHash = calcImageRootHash(syncedImageHashes);
-  const syncedRebuiltContentHash = calcListingContentHash({ listingId: listing.id, landlordWallet, listing });
-  const syncedDbContentHash = String(listing.content_hash || '').trim().toLowerCase() || syncedRebuiltContentHash;
-  const syncedDbContractMapping = resolveDbListingContractMapping(db, listing.id);
-  const listingOnchainStatus = getLatestOnchainStatus(db, 'listing', listing.id, LISTING_ONCHAIN_KINDS);
-  const comparisons = onchain?.exists ? {
-    listingIdMatch: String(onchain.listingId || '') === String(listing.id || ''),
-    landlordMatch: !landlordWallet || String(onchain.landlord || '') === landlordWallet,
-    contentHashMatch: String(onchain.contentHash || '') === syncedDbContentHash,
-    rentAmountWeiMatch: String(onchain.rentAmountWei || '') === String(syncedRentAmountWei || ''),
-    minLeaseMonthsMatch: Number(onchain.minLeaseMonths || 0) === Number(listing.min_lease_months || 0),
-    imageRootHashMatch: String(onchain.imageRootHash || '') === String(syncedImageRootHash || '').toLowerCase(),
-    listingStatusMatch: Number(onchain.statusEnum || 0) === Number(expectedListingBodyStatusEnum(listing) ?? -1),
-    occupancyMatch: syncedDbContractMapping.publicStatus === 'rented'
-      ? String(onchain.currentEffectiveContractId || '').trim() === String(syncedDbContractMapping.currentEffectiveContractId || '').trim()
-      : !String(onchain.currentEffectiveContractId || '').trim(),
-    versionMatch: Number(onchain.version || 0) === Number(listing.chain_version || 0),
-    nonceMatch: Number(onchain.nonce || 0) === Number(listing.chain_nonce || 0),
-  } : null;
-  const chainVerified = Boolean(comparisons) && Object.values(comparisons).every(Boolean);
-  const conclusion = !onchain?.readable
-    ? `当前网络链上数据不可读：${onchain?.reason || '未知原因'}`
-    : !onchain?.exists
-      ? '数据库存在该房源，但链上未查询到对应房源'
-      : chainVerified
-        ? '房源链上关键字段与数据库快照一致'
-        : '房源链上字段与数据库快照存在差异，请人工复核';
-
-  res.json({
-    success: true,
-    data: {
-      exists: true,
-      chainEnv: CHAIN_ENV,
-      listingId: listing.id,
-      dbSnapshot: {
-        listingId: listing.id,
-        landlordWallet,
-        status: listing.status,
-        publicStatus: syncedDbContractMapping.publicStatus,
-        contentHash: syncedDbContentHash,
-        rentAmount: listing.rent_amount,
-        rentAmountWei: syncedRentAmountWei,
-        minLeaseMonths: Number(listing.min_lease_months || 0),
-        imageCount: syncedImageUrls.length,
-        imageHashes: syncedImageHashes,
-        imageRootHash: syncedImageRootHash,
-        txHash: listing.tx_hash || '',
-        onchainState: listingOnchainStatus.status,
-        chainVersion: Number(listing.chain_version || 0),
-        chainNonce: Number(listing.chain_nonce || 0),
-        chainBlockNumber: Number(listing.chain_block_number || 0),
-        chainBlockTime: Number(listing.chain_block_time || 0),
-        contractMapping: syncedDbContractMapping,
-        createdAt: listing.created_at,
-        updatedAt: listing.updated_at,
-      },
-      onchain,
-      comparisons,
-      chainVerified,
-      conclusion,
-    },
-  });
-}));
-
-router.get('/contract/:id', asyncHandler(async (req, res) => {
-  const db = await getDb();
-  const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
-  if (!rows.length) return res.json({ success: true, data: { exists: false, message: '合同不存在' } });
-
-  const contract = rows[0];
+async function buildContractVerificationData(db, contract) {
   const contractOnchainStatus = getLatestOnchainStatus(db, 'contract', contract.id, CONTRACT_ONCHAIN_KINDS);
   const content = typeof contract.content_json === 'string' ? JSON.parse(contract.content_json) : contract.content_json || {};
   const contentStr = typeof contract.content_json === 'string' ? contract.content_json : JSON.stringify(contract.content_json, null, 2);
@@ -592,50 +460,280 @@ router.get('/contract/:id', asyncHandler(async (req, res) => {
     && semanticMatch
   );
 
+  return {
+    exists: true,
+    chainEnv: CHAIN_ENV,
+    contractId: contract.id,
+    listingId: contract.listing_id || '',
+    status: contract.status,
+    onchainState: contractOnchainStatus.status,
+    storedHash: contract.content_hash,
+    currentHash,
+    hashMatch,
+    hashAlgorithm: 'SHA-256',
+    txHash: contract.tx_hash || '???',
+    paymentVerified: isEffectiveByPayment,
+    signatureVerification,
+    onchain,
+    onchainComparisons,
+    onchainAnchored,
+    semanticVerification: {
+      dbSemanticState: dbSemantic.semanticState,
+      onchainSemanticState: onchainSemantic.semanticState,
+      semanticMatch,
+      lazyReleaseState,
+      dbCurrentEffective: dbSemantic.currentEffective,
+      onchainCurrentEffective: onchainSemantic.currentEffective,
+      startAtMs: dbSemantic.startAtMs || onchainSemantic.startAtMs,
+      endAtMs: dbSemantic.endAtMs || onchainSemantic.endAtMs,
+    },
+    initialPayment: initialPayment ? {
+      id: initialPayment.id,
+      amount: initialPayment.amount,
+      txHash: initialPayment.tx_hash,
+      status: initialPayment.status,
+      paidAt: initialPayment.paid_at,
+    } : null,
+    paymentCount: payments.length,
+    createdAt: contract.created_at,
+    updatedAt: contract.updated_at,
+    verified: verificationPassed,
+    conclusion: verificationPassed
+      ? (lazyReleaseState
+        ? '合同哈希、签名、链上锚点与时间语义一致；按懒释放逻辑当前仍视为有效合同'
+        : '合同哈希、签名、链上锚点与时间语义一致')
+      : '合同哈希、签名、链上锚点或时间语义存在不一致',
+  };
+}
+
+router.get('/listing/:id', asyncHandler(async (req, res) => {
+  const db = await getDb();
+  const userDb = await getUserDb();
+  let rows = parseResult(db.exec('SELECT * FROM listings WHERE id = ?', [req.params.id]));
+  if (!rows.length) return res.json({ success: true, data: { exists: false, message: '房源不存在' } });
+
+  let listing = rows[0];
+  const landlordRows = parseUserResult(userDb.exec('SELECT wallet_address FROM users WHERE id = ?', [listing.landlord_id]));
+  const landlordWallet = String(landlordRows[0]?.wallet_address || '').trim().toLowerCase();
+  const imageHashes = parseJsonArray(listing.image_hashes);
+  const imageUrls = parseJsonArray(listing.image_urls);
+  const imageCids = parseJsonArray(listing.image_cids);
+  const expectedRentAmountWei = toWeiString(listing.rent_amount) || '';
+  const expectedImageRootHash = calcImageRootHash(imageHashes);
+  const rebuiltContentHash = calcListingContentHash({ listingId: listing.id, landlordWallet, listing });
+  const dbContentHash = String(listing.content_hash || '').trim().toLowerCase() || rebuiltContentHash;
+  const dbContractMapping = resolveDbListingContractMapping(db, listing.id);
+  if (!String(listing.content_hash || '').trim() && /^0x[a-f0-9]{64}$/i.test(rebuiltContentHash)) {
+    db.run("UPDATE listings SET content_hash = ?, updated_at = datetime('now', '+8 hours') WHERE id = ?", [rebuiltContentHash, listing.id]);
+    saveDb();
+    listing.content_hash = rebuiltContentHash;
+  }
+
+let onchain = null;
+  try {
+    onchain = await readOnchainListing(listing.id);
+  } catch (error) {
+    onchain = { readable: false, reason: error?.message || '读取链上房源失败' };
+  }
+  if (onchain?.exists) {
+    const nextStatus = String(onchain.status || '').trim().toLowerCase();
+    const nextRentAmount = formatWeiToEthString(onchain.rentAmountWei);
+    const nextMinLeaseMonths = Number(onchain.minLeaseMonths || 0);
+    const nextContentHash = String(onchain.contentHash || '').trim().toLowerCase();
+    const nextVersion = Number(onchain.version || 0);
+    const nextNonce = Number(onchain.nonce || 0);
+    const shouldSync =
+      nextVersion > Number(listing.chain_version || 0) ||
+      nextNonce > Number(listing.chain_nonce || 0) ||
+      nextStatus !== String(listing.status || '').trim().toLowerCase() ||
+      (nextRentAmount && nextRentAmount !== String(listing.rent_amount || '').trim()) ||
+      (nextMinLeaseMonths > 0 && nextMinLeaseMonths !== Number(listing.min_lease_months || 0)) ||
+      (nextContentHash && nextContentHash !== String(listing.content_hash || '').trim().toLowerCase());
+    if (shouldSync) {
+      db.run(
+        `UPDATE listings
+         SET status = ?,
+             rent_amount = CASE WHEN ? <> '' THEN ? ELSE rent_amount END,
+             min_lease_months = CASE WHEN ? > 0 THEN ? ELSE min_lease_months END,
+             content_hash = CASE WHEN ? <> '' THEN ? ELSE content_hash END,
+             chain_version = CASE WHEN ? > chain_version THEN ? ELSE chain_version END,
+             chain_nonce = CASE WHEN ? > chain_nonce THEN ? ELSE chain_nonce END,
+             updated_at = datetime('now', '+8 hours')
+         WHERE id = ?`,
+        [
+          nextStatus,
+          nextRentAmount,
+          nextRentAmount,
+          nextMinLeaseMonths,
+          nextMinLeaseMonths,
+          nextContentHash,
+          nextContentHash,
+          nextVersion,
+          nextVersion,
+          nextNonce,
+          nextNonce,
+          listing.id,
+        ]
+      );
+      saveDb();
+      rows = parseResult(db.exec('SELECT * FROM listings WHERE id = ?', [req.params.id]));
+      listing = rows[0];
+    }
+  }
+  const syncedImageHashes = parseJsonArray(listing.image_hashes);
+  const syncedImageUrls = parseJsonArray(listing.image_urls);
+  const syncedImageCids = parseJsonArray(listing.image_cids);
+  const syncedRentAmountWei = toWeiString(listing.rent_amount) || '';
+  const syncedImageRootHash = calcImageRootHash(syncedImageHashes);
+  const syncedRebuiltContentHash = calcListingContentHash({ listingId: listing.id, landlordWallet, listing });
+  const syncedDbContentHash = String(listing.content_hash || '').trim().toLowerCase() || syncedRebuiltContentHash;
+  const syncedDbContractMapping = resolveDbListingContractMapping(db, listing.id);
+  const listingOnchainStatus = getLatestOnchainStatus(db, 'listing', listing.id, LISTING_ONCHAIN_KINDS);
+  const comparisons = onchain?.exists ? {
+    listingIdMatch: String(onchain.listingId || '') === String(listing.id || ''),
+    landlordMatch: !landlordWallet || String(onchain.landlord || '') === landlordWallet,
+    contentHashMatch: String(onchain.contentHash || '') === syncedDbContentHash,
+    rentAmountWeiMatch: String(onchain.rentAmountWei || '') === String(syncedRentAmountWei || ''),
+    minLeaseMonthsMatch: Number(onchain.minLeaseMonths || 0) === Number(listing.min_lease_months || 0),
+    imageRootHashMatch: String(onchain.imageRootHash || '') === String(syncedImageRootHash || '').toLowerCase(),
+    listingStatusMatch: Number(onchain.statusEnum || 0) === Number(expectedListingBodyStatusEnum(listing) ?? -1),
+    occupancyMatch: syncedDbContractMapping.publicStatus === 'rented'
+      ? String(onchain.currentEffectiveContractId || '').trim() === String(syncedDbContractMapping.currentEffectiveContractId || '').trim()
+      : !String(onchain.currentEffectiveContractId || '').trim(),
+    versionMatch: Number(onchain.version || 0) === Number(listing.chain_version || 0),
+    nonceMatch: Number(onchain.nonce || 0) === Number(listing.chain_nonce || 0),
+  } : null;
+  const chainVerified = Boolean(comparisons) && Object.values(comparisons).every(Boolean);
+  let ipfsSnapshot = {
+    cid: String(listing.public_snapshot_cid || '').trim(),
+    gatewayUrl: buildGatewayUrl(listing.public_snapshot_cid),
+    storedHash: String(listing.public_snapshot_hash || '').trim().toLowerCase(),
+    fetched: false,
+    available: false,
+    fetchedHash: '',
+    hashMatch: false,
+    error: '',
+  };
+  if (ipfsSnapshot.cid) {
+    try {
+      const snapshotText = await readIpfsText(ipfsSnapshot.cid);
+      ipfsSnapshot = {
+        ...ipfsSnapshot,
+        fetched: true,
+        available: true,
+        fetchedHash: sha256Hex(snapshotText).toLowerCase(),
+      };
+      ipfsSnapshot.hashMatch = ipfsSnapshot.fetchedHash === ipfsSnapshot.storedHash;
+    } catch (error) {
+      ipfsSnapshot = {
+        ...ipfsSnapshot,
+        fetched: true,
+        available: false,
+        error: error?.message || 'IPFS snapshot unavailable',
+      };
+    }
+  }
+  const conclusion = !onchain?.readable
+    ? `当前网络链上数据不可读：${onchain?.reason || '未知原因'}`
+    : !onchain?.exists
+      ? '数据库存在该房源，但链上未查询到对应房源'
+      : chainVerified
+        ? '房源链上关键字段与数据库快照一致'
+        : '房源链上字段与数据库快照存在差异，请人工复核';
+
   res.json({
     success: true,
     data: {
       exists: true,
       chainEnv: CHAIN_ENV,
-      contractId: contract.id,
-      listingId: contract.listing_id || '',
-      status: contract.status,
-      onchainState: contractOnchainStatus.status,
-      storedHash: contract.content_hash,
-      currentHash,
-      hashMatch,
-      hashAlgorithm: 'SHA-256',
-      txHash: contract.tx_hash || '未上链',
-      paymentVerified: isEffectiveByPayment,
-      signatureVerification,
-      onchain,
-      onchainComparisons,
-      onchainAnchored,
-      semanticVerification: {
-        dbSemanticState: dbSemantic.semanticState,
-        onchainSemanticState: onchainSemantic.semanticState,
-        semanticMatch,
-        lazyReleaseState,
-        dbCurrentEffective: dbSemantic.currentEffective,
-        onchainCurrentEffective: onchainSemantic.currentEffective,
-        startAtMs: dbSemantic.startAtMs || onchainSemantic.startAtMs,
-        endAtMs: dbSemantic.endAtMs || onchainSemantic.endAtMs,
+      listingId: listing.id,
+      dbSnapshot: {
+        listingId: listing.id,
+        landlordWallet,
+        status: listing.status,
+        publicStatus: syncedDbContractMapping.publicStatus,
+        contentHash: syncedDbContentHash,
+        rentAmount: listing.rent_amount,
+        rentAmountWei: syncedRentAmountWei,
+        minLeaseMonths: Number(listing.min_lease_months || 0),
+        imageCount: syncedImageUrls.length,
+        imageCids: syncedImageCids,
+        imageHashes: syncedImageHashes,
+        imageRootHash: syncedImageRootHash,
+        publicSnapshotCid: String(listing.public_snapshot_cid || '').trim(),
+        publicSnapshotHash: String(listing.public_snapshot_hash || '').trim().toLowerCase(),
+        txHash: listing.tx_hash || '',
+        onchainState: listingOnchainStatus.status,
+        chainVersion: Number(listing.chain_version || 0),
+        chainNonce: Number(listing.chain_nonce || 0),
+        chainBlockNumber: Number(listing.chain_block_number || 0),
+        chainBlockTime: Number(listing.chain_block_time || 0),
+        contractMapping: syncedDbContractMapping,
+        createdAt: listing.created_at,
+        updatedAt: listing.updated_at,
       },
-      initialPayment: initialPayment ? {
-        id: initialPayment.id,
-        amount: initialPayment.amount,
-        txHash: initialPayment.tx_hash,
-        status: initialPayment.status,
-        paidAt: initialPayment.paid_at,
-      } : null,
-      paymentCount: payments.length,
-      createdAt: contract.created_at,
-      updatedAt: contract.updated_at,
-      conclusion: verificationPassed
-        ? (lazyReleaseState
-          ? '合同哈希、签名与链上锚定均通过；当前属于懒释放状态，数据库已结束、链上仍为 Active，但按时间语义双方一致视为已过期'
-          : '合同内容、双方签名、链上锚定与时间语义校验通过')
-        : '合同哈希、签名、链上锚定或时间语义存在不一致，请人工复核',
+      onchain,
+      ipfsSnapshot,
+      comparisons,
+      chainVerified,
+      conclusion,
+    },
+  });
+}));
+
+router.get('/contract/:id', asyncHandler(async (req, res) => {
+  const db = await getDb();
+  const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
+  if (!rows.length) return res.json({ success: true, data: { exists: false, message: '合同不存在' } });
+  res.json({ success: true, data: await buildContractVerificationData(db, rows[0]) });
+}));
+
+router.post('/contract-pdf', express.raw({ type: 'application/pdf', limit: '20mb' }), asyncHandler(async (req, res) => {
+  const pdfBuffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || []);
+  if (!pdfBuffer.length) {
+    return res.status(400).json({ success: false, error: 'PDF 文件为空或上传失败' });
+  }
+  const markers = extractPdfVerificationMarkers(pdfBuffer);
+  if (!markers.contractId || !markers.contentHash) {
+    return res.status(400).json({ success: false, error: '未在 PDF 中识别到 contractId 或 contentHash，请重新下载最新合同 PDF 后再验真' });
+  }
+  const db = await getDb();
+  const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [markers.contractId]));
+  if (!rows.length) {
+    return res.json({
+      success: true,
+      data: {
+        exists: false,
+        source: 'pdf',
+        pdfVerification: {
+          contractId: markers.contractId,
+          contentHash: markers.contentHash,
+          txHash: markers.txHash,
+          markerExtracted: true,
+        },
+        message: 'PDF 中的合同编号未在数据库中找到',
+      },
+    });
+  }
+  const contract = rows[0];
+  const data = await buildContractVerificationData(db, contract);
+  const pdfContentHashMatch = markers.contentHash === String(contract.content_hash || '').toLowerCase();
+  res.json({
+    success: true,
+    data: {
+      ...data,
+      source: 'pdf',
+      verified: Boolean(data.verified && pdfContentHashMatch),
+      conclusion: pdfContentHashMatch
+        ? data.conclusion
+        : 'PDF 内嵌 contentHash 与数据库/链上锚点不一致，请确认是否使用了错误或被篡改的合同 PDF',
+      pdfVerification: {
+        contractId: markers.contractId,
+        contentHash: markers.contentHash,
+        txHash: markers.txHash,
+        markerExtracted: true,
+        contentHashMatch: pdfContentHashMatch,
+      },
     },
   });
 }));

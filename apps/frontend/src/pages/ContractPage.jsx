@@ -173,6 +173,10 @@ function renderStars(rating) {
   return '★'.repeat(Math.max(0, Number(rating || 0))) + '☆'.repeat(Math.max(0, 5 - Number(rating || 0)));
 }
 
+function getPdfAckStorageKey(contractId) {
+  return `contract_pdf_saved:${contractId}`;
+}
+
 function toDeadlineEpoch(value) {
   const raw = String(value || '').trim();
   const d = new Date(raw.includes('T') ? raw : raw.replace(' ', 'T'));
@@ -240,6 +244,8 @@ export default function ContractPage() {
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewComment, setReviewComment] = useState('');
   const [submittingReview, setSubmittingReview] = useState(false);
+  const [showPdfNotice, setShowPdfNotice] = useState(false);
+  const [pdfDownloadedThisSession, setPdfDownloadedThisSession] = useState(false);
 
   const initialAmount = resolveInitialAmount(content);
   const selectedNetwork = NETWORK_OPTIONS.find((x) => x.key === preferredNetwork) || NETWORK_OPTIONS[0];
@@ -316,6 +322,15 @@ export default function ContractPage() {
       // ignore invalid content_json
     }
   }, [versions, user?.id]);
+
+  useEffect(() => {
+    if (!contract?.id) return;
+    if (String(contract.status || '').trim() !== 'active') return;
+    const acknowledged = localStorage.getItem(getPdfAckStorageKey(contract.id)) === '1';
+    if (!acknowledged) {
+      setShowPdfNotice(true);
+    }
+  }, [contract?.id, contract?.status]);
 
   const expectedWallet = (type) => {
     const addr = type === 'tenant' ? content?.tenant?.walletAddress : content?.landlord?.walletAddress;
@@ -799,9 +814,18 @@ export default function ContractPage() {
       }
       const chainContract = new ethers.Contract(contractAddr, RentalChainABI, signer);
       const commentHash = buildReviewCommentHash(normalizedComment);
-      await chainContract.submitRentalReview.staticCall(id, commentHash, reviewRating);
-      const estimatedGas = await chainContract.submitRentalReview.estimateGas(id, commentHash, reviewRating);
-      const tx = await chainContract.submitRentalReview(id, commentHash, reviewRating, {
+      const prepare = await apiPost(`/contracts/${id}/review/prepare-onchain`, {
+        rating: reviewRating,
+        commentText: normalizedComment,
+        commentHash,
+      });
+      const commentCid = String(prepare?.data?.commentCid || '').trim();
+      if (!commentCid) {
+        throw new Error('评价 commentCid 生成失败');
+      }
+      await chainContract.submitRentalReview.staticCall(id, commentHash, reviewRating, commentCid);
+      const estimatedGas = await chainContract.submitRentalReview.estimateGas(id, commentHash, reviewRating, commentCid);
+      const tx = await chainContract.submitRentalReview(id, commentHash, reviewRating, commentCid, {
         gasLimit: (estimatedGas * 120n) / 100n,
       });
       await tx.wait();
@@ -811,6 +835,7 @@ export default function ContractPage() {
         rating: reviewRating,
         commentText: normalizedComment,
         commentHash,
+        commentCid,
       });
       toast.success('租后评价已提交');
       setReviewRating(0);
@@ -889,6 +914,12 @@ export default function ContractPage() {
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     window.open(url, '_blank');
+    setPdfDownloadedThisSession(true);
+  };
+
+  const acknowledgePdfSaved = () => {
+    localStorage.setItem(getPdfAckStorageKey(id), '1');
+    setShowPdfNotice(false);
   };
 
   const handleCreateRenewal = async () => {
@@ -955,6 +986,39 @@ export default function ContractPage() {
 
   return (
     <div className="max-w-3xl mx-auto animate-fade-in">
+      {showPdfNotice && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/70 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-slate-900/95 p-6 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-300">
+                <FileTextIcon className="h-6 w-6" />
+              </div>
+              <div>
+                <h2 className="text-xl font-semibold text-white">请保存合同 PDF</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-300">
+                  合同已生效。请立即下载并自行保存合同 PDF，后续服务器不可用时，可通过本地 PDF 独立验真合同。
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+              <button type="button" onClick={handleDownloadPdf} className="btn-primary flex-1">
+                下载合同 PDF
+              </button>
+              <button
+                type="button"
+                onClick={acknowledgePdfSaved}
+                disabled={!pdfDownloadedThisSession}
+                className="btn-secondary flex-1 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                我已保存，继续
+              </button>
+            </div>
+            {!pdfDownloadedThisSession && (
+              <p className="mt-3 text-xs text-slate-400">请先点击“下载合同 PDF”，再确认已保存。</p>
+            )}
+          </div>
+        </div>
+      )}
       <button onClick={() => navigate(-1)} className="flex items-center space-x-1 text-gray-400 hover:text-gray-200 transition-colors mb-4">
         <ArrowLeftIcon className="w-4 h-4" /><span>返回</span>
       </button>

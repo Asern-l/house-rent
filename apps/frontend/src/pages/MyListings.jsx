@@ -369,22 +369,40 @@ export default function MyListings() {
     }
     setSubmittingId(item.id);
     try {
-      let uploadedUrls = [];
+      let uploadedImages = [];
       if (newImageFiles.length > 0) {
         const images = [];
         for (const file of newImageFiles) {
           images.push({ dataUrl: await readFileAsDataUrl(file) });
         }
         const uploadRes = await apiPost('/listings/upload-images', { images });
-        uploadedUrls = Array.isArray(uploadRes?.data?.images) ? uploadRes.data.images.map((x) => x.url).filter(Boolean) : [];
+        uploadedImages = Array.isArray(uploadRes?.data?.images) ? uploadRes.data.images : [];
       }
 
-      const mergedImageUrls = [...currentImageUrls, ...uploadedUrls];
+      const uploadedUrls = uploadedImages.map((x) => x.url).filter(Boolean);
+      const uploadedImageCids = uploadedImages.map((x) => x.cid).filter(Boolean);
+      const uploadedImageHashes = uploadedImages.map((x) => x.hash).filter(Boolean);
+      const originalImageUrls = parseImageUrls(item.image_urls);
+      const originalImageCids = parseJsonArray(item.image_cids);
+      const originalImageHashes = parseJsonArray(item.image_hashes);
+      const retainedMeta = currentImageUrls.map((url) => {
+        const index = originalImageUrls.indexOf(url);
+        return {
+          url,
+          cid: index >= 0 ? String(originalImageCids[index] || '') : '',
+          hash: index >= 0 ? String(originalImageHashes[index] || '') : '',
+        };
+      });
+      const mergedImageUrls = [...retainedMeta.map((x) => x.url), ...uploadedUrls];
+      const mergedImageCids = [...retainedMeta.map((x) => x.cid).filter(Boolean), ...uploadedImageCids];
+      const mergedImageHashes = [...retainedMeta.map((x) => x.hash).filter(Boolean), ...uploadedImageHashes];
       const prepare = await apiPost(`/listings/${item.id}/terms/prepare`, {
         rentAmount: editForm.rentAmount,
         minLeaseMonths: Number(editForm.minLeaseMonths),
         clauses: parseJsonArray(item.clauses_template_json),
         imageUrls: mergedImageUrls,
+        imageCids: mergedImageCids,
+        imageHashes: mergedImageHashes,
       });
       const prepared = prepare?.data;
       const chainAnchor = prepared?.chainAnchor;
@@ -397,12 +415,16 @@ export default function MyListings() {
       const rentAmountWeiArg = String(chainAnchor?.rentAmountWei || '').trim();
       const minLeaseMonthsArg = Number(chainAnchor?.minLeaseMonths);
       const imageRootHashArg = String(chainAnchor?.imageRootHash || '').trim();
+      const snapshotHashArg = String(chainAnchor?.snapshotHash || '').trim();
+      const snapshotCidArg = String(chainAnchor?.snapshotCid || '').trim();
 
       if (!listingIdArg) throw new Error('上链参数缺失: listingId');
       if (!isHex32(contentHashArg)) throw new Error('上链参数非法: contentHash');
       if (!/^\d+$/.test(rentAmountWeiArg) || BigInt(rentAmountWeiArg) <= 0n) throw new Error('上链参数非法: rentAmountWei');
       if (!Number.isInteger(minLeaseMonthsArg) || minLeaseMonthsArg <= 0) throw new Error('上链参数非法: minLeaseMonths');
       if (!isHex32(imageRootHashArg)) throw new Error('上链参数非法: imageRootHash');
+      if (!isHex32(snapshotHashArg)) throw new Error('invalid onchain param: snapshotHash');
+      if (!snapshotCidArg) throw new Error('missing onchain param: snapshotCid');
       if (expectedVersion === undefined || expectedVersion === null) throw new Error('上链参数缺失: expectedVersion');
       if (expectedNonce === undefined || expectedNonce === null) throw new Error('上链参数缺失: expectedNonce');
 
@@ -412,6 +434,8 @@ export default function MyListings() {
         rentAmountWeiArg,
         minLeaseMonthsArg,
         imageRootHashArg,
+        snapshotHashArg,
+        snapshotCidArg,
         expectedVersion,
         expectedNonce
       );
@@ -421,6 +445,8 @@ export default function MyListings() {
         rentAmount: prepared.rentAmount,
         minLeaseMonths: prepared.minLeaseMonths,
         imageUrls: prepared.imageUrls,
+        imageCids: prepared.imageCids,
+        imageHashes: prepared.imageHashes,
         chainAnchor,
         txHash: tx.hash,
         operationId: `op_terms_${item.id}_${String(tx.hash || '').toLowerCase()}`,
@@ -432,6 +458,8 @@ export default function MyListings() {
         min_lease_months: next.minLeaseMonths ?? x.min_lease_months,
         clauses_template_json: JSON.stringify(next.clauses ?? parseJsonArray(item.clauses_template_json)),
         image_urls: JSON.stringify(next.imageUrls ?? mergedImageUrls),
+        image_cids: JSON.stringify(next.imageCids ?? mergedImageCids),
+        image_hashes: JSON.stringify(next.imageHashes ?? mergedImageHashes),
       } : x)));
       toast.success('房源信息更新成功（已上链）');
       resetEditingState();
