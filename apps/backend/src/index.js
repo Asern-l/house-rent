@@ -540,10 +540,7 @@ async function reconcileUnifiedOnchainOperations() {
           const nextStatusEnum = { available: 0, offline: 1, closed: 2 }[nextStatus];
           if (
             !statusLog
-            || Number(statusLog.args?.oldStatus ?? -1) !== Number(payload.oldStatusEnum ?? -1)
             || Number(statusLog.args?.newStatus ?? -1) !== Number(nextStatusEnum ?? -1)
-            || Number(statusLog.args?.version || 0) !== Number(payload.expectedVersion || 0) + 1
-            || Number(statusLog.args?.nonce || 0) !== Number(payload.expectedNonce || 0) + 1
           ) {
             markOnchainOperationFailed(db, {
               opId: op.op_id,
@@ -597,8 +594,6 @@ async function reconcileUnifiedOnchainOperations() {
             || String(termsLog.args?.newRentAmountWei || '') !== String(payload.expectedRentAmountWei || '')
             || Number(termsLog.args?.newMinLeaseMonths || 0) !== Number(payload.minLeaseMonths || 0)
             || toLowerHex(termsLog.args?.newImageRootHash) !== toLowerHex(payload.expectedImageRootHash)
-            || Number(termsLog.args?.version || 0) !== Number(payload.expectedVersion || 0) + 1
-            || Number(termsLog.args?.nonce || 0) !== Number(payload.expectedNonce || 0) + 1
           ) {
             markOnchainOperationFailed(db, {
               opId: op.op_id,

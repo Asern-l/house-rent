@@ -132,6 +132,21 @@ export default function MyListings() {
   const [newImageFiles, setNewImageFiles] = useState([]);
   const [newImagePreviews, setNewImagePreviews] = useState([]);
   const previewsRef = useRef([]);
+  const submittingRef = useRef('');
+
+  const beginSubmitting = (id) => {
+    const normalized = String(id || '').trim();
+    submittingRef.current = normalized;
+    setSubmittingId(normalized);
+  };
+
+  const endSubmitting = (id) => {
+    const normalized = String(id || '').trim();
+    if (!normalized || submittingRef.current === normalized) {
+      submittingRef.current = '';
+      setSubmittingId('');
+    }
+  };
 
   const reportClientError = async (payload = {}) => {
     try {
@@ -207,6 +222,7 @@ export default function MyListings() {
   };
 
   const resetEditingState = () => {
+    if (submittingRef.current) return;
     previewsRef.current.forEach((url) => URL.revokeObjectURL(url));
     previewsRef.current = [];
     setEditingId('');
@@ -219,6 +235,7 @@ export default function MyListings() {
   };
 
   const startEdit = (item, mode = 'info') => {
+    if (submittingRef.current) return;
     setEditingId(item.id);
     setEditMode(mode);
     setEditForm({
@@ -236,10 +253,12 @@ export default function MyListings() {
   };
 
   const removeCurrentImage = (index) => {
+    if (submittingRef.current) return;
     setCurrentImageUrls((prev) => prev.filter((_, i) => i !== index));
   };
 
   const removeNewImage = (index) => {
+    if (submittingRef.current) return;
     setNewImageFiles((prev) => prev.filter((_, i) => i !== index));
     setNewImagePreviews((prev) => {
       const target = prev[index];
@@ -251,6 +270,10 @@ export default function MyListings() {
   };
 
   const handleSelectNewImages = (e) => {
+    if (submittingRef.current) {
+      e.target.value = '';
+      return;
+    }
     const files = Array.from(e.target.files || []);
     const remain = MAX_IMAGE_COUNT - currentImageUrls.length - newImageFiles.length;
     if (files.length > remain) {
@@ -281,7 +304,7 @@ export default function MyListings() {
       toast.error('请先安装 MetaMask 钱包');
       return;
     }
-    setSubmittingId(id);
+    beginSubmitting(id);
     try {
       const prepare = await apiPost(`/listings/${id}/status/prepare`, { status });
       const prepared = prepare?.data;
@@ -329,13 +352,14 @@ export default function MyListings() {
       });
       toast.error(error?.response?.data?.error || error?.message || '状态更新失败');
     } finally {
-      setSubmittingId('');
+      endSubmitting(id);
     }
   };
 
   const submitListingUpdate = async (item) => {
+    if (submittingRef.current === item.id) return;
     if (editMode === 'clauses') {
-      setSubmittingId(item.id);
+      beginSubmitting(item.id);
       try {
         const res = await apiPost(`/listings/${item.id}/clauses`, {
           clauses: parseClausesText(clausesForm.clausesText),
@@ -357,7 +381,7 @@ export default function MyListings() {
         });
         toast.error(error?.response?.data?.error || error?.message || '附加条款更新失败');
       } finally {
-        setSubmittingId('');
+        endSubmitting(item.id);
       }
       return;
     }
@@ -367,7 +391,7 @@ export default function MyListings() {
       toast.error('请先安装 MetaMask 钱包');
       return;
     }
-    setSubmittingId(item.id);
+    beginSubmitting(item.id);
     try {
       let uploadedImages = [];
       if (newImageFiles.length > 0) {
@@ -473,7 +497,7 @@ export default function MyListings() {
       });
       toast.error(error?.response?.data?.error || error?.message || '房源信息更新失败');
     } finally {
-      setSubmittingId('');
+      endSubmitting(item.id);
     }
   };
 
@@ -512,6 +536,7 @@ export default function MyListings() {
             const isEditing = editingId === item.id;
             const isEditingInfo = isEditing && editMode === 'info';
             const isEditingClauses = isEditing && editMode === 'clauses';
+            const isSubmissionLocked = submittingId === item.id;
             const allPreviewUrls = [...currentImageUrls, ...newImagePreviews];
             const displayStatus = getDisplayStatus(item);
             return (
@@ -602,7 +627,12 @@ export default function MyListings() {
                         <PencilIcon className="h-4 w-4 text-amber-200" />
                         {isEditingClauses ? '附加条款编辑' : '房源信息编辑'}
                       </p>
-                      <button type="button" className="rounded-full border border-white/10 bg-white/6 p-2 text-slate-300 transition hover:bg-white/12 hover:text-white" onClick={resetEditingState}>
+                      <button
+                        type="button"
+                        disabled={isSubmissionLocked}
+                        className="rounded-full border border-white/10 bg-white/6 p-2 text-slate-300 transition hover:bg-white/12 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={resetEditingState}
+                      >
                         <XIcon className="h-4 w-4" />
                       </button>
                     </div>
@@ -618,6 +648,7 @@ export default function MyListings() {
                               min="0"
                               className="input-field mt-1"
                               value={editForm.rentAmount}
+                              disabled={isSubmissionLocked}
                               onChange={(e) => setEditForm((p) => ({ ...p, rentAmount: e.target.value }))}
                             />
                           </label>
@@ -626,6 +657,7 @@ export default function MyListings() {
                             <select
                               className="input-field mt-1"
                               value={editForm.minLeaseMonths}
+                              disabled={isSubmissionLocked}
                               onChange={(e) => setEditForm((p) => ({ ...p, minLeaseMonths: Number(e.target.value) }))}
                             >
                               {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{m}{'个月'}</option>)}
@@ -656,7 +688,12 @@ export default function MyListings() {
                             {currentImageUrls.map((url, idx) => (
                               <div key={`cur_${url}_${idx}`} className="group relative overflow-hidden rounded border border-gray-700">
                                 <img src={resolveImageUrl(url)} alt={`cur_${idx}`} className="h-20 w-full object-cover" />
-                                <button type="button" onClick={() => removeCurrentImage(idx)} className="absolute right-1 top-1 rounded bg-black/70 p-1 text-white">
+                                <button
+                                  type="button"
+                                  disabled={isSubmissionLocked}
+                                  onClick={() => removeCurrentImage(idx)}
+                                  className="absolute right-1 top-1 rounded bg-black/70 p-1 text-white disabled:cursor-not-allowed disabled:opacity-50"
+                                >
                                   <Trash2Icon className="h-3 w-3" />
                                 </button>
                               </div>
@@ -664,7 +701,12 @@ export default function MyListings() {
                             {newImagePreviews.map((url, idx) => (
                               <div key={`new_${url}_${idx}`} className="group relative overflow-hidden rounded border border-blue-700">
                                 <img src={url} alt={`new_${idx}`} className="h-20 w-full object-cover" />
-                                <button type="button" onClick={() => removeNewImage(idx)} className="absolute right-1 top-1 rounded bg-black/70 p-1 text-white">
+                                <button
+                                  type="button"
+                                  disabled={isSubmissionLocked}
+                                  onClick={() => removeNewImage(idx)}
+                                  className="absolute right-1 top-1 rounded bg-black/70 p-1 text-white disabled:cursor-not-allowed disabled:opacity-50"
+                                >
                                   <Trash2Icon className="h-3 w-3" />
                                 </button>
                               </div>
@@ -675,6 +717,7 @@ export default function MyListings() {
                             className="mt-2 block w-full text-xs text-slate-300 file:mr-3 file:rounded-xl file:border-0 file:bg-white/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-slate-100"
                             accept="image/jpeg,image/png,image/webp"
                             multiple
+                            disabled={isSubmissionLocked}
                             onChange={handleSelectNewImages}
                           />
                           <p className="mt-1 text-xs text-slate-500">{'当前总数：'}{allPreviewUrls.length}</p>
@@ -688,6 +731,7 @@ export default function MyListings() {
                         <textarea
                           className="input-field mt-1 min-h-[120px] resize-y"
                           value={clausesForm.clausesText}
+                          disabled={isSubmissionLocked}
                           onChange={(e) => setClausesForm({ clausesText: e.target.value })}
                           placeholder={`例如：\n租金需在每月 1 日前支付\n禁止转租\n保持房屋设施完好`}
                         />
@@ -698,12 +742,19 @@ export default function MyListings() {
                       <button
                         type="button"
                         className="btn-primary px-4 py-2 text-sm"
-                        disabled={submittingId === item.id}
+                        disabled={isSubmissionLocked}
                         onClick={() => submitListingUpdate(item)}
                       >
-                        {submittingId === item.id ? '提交中...' : (isEditingClauses ? '提交附加条款修改' : '提交房源信息修改（钱包签名）')}
+                        {isSubmissionLocked ? '提交中...' : (isEditingClauses ? '提交附加条款修改' : '提交房源信息修改（钱包签名）')}
                       </button>
-                      <button type="button" className="btn-secondary px-4 py-2 text-sm" onClick={resetEditingState}>{'取消'}</button>
+                      <button
+                        type="button"
+                        className="btn-secondary px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={isSubmissionLocked}
+                        onClick={resetEditingState}
+                      >
+                        {'取消'}
+                      </button>
                     </div>
                   </div>
                 )}

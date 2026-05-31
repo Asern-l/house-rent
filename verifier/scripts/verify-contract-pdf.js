@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { PDFParse } = require('pdf-parse');
 const { ethers } = require('../lib/deps');
 const { parseArgs, resolveRuntime, ensureProviderReady } = require('../lib/runtime');
 const { verifyListingLocally } = require('./verify-listing');
@@ -17,11 +19,34 @@ function usage() {
   ].join('\n'));
 }
 
-function extractMarkers(pdfBuffer) {
-  const text = pdfBuffer.toString('latin1');
+function extractMarkersFromText(text) {
+  const lines = String(text || '').split(/\r?\n/);
   const pick = (name) => {
-    const match = text.match(new RegExp(`${name}=([^\\r\\n\\)<>;]+)`));
+    const match = String(text || '').match(new RegExp(`${name}=([^\\r\\n\\)<>;]+)`));
     return match ? String(match[1] || '').trim() : '';
+  };
+  const pickChunkedBase64 = (prefix) => {
+    const chunks = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = String(lines[i] || '');
+      const match = line.match(new RegExp(`^${prefix}_(\\d{3})=(.*)$`));
+      if (!match) continue;
+      let value = String(match[2] || '').replace(/\s+/g, '');
+      while (i + 1 < lines.length) {
+        const next = String(lines[i + 1] || '');
+        if (!next.trim()) break;
+        if (/^VERIFY_[A-Z0-9_]+(?:_\d{3})?=/.test(next)) break;
+        value += next.replace(/\s+/g, '');
+        i += 1;
+      }
+      chunks.push({
+        index: Number(match[1] || 0),
+        value,
+      });
+    }
+    if (!chunks.length) return '';
+    chunks.sort((a, b) => a.index - b.index);
+    return chunks.map((item) => item.value).join('');
   };
   return {
     contractId: pick('VERIFY_CONTRACT_ID'),
@@ -34,6 +59,123 @@ function extractMarkers(pdfBuffer) {
     landlordSigner: pick('VERIFY_LANDLORD_SIGNER').toLowerCase(),
     tenantMessageHash: pick('VERIFY_TENANT_MESSAGE_HASH').toLowerCase(),
     landlordMessageHash: pick('VERIFY_LANDLORD_MESSAGE_HASH').toLowerCase(),
+    contentJsonB64: pickChunkedBase64('VERIFY_CONTENT_JSON_B64'),
+    tenantMessageB64: pickChunkedBase64('VERIFY_TENANT_MESSAGE_B64'),
+    landlordMessageB64: pickChunkedBase64('VERIFY_LANDLORD_MESSAGE_B64'),
+    tenantSignatureB64: pickChunkedBase64('VERIFY_TENANT_SIGNATURE_B64'),
+    landlordSignatureB64: pickChunkedBase64('VERIFY_LANDLORD_SIGNATURE_B64'),
+  };
+}
+
+async function extractMarkers(pdfBuffer) {
+  const rawText = pdfBuffer.toString('latin1');
+  const rawMarkers = extractMarkersFromText(rawText);
+  if (rawMarkers.contentJsonB64 && rawMarkers.tenantMessageB64 && rawMarkers.landlordMessageB64 && rawMarkers.tenantSignatureB64 && rawMarkers.landlordSignatureB64) {
+    return rawMarkers;
+  }
+  const parser = new PDFParse({ data: pdfBuffer });
+  const parsedText = await parser.getText();
+  await parser.destroy();
+  const textMarkers = extractMarkersFromText(parsedText?.text || '');
+  return {
+    ...rawMarkers,
+    ...Object.fromEntries(Object.entries(textMarkers).filter(([, value]) => String(value || '').trim() !== '')),
+  };
+}
+
+function decodeBase64Utf8(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return Buffer.from(raw, 'base64').toString('utf8');
+}
+
+function makeContractContentHash(content) {
+  return `0x${crypto.createHash('sha256').update(JSON.stringify(content, null, 2)).digest('hex')}`;
+}
+
+function createSignMessage({ contractId, contentHash, role, signerAddress, timestamp, deadline }) {
+  return [
+    'CCL Housing Contract Signature',
+    `contractId:${contractId}`,
+    `contentHash:${contentHash}`,
+    `role:${role}`,
+    `signer:${ethers.getAddress(signerAddress)}`,
+    `timestamp:${timestamp}`,
+    `deadline:${deadline}`,
+  ].join('\n');
+}
+
+function parseSignMessageFields(message) {
+  const parsed = {};
+  for (const line of String(message || '').split('\n')) {
+    const idx = line.indexOf(':');
+    if (idx > 0) parsed[line.slice(0, idx)] = line.slice(idx + 1);
+  }
+  return parsed;
+}
+
+function verifyEmbeddedSignature({ role, signerAddress, message, signature, expectedContentHash }) {
+  const normalizedSigner = String(signerAddress || '').trim().toLowerCase();
+  const normalizedSignature = String(signature || '').trim();
+  if (!normalizedSigner || !message || !normalizedSignature) {
+    return {
+      available: false,
+      messagePresent: Boolean(message),
+      signaturePresent: Boolean(normalizedSignature),
+      signerPresent: Boolean(normalizedSigner),
+      recoveredAddress: '',
+      messageHash: '',
+      signatureMatchesSigner: false,
+      messageMatchesExpectedTemplate: false,
+      verified: false,
+      error: 'signature material missing',
+    };
+  }
+
+  const parsed = parseSignMessageFields(message);
+  const timestamp = Number(parsed.timestamp || 0);
+  const deadline = Number(parsed.deadline || 0);
+  const expectedMessage = createSignMessage({
+    contractId: String(parsed.contractId || ''),
+    contentHash: expectedContentHash,
+    role,
+    signerAddress,
+    timestamp,
+    deadline,
+  });
+  let recoveredAddress = '';
+  let messageHash = '';
+  try {
+    recoveredAddress = ethers.verifyMessage(message, normalizedSignature).toLowerCase();
+    messageHash = ethers.keccak256(ethers.toUtf8Bytes(String(message || '').trim())).toLowerCase();
+  } catch (error) {
+    return {
+      available: true,
+      messagePresent: true,
+      signaturePresent: true,
+      signerPresent: true,
+      recoveredAddress: '',
+      messageHash: '',
+      signatureMatchesSigner: false,
+      messageMatchesExpectedTemplate: false,
+      verified: false,
+      error: error.message || 'signature verification failed',
+    };
+  }
+
+  const signatureMatchesSigner = recoveredAddress === normalizedSigner;
+  const messageMatchesExpectedTemplate = String(message || '') === expectedMessage;
+  return {
+    available: true,
+    messagePresent: true,
+    signaturePresent: true,
+    signerPresent: true,
+    recoveredAddress,
+    messageHash,
+    signatureMatchesSigner,
+    messageMatchesExpectedTemplate,
+    verified: signatureMatchesSigner && messageMatchesExpectedTemplate,
+    error: '',
   };
 }
 
@@ -106,10 +248,20 @@ async function loadContractCreatedMatch(contract, provider, contractId, txHash) 
 }
 
 async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sepolia', rpcUrl = '', contractAddress = '' }) {
-  const markers = extractMarkers(pdfBuffer);
+  const markers = await extractMarkers(pdfBuffer);
   if (!markers.contractId || !markers.contentHash) {
     throw new Error('missing VERIFY_CONTRACT_ID or VERIFY_CONTENT_HASH in PDF');
   }
+  const canonicalContentJson = decodeBase64Utf8(markers.contentJsonB64);
+  const tenantMessage = decodeBase64Utf8(markers.tenantMessageB64);
+  const landlordMessage = decodeBase64Utf8(markers.landlordMessageB64);
+  const tenantSignature = decodeBase64Utf8(markers.tenantSignatureB64);
+  const landlordSignature = decodeBase64Utf8(markers.landlordSignatureB64);
+  if (!canonicalContentJson || !tenantMessage || !landlordMessage || !tenantSignature || !landlordSignature) {
+    throw new Error('pdf missing strong verification materials; please re-download a new contract PDF');
+  }
+  const canonicalContent = JSON.parse(canonicalContentJson);
+  const rebuiltContentHash = makeContractContentHash(canonicalContent).toLowerCase();
 
   const runtime = resolveRuntime(network, {
     network,
@@ -131,16 +283,35 @@ async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sep
   const tenantEvent = events.find((item) => item.role === 1);
   const landlordEvent = events.find((item) => item.role === 2);
   const createdTx = await loadContractCreatedMatch(contract, provider, markers.contractId, markers.txHash);
+  const tenantSignatureVerification = verifyEmbeddedSignature({
+    role: 'tenant',
+    signerAddress: String(record.tenant || ''),
+    message: tenantMessage,
+    signature: tenantSignature,
+    expectedContentHash: rebuiltContentHash || markers.contentHash,
+  });
+  const landlordSignatureVerification = verifyEmbeddedSignature({
+    role: 'landlord',
+    signerAddress: String(record.landlord || ''),
+    message: landlordMessage,
+    signature: landlordSignature,
+    expectedContentHash: rebuiltContentHash || markers.contentHash,
+  });
   const comparisons = {
     contractIdMatch: record.contractId === markers.contractId,
     listingIdMatch: !markers.listingId || String(record.listingId || '') === markers.listingId,
     contentHashMatch: String(record.contentHash || '').toLowerCase() === markers.contentHash,
+    rebuiltContentHashMatch: rebuiltContentHash === String(record.contentHash || '').toLowerCase(),
     tenantSignerMatch: !markers.tenantSigner || String(record.tenant || '').toLowerCase() === markers.tenantSigner,
     landlordSignerMatch: !markers.landlordSigner || String(record.landlord || '').toLowerCase() === markers.landlordSigner,
     tenantMessageHashMatch: !markers.tenantMessageHash || String(record.tenantMessageHash || '').toLowerCase() === markers.tenantMessageHash,
     landlordMessageHashMatch: !markers.landlordMessageHash || String(record.landlordMessageHash || '').toLowerCase() === markers.landlordMessageHash,
     tenantSignatureEventMatch: !tenantEvent || String(record.tenantMessageHash || '').toLowerCase() === tenantEvent.messageHash,
     landlordSignatureEventMatch: !landlordEvent || String(record.landlordMessageHash || '').toLowerCase() === landlordEvent.messageHash,
+    tenantSignatureSelfVerified: tenantSignatureVerification.verified,
+    landlordSignatureSelfVerified: landlordSignatureVerification.verified,
+    tenantRecoveredMessageHashMatch: tenantSignatureVerification.messageHash === String(record.tenantMessageHash || '').toLowerCase(),
+    landlordRecoveredMessageHashMatch: landlordSignatureVerification.messageHash === String(record.landlordMessageHash || '').toLowerCase(),
   };
   const listingVerification = markers.listingId
     ? await verifyListingLocally({
@@ -157,11 +328,20 @@ async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sep
 
   const output = {
     source: 'local-pdf',
+    verificationMode: 'rebuild-hash-and-self-verify-signatures',
     network: runtime.network,
     rpcUrl: runtime.rpcUrl,
     contractAddress: runtime.contractAddress,
     pdfPath,
     pdfMarkers: markers,
+    reconstructed: {
+      contentJson: canonicalContent,
+      contentHash: rebuiltContentHash,
+      tenantMessage,
+      landlordMessage,
+      tenantSignature,
+      landlordSignature,
+    },
     onchain: {
       contractId: String(record.contractId || ''),
       listingId: String(record.listingId || ''),
@@ -181,13 +361,17 @@ async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sep
       status: CONTRACT_STATUS_ENUM_TO_TEXT[Number(record.status || 0)] || `unknown(${String(record.status)})`,
     },
     signatureEvents: events,
+    signatureVerification: {
+      tenant: tenantSignatureVerification,
+      landlord: landlordSignatureVerification,
+    },
     listingVerification,
     comparisons,
     txHashReferenced: createdTx.match,
     verified,
     conclusion: verified
-      ? 'Contract PDF markers match onchain contract record and listing history snapshot'
-      : 'Contract PDF markers do not match onchain contract record or listing history snapshot',
+      ? 'Contract PDF content hash and signatures were independently reconstructed and match the onchain contract record'
+      : 'Contract PDF reconstructed content hash or signatures do not match the onchain contract record',
   };
 
   return output;

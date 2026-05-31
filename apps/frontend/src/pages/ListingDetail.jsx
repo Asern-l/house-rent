@@ -82,6 +82,14 @@ function normalizeHistoryBinding(item) {
   };
 }
 
+function isOnchainHistoryAction(action) {
+  return [
+    'create_listing_onchain_commit',
+    'update_status_onchain_commit',
+    'update_terms_onchain_commit',
+  ].includes(String(action || '').trim().toLowerCase());
+}
+
 export default function ListingDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -167,6 +175,7 @@ export default function ListingDetail() {
   const selectedSnapshot = normalizeHistorySnapshot(selectedHistory);
   const selectedBinding = normalizeHistoryBinding(selectedHistory);
   const selectedImages = selectedSnapshot?.imageUrls || [];
+  const selectedHistoryIsOnchain = isOnchainHistoryAction(selectedHistory?.action);
   const feedbacks = Array.isArray(listing.feedbacks) ? listing.feedbacks : [];
   const tenantReviews = Array.isArray(listing.tenant_reviews) ? listing.tenant_reviews : [];
   const reviewSummary = listing.review_summary || {};
@@ -320,19 +329,32 @@ export default function ListingDetail() {
                           <p>状态：{selectedSnapshot.status || '-'}</p>
                           <p className="break-all">contentHash：{selectedSnapshot.contentHash || '-'}</p>
                           <p className="text-gray-400">{selectedSnapshot.description || '无描述'}</p>
-                          <div className="mt-2 rounded border border-gray-700 bg-gray-900/70 p-2">
-                            <p className="font-medium text-gray-200">防篡改绑定</p>
-                            <p className={`mt-1 ${selectedHistory?.bindingVerified ? 'text-emerald-400' : 'text-yellow-300'}`}>
-                              绑定校验：{selectedHistory?.bindingVerified ? '通过' : '未通过/缺失'}
-                            </p>
-                            <p className="break-all">公开快照哈希：{selectedHistory?.expectedSnapshotHash || '-'}</p>
-                            <p className="break-all">绑定快照哈希：{selectedBinding?.snapshotHash || '-'}</p>
-                            <p>链上版本号：{selectedBinding?.chainVersion || '-'}</p>
-                            <p>链上操作序号：{selectedBinding?.chainNonce || '-'}</p>
-                            <p>事件：{selectedBinding?.eventName || '-'}</p>
-                            <p>区块号：{selectedBinding?.blockNumber || '-'}</p>
-                            <p className="break-all">交易哈希：{selectedBinding?.txHash || '-'}</p>
-                          </div>
+                          {selectedHistoryIsOnchain ? (
+                            <div className="mt-2 rounded border border-gray-700 bg-gray-900/70 p-2">
+                              <p className="font-medium text-gray-200">防篡改绑定</p>
+                              <p className={`mt-1 ${selectedHistory?.bindingVerified ? 'text-emerald-400' : 'text-yellow-300'}`}>
+                                绑定校验：{selectedHistory?.bindingVerified ? '通过' : '未通过/缺失'}
+                              </p>
+                              <p className="break-all">公开快照哈希：{selectedHistory?.expectedSnapshotHash || '-'}</p>
+                              <p className="break-all">绑定快照哈希：{selectedBinding?.snapshotHash || '-'}</p>
+                              <p>链上版本号：{selectedBinding?.chainVersion || '-'}</p>
+                              <p>链上操作序号：{selectedBinding?.chainNonce || '-'}</p>
+                              <p>事件：{selectedBinding?.eventName || '-'}</p>
+                              <p>区块号：{selectedBinding?.blockNumber || '-'}</p>
+                              <p className="break-all">交易哈希：{selectedBinding?.txHash || '-'}</p>
+                            </div>
+                          ) : (
+                            <div className="mt-2 rounded border border-blue-800/50 bg-blue-900/20 p-2 text-blue-200">
+                              <p className="font-medium">链下模板更新</p>
+                              <p className="mt-1">
+                                该操作只更新合同草稿默认附加条款，不写入房源链上状态，因此不参与链上防篡改绑定校验。
+                              </p>
+                              <p className="mt-2 break-all text-blue-100">公开快照哈希：{selectedHistory?.expectedSnapshotHash || '-'}</p>
+                              {selectedHistory?.note ? (
+                                <p className="mt-1 text-blue-100">说明：{selectedHistory.note}</p>
+                              ) : null}
+                            </div>
+                          )}
                         </div>
                       )}
                     </>

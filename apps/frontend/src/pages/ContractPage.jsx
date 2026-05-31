@@ -911,9 +911,19 @@ export default function ContractPage() {
       toast.error('PDF 下载失败');
       return;
     }
+    const disposition = String(res.headers.get('Content-Disposition') || '');
+    const filenameMatch = disposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
+    const filename = filenameMatch?.[1] ? decodeURIComponent(filenameMatch[1]) : `${id}.pdf`;
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
-    window.open(url, '_blank');
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     setPdfDownloadedThisSession(true);
   };
 
@@ -1289,29 +1299,40 @@ export default function ContractPage() {
           </div>
         )}
 
-        <div className="space-y-3">
-          <button onClick={handleDownloadPdf} className="btn-secondary w-full">下载合同 PDF</button>
-          {contract.status === 'pending' && contract.negotiation_status !== 'proposed' && isTenant && (
-            <button onClick={() => handleSign('tenant')} disabled={isActionBusy} className="btn-primary w-full flex items-center justify-center space-x-2">
-              {signing ? <LoaderIcon className="w-5 h-5 animate-spin" /> : <CheckCircleIcon className="w-5 h-5" />}
+          <div className="space-y-3">
+            <button onClick={handleDownloadPdf} className="btn-secondary w-full">下载合同 PDF</button>
+            {contract.status === 'pending' && contract.negotiation_status !== 'proposed' && isTenant && (
+              <button onClick={() => handleSign('tenant')} disabled={isActionBusy} className="btn-primary w-full flex items-center justify-center space-x-2">
+                {signing ? <LoaderIcon className="w-5 h-5 animate-spin" /> : <CheckCircleIcon className="w-5 h-5" />}
               <span>{signing ? '签署中...' : cancelling ? '取消中...' : '租客签署'}</span>
             </button>
           )}
-          {contract.status === 'tenant_signed' && isLandlord && !contract.landlord_signed_at && (
-            <button onClick={() => handleSign('landlord')} disabled={isActionBusy} className="btn-primary w-full flex items-center justify-center space-x-2">
-              {signing ? <LoaderIcon className="w-5 h-5 animate-spin" /> : <CheckCircleIcon className="w-5 h-5" />}
-              <span>{signing ? '签署并上链中...' : cancelling ? '取消中...' : '房东签署并上链'}</span>
-            </button>
-          )}
-          {contract.status === 'pending_payment' && isTenant && (
-            <button onClick={handleInitialPayment} disabled={isActionBusy} className="btn-primary w-full flex items-center justify-center space-x-2">
-              {paying ? <LoaderIcon className="w-5 h-5 animate-spin" /> : <CheckCircleIcon className="w-5 h-5" />}
-              <span>{paying ? '支付中...' : cancelling ? '取消中...' : `一次性支付 ${initialAmount || ''} ETH 并激活合同`}</span>
-            </button>
-          )}
-          {contract.status === 'active' && isTenant && !hasRenewalChild && (
-            <button onClick={handleCreateRenewal} disabled={isActionBusy} className="btn-secondary w-full">{cancelling ? '取消中...' : '申请续约'}</button>
-          )}
+            {contract.status === 'tenant_signed' && isLandlord && !contract.landlord_signed_at && (
+              <button onClick={() => handleSign('landlord')} disabled={isActionBusy} className="btn-primary w-full flex items-center justify-center space-x-2">
+                {signing ? <LoaderIcon className="w-5 h-5 animate-spin" /> : <CheckCircleIcon className="w-5 h-5" />}
+                <span>{signing ? '签署并上链中...' : cancelling ? '取消中...' : '房东签署并上链'}</span>
+              </button>
+            )}
+            {contract.status === 'pending_payment' && isTenant && (
+              <>
+                <div className="rounded-lg border border-emerald-800/50 bg-emerald-900/20 p-3 text-sm text-emerald-200">
+                  <p className="font-medium text-emerald-100">平台验真提示</p>
+                  <p className="mt-1 leading-6">
+                    平台已完成合同上链状态、合同哈希与签名一致性校验，当前未发现篡改异常。
+                  </p>
+                  <p className="mt-2 leading-6">
+                    如需进一步独立复核，请在支付前下载合同 PDF，并使用独立验真工具再次验证合同与房源信息。
+                  </p>
+                </div>
+                <button onClick={handleInitialPayment} disabled={isActionBusy} className="btn-primary w-full flex items-center justify-center space-x-2">
+                  {paying ? <LoaderIcon className="w-5 h-5 animate-spin" /> : <CheckCircleIcon className="w-5 h-5" />}
+                  <span>{paying ? '支付中...' : cancelling ? '取消中...' : `一次性支付 ${initialAmount || ''} ETH 并激活合同`}</span>
+                </button>
+              </>
+            )}
+            {contract.status === 'active' && isTenant && !hasRenewalChild && (
+              <button onClick={handleCreateRenewal} disabled={isActionBusy} className="btn-secondary w-full">{cancelling ? '取消中...' : '申请续约'}</button>
+            )}
           {(canCancelContract || canRefundExpiredGas) && (
             <button onClick={handleCancel} disabled={isActionBusy} className="btn-secondary w-full">
               {cancelling ? cancelBusyLabel : cancelActionLabel}

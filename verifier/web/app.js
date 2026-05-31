@@ -42,6 +42,15 @@ function renderKeyValueGrid(items) {
   `).join('')}</div>`;
 }
 
+function renderTextBlock(title, text) {
+  return `
+    <section class="section-block">
+      <h3>${escapeHtml(title)}</h3>
+      <pre class="output">${escapeHtml(text || '-')}</pre>
+    </section>
+  `;
+}
+
 function formatListingSource(source) {
   switch (source) {
     case 'local-listing-latest-anchor':
@@ -287,6 +296,7 @@ function renderListingDetailResult(result) {
 function renderContractResult(result) {
   const summary = renderKeyValueGrid([
     { label: '验真来源', value: result.source || '' },
+    { label: '验真模式', value: result.verificationMode === 'rebuild-hash-and-self-verify-signatures' ? '强校验：重算哈希并自验签' : (result.verificationMode || '') },
     { label: '网络', value: result.network || '' },
     { label: '合同 ID', value: result.onchain?.contractId || result.pdfMarkers?.contractId || '' },
     { label: '房源 ID', value: result.onchain?.listingId || result.pdfMarkers?.listingId || '' },
@@ -300,8 +310,13 @@ function renderContractResult(result) {
   }));
 
   const linkedListing = result.listingVerification
-    ? renderListingResult(result.listingVerification)
-    : '<section class="section-block"><h3>关联房源验真</h3><p class="muted">PDF 中未提供可联动的房源信息</p></section>';
+      ? renderListingResult(result.listingVerification)
+      : '<section class="section-block"><h3>关联房源验真</h3><p class="muted">PDF 中未提供可联动的房源信息</p></section>';
+  const decodedContentJson = result.reconstructed?.contentJson
+    ? JSON.stringify(result.reconstructed.contentJson, null, 2)
+    : '';
+  const tenantMessage = result.reconstructed?.tenantMessage || '';
+  const landlordMessage = result.reconstructed?.landlordMessage || '';
 
   return `
     <section class="section-block">
@@ -313,6 +328,9 @@ function renderContractResult(result) {
       <h3>合同比对项</h3>
       ${renderKeyValueGrid(comparisons)}
     </section>
+    ${renderTextBlock('已解码的合同 JSON', decodedContentJson)}
+    ${renderTextBlock('已解码的租客签名消息原文', tenantMessage)}
+    ${renderTextBlock('已解码的房东签名消息原文', landlordMessage)}
     ${linkedListing}
     <details class="raw-block">
       <summary>查看原始 JSON</summary>

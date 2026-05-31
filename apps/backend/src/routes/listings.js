@@ -1394,10 +1394,7 @@ router.post('/:id/status/commit', authMiddleware, requireRole('landlord'), async
       eventName: 'ListingStatusChanged',
       argChecker: (args) => (
         String(args.listingId).toLowerCase() === ethers.id(String(req.params.id)).toLowerCase() &&
-        Number(args.oldStatus) === oldStatusEnum &&
-        Number(args.newStatus) === Number(chainEnumMap[status]) &&
-        Number(args.version) === expectedVersion + 1 &&
-        Number(args.nonce) === expectedNonce + 1
+        Number(args.newStatus) === Number(chainEnumMap[status])
       ),
     });
   } catch (error) {
@@ -1656,9 +1653,7 @@ router.post('/:id/terms/commit', authMiddleware, requireRole('landlord'), asyncH
         String(args.newContentHash).toLowerCase() === contentHash &&
         String(args.newRentAmountWei) === String(expectedRentAmountWei) &&
         Number(args.newMinLeaseMonths) === minLeaseMonthsNum &&
-        String(args.newImageRootHash).toLowerCase() === String(expectedImageRootHash).toLowerCase() &&
-        Number(args.version) === Number(listing.chain_version || 0) + 1 &&
-        Number(args.nonce) === Number(listing.chain_nonce || 0) + 1
+        String(args.newImageRootHash).toLowerCase() === String(expectedImageRootHash).toLowerCase()
       ),
     });
   } catch (error) {

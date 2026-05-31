@@ -229,6 +229,21 @@ function buildMessageHash(message) {
   return ethers.keccak256(ethers.toUtf8Bytes(raw));
 }
 
+function encodeBase64Utf8(value) {
+  return Buffer.from(String(value || ''), 'utf8').toString('base64');
+}
+
+function chunkMarkerLines(prefix, value, chunkSize = 120) {
+  const raw = String(value || '');
+  if (!raw) return [`${prefix}=`];
+  const lines = [];
+  for (let index = 0; index < raw.length; index += chunkSize) {
+    const seq = String(Math.floor(index / chunkSize) + 1).padStart(3, '0');
+    lines.push(`${prefix}_${seq}=${raw.slice(index, index + chunkSize)}`);
+  }
+  return lines;
+}
+
 function normalizePublicComment(raw, maxLength = 500) {
   const text = String(raw || '')
     .replace(/\r\n/g, '\n')
@@ -2272,8 +2287,14 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   }
   const content = contract.content_json || {};
   const contentHashSpec = buildContentHashSpec(content);
+  const canonicalContentJson = JSON.stringify(content, null, 2);
+  const canonicalContentJsonB64 = encodeBase64Utf8(canonicalContentJson);
   const tenantMessageHash = buildMessageHash(contract.tenant_signature_message || '');
   const landlordMessageHash = buildMessageHash(contract.landlord_signature_message || '');
+  const tenantMessageB64 = encodeBase64Utf8(contract.tenant_signature_message || '');
+  const landlordMessageB64 = encodeBase64Utf8(contract.landlord_signature_message || '');
+  const tenantSignatureB64 = encodeBase64Utf8(contract.tenant_signature || '');
+  const landlordSignatureB64 = encodeBase64Utf8(contract.landlord_signature || '');
   const listingRows = parseResult(db.exec(
     `SELECT id, public_snapshot_cid, public_snapshot_hash
      FROM listings
@@ -2315,8 +2336,6 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   if (contract.parent_contract_id) doc.text(`父合同编号：${contract.parent_contract_id}`);
   doc.text(`合同状态：${contract.status}`);
   doc.text(`合同版本：v${contract.version || 1}`);
-  doc.text(`合同哈希：${contract.content_hash}`);
-  doc.text(`链上交易哈希：${contract.tx_hash || '-'}`);
   doc.moveDown();
   doc.fontSize(13).text('合同主体');
   doc.fontSize(10).text(`租客：${content?.tenant?.walletAddress || '-'}`);
@@ -2347,18 +2366,6 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   doc.text(`房东签署时间：${contract.landlord_signed_at || '-'}`);
   doc.text(`房东签署地址：${contract.landlord_signer_address || '-'}`);
   doc.text(`房东消息哈希：${landlordMessageHash || '-'}`);
-  doc.moveDown(0.5);
-  doc.fontSize(11).text('租客签名消息原文');
-  doc.fontSize(9).text(contract.tenant_signature_message || '-', { width: 500 });
-  doc.moveDown(0.2);
-  doc.fontSize(11).text('租客签名结果');
-  doc.fontSize(9).text(contract.tenant_signature || '-', { width: 500 });
-  doc.moveDown(0.5);
-  doc.fontSize(11).text('房东签名消息原文');
-  doc.fontSize(9).text(contract.landlord_signature_message || '-', { width: 500 });
-  doc.moveDown(0.2);
-  doc.fontSize(11).text('房东签名结果');
-  doc.fontSize(9).text(contract.landlord_signature || '-', { width: 500 });
   doc.moveDown();
   doc.fontSize(13).text('支付记录');
   if (payments.length === 0) {
@@ -2368,23 +2375,78 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
       doc.fontSize(9).text(`${p.pay_type} | ${p.amount} ETH | ${p.period || '-'} | ${p.tx_hash} | ${p.paid_at}`);
     });
   }
+  doc.addPage();
+  if (cnFontPath) {
+    try { doc.font('cn'); } catch { /* ignore */ }
+  }
+  doc.fontSize(13).fillColor('black').text('验真摘要');
+  doc.fontSize(10).fillColor('black').text(`合同哈希：${contract.content_hash}`);
+  doc.text(`链上交易哈希：${contract.tx_hash || '-'}`);
+  doc.text(`房源 ID：${contract.listing_id || '-'}`);
+  doc.text(`房源快照哈希：${listingMeta.public_snapshot_hash || '-'}`);
+  doc.text(`房源快照 CID：${listingMeta.public_snapshot_cid || '-'}`);
+  doc.text(`租客消息哈希：${tenantMessageHash || '-'}`);
+  doc.text(`房东消息哈希：${landlordMessageHash || '-'}`);
   doc.moveDown();
+  doc.fontSize(9).fillColor('gray').text('说明：平台已使用上述锚点完成上链与签名一致性校验。若需进一步独立复核，请下载 PDF 并导入独立验真工具。');
+
+  doc.addPage();
+  if (cnFontPath) {
+    try { doc.font('cn'); } catch { /* ignore */ }
+  }
+  doc.fontSize(13).fillColor('black').text('验真材料明文区');
+  doc.fontSize(8).fillColor('gray').text('说明：以下内容为独立验真所需的明文材料，供人工审阅。Base64 仅用于机器稳定读取，不是加密。');
+  doc.moveDown(0.4);
   doc.fontSize(10).fillColor('black').text('content_hash 生成说明');
   doc.fontSize(8).fillColor('gray').text(`算法：${contentHashSpec.algorithm}`);
-  doc.fontSize(8).fillColor('gray').text(`字段：${JSON.stringify(contentHashSpec.fields)}`);
+  doc.fontSize(8).fillColor('gray').text(`字段：${JSON.stringify(contentHashSpec.fields)}`, { width: 500 });
   doc.fontSize(8).fillColor('gray').text(`生成时间：${getCnDateTime(new Date())}`);
-  doc.moveDown();
-  doc.fontSize(10).fillColor('black').text('PDF 验真标记');
-  doc.fontSize(8).fillColor('black').text(`VERIFY_CONTRACT_ID=${contract.id}`);
-  doc.fontSize(8).fillColor('black').text(`VERIFY_CONTENT_HASH=${contract.content_hash}`);
-  doc.fontSize(8).fillColor('black').text(`VERIFY_TX_HASH=${contract.tx_hash || ''}`);
-  doc.fontSize(8).fillColor('black').text(`VERIFY_TENANT_SIGNER=${contract.tenant_signer_address || ''}`);
-  doc.fontSize(8).fillColor('black').text(`VERIFY_LANDLORD_SIGNER=${contract.landlord_signer_address || ''}`);
-  doc.fontSize(8).fillColor('black').text(`VERIFY_TENANT_MESSAGE_HASH=${tenantMessageHash || ''}`);
-  doc.fontSize(8).fillColor('black').text(`VERIFY_LANDLORD_MESSAGE_HASH=${landlordMessageHash || ''}`);
-  doc.fontSize(8).fillColor('black').text(`VERIFY_LISTING_ID=${contract.listing_id || ''}`);
-  doc.fontSize(8).fillColor('black').text(`VERIFY_LISTING_SNAPSHOT_CID=${listingMeta.public_snapshot_cid || ''}`);
-  doc.fontSize(8).fillColor('black').text(`VERIFY_LISTING_SNAPSHOT_HASH=${listingMeta.public_snapshot_hash || ''}`);
+  doc.moveDown(0.5);
+  doc.fontSize(10).fillColor('black').text('合同 JSON 明文');
+  doc.fontSize(8).fillColor('black').text(`contract_content_json=${canonicalContentJson}`, { width: 500 });
+  doc.moveDown(0.2);
+  doc.fontSize(10).fillColor('black').text('租客签名消息原文');
+  doc.fontSize(8).fillColor('black').text(`tenant_signature_message=${contract.tenant_signature_message || '-'}`, { width: 500 });
+  doc.moveDown(0.2);
+  doc.fontSize(10).fillColor('black').text('租客签名值');
+  doc.fontSize(8).fillColor('black').text(`tenant_signature=${contract.tenant_signature || '-'}`, { width: 500 });
+  doc.moveDown(0.2);
+  doc.fontSize(10).fillColor('black').text('房东签名消息原文');
+  doc.fontSize(8).fillColor('black').text(`landlord_signature_message=${contract.landlord_signature_message || '-'}`, { width: 500 });
+  doc.moveDown(0.2);
+  doc.fontSize(10).fillColor('black').text('房东签名值');
+  doc.fontSize(8).fillColor('black').text(`landlord_signature=${contract.landlord_signature || '-'}`, { width: 500 });
+  doc.addPage();
+  if (cnFontPath) {
+    try { doc.font('cn'); } catch { /* ignore */ }
+  }
+  doc.fontSize(9).fillColor('gray').text('附录：机器验真标记');
+  doc.fontSize(7).fillColor('gray').text('说明：以下 VERIFY_* 与 Base64 分块供独立验真工具稳定读取，不面向人工比对。');
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_CONTRACT_ID=${contract.id}`);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_CONTENT_HASH=${contract.content_hash}`);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_TX_HASH=${contract.tx_hash || ''}`);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_TENANT_SIGNER=${contract.tenant_signer_address || ''}`);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_LANDLORD_SIGNER=${contract.landlord_signer_address || ''}`);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_TENANT_MESSAGE_HASH=${tenantMessageHash || ''}`);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_LANDLORD_MESSAGE_HASH=${landlordMessageHash || ''}`);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_LISTING_ID=${contract.listing_id || ''}`);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_LISTING_SNAPSHOT_CID=${listingMeta.public_snapshot_cid || ''}`);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_LISTING_SNAPSHOT_HASH=${listingMeta.public_snapshot_hash || ''}`);
+  chunkMarkerLines('VERIFY_CONTENT_JSON_B64', canonicalContentJsonB64).forEach((line) => {
+    doc.fontSize(7).fillColor('gray').text(line);
+  });
+  chunkMarkerLines('VERIFY_TENANT_MESSAGE_B64', tenantMessageB64).forEach((line) => {
+    doc.fontSize(7).fillColor('gray').text(line);
+  });
+  chunkMarkerLines('VERIFY_LANDLORD_MESSAGE_B64', landlordMessageB64).forEach((line) => {
+    doc.fontSize(7).fillColor('gray').text(line);
+  });
+  chunkMarkerLines('VERIFY_TENANT_SIGNATURE_B64', tenantSignatureB64).forEach((line) => {
+    doc.fontSize(7).fillColor('gray').text(line);
+  });
+  chunkMarkerLines('VERIFY_LANDLORD_SIGNATURE_B64', landlordSignatureB64).forEach((line) => {
+    doc.fontSize(7).fillColor('gray').text(line);
+  });
   doc.info.Title = `CCL Contract ${contract.id}`;
   doc.info.Subject = `VERIFY_CONTRACT_ID=${contract.id};VERIFY_CONTENT_HASH=${contract.content_hash};VERIFY_TX_HASH=${contract.tx_hash || ''};VERIFY_TENANT_SIGNER=${contract.tenant_signer_address || ''};VERIFY_LANDLORD_SIGNER=${contract.landlord_signer_address || ''};VERIFY_TENANT_MESSAGE_HASH=${tenantMessageHash || ''};VERIFY_LANDLORD_MESSAGE_HASH=${landlordMessageHash || ''};VERIFY_LISTING_ID=${contract.listing_id || ''};VERIFY_LISTING_SNAPSHOT_CID=${listingMeta.public_snapshot_cid || ''};VERIFY_LISTING_SNAPSHOT_HASH=${listingMeta.public_snapshot_hash || ''}`;
   doc.info.Keywords = `contract,verify,${contract.id},${contract.content_hash}`;
