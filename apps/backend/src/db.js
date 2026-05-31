@@ -1,5 +1,5 @@
 ﻿/**
- * 文件说明：数据库初始化与迁移。
+ * 文件说明：数据库初始化与严格校验。
  * 基于 sql.js 将数据持久化为 sqlite 文件。
  */
 const initSqlJs = require('sql.js');
@@ -89,12 +89,6 @@ function tableSqlContainsAll(sql, fragments) {
   return fragments.every((fragment) => String(sql).includes(fragment));
 }
 
-function ensureColumn(d, tableName, columnName, definitionSql) {
-  const actual = parseResult(d.exec(`PRAGMA table_info(${tableName})`)).map((c) => c.name);
-  if (actual.includes(columnName)) return;
-  d.run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definitionSql}`);
-}
-
 function ensureIndexes(d) {
   d.run('CREATE INDEX IF NOT EXISTS idx_contracts_tenant ON contracts(tenant_id)');
   d.run('CREATE INDEX IF NOT EXISTS idx_contracts_landlord ON contracts(landlord_id)');
@@ -175,7 +169,19 @@ function assertStrictSchema(d) {
 
 // 函数 8: 执行数据库表结构初始化与严格校验。
 async function migrate() {
+  const dbExists = fs.existsSync(DB_PATH);
   const d = await getDb();
+  if (dbExists) {
+    try {
+      assertStrictSchema(d);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`[DB_SCHEMA_MISMATCH] 当前数据库结构不受支持，请删除后重建：${DB_PATH}。详细原因：${reason}`);
+    }
+    console.log(`数据库结构校验通过（CHAIN_ENV=${CHAIN_ENV}，DB=${DB_PATH}）`);
+    return;
+  }
+
   d.run(`CREATE TABLE IF NOT EXISTS listings (
     id TEXT PRIMARY KEY,
     landlord_id TEXT NOT NULL,
@@ -386,11 +392,6 @@ async function migrate() {
   )`);
 
   ensureIndexes(d);
-  ensureColumn(d, 'listings', 'image_cids', "TEXT DEFAULT '[]'");
-  ensureColumn(d, 'listings', 'public_snapshot_cid', "TEXT DEFAULT ''");
-  ensureColumn(d, 'listings', 'public_snapshot_hash', "TEXT DEFAULT ''");
-  ensureColumn(d, 'listing_feedbacks', 'comment_cid', "TEXT DEFAULT ''");
-  ensureColumn(d, 'contract_reviews', 'comment_cid', "TEXT DEFAULT ''");
 
   try {
     assertStrictSchema(d);
@@ -400,7 +401,7 @@ async function migrate() {
   }
 
   saveDb();
-  console.log(`数据库迁移完成（CHAIN_ENV=${CHAIN_ENV}，DB=${DB_PATH}）`);
+  console.log(`数据库初始化完成（CHAIN_ENV=${CHAIN_ENV}，DB=${DB_PATH}）`);
 }
 
 module.exports = { getDb, saveDb, migrate, parseResult, CHAIN_ENV, DB_PATH };

@@ -1,7 +1,7 @@
 const path = require('path');
 const express = require('express');
 const multer = require('multer');
-const { verifyListingLocally } = require('./scripts/verify-listing');
+const { fetchListingDetail, verifyListingLocally } = require('./scripts/verify-listing');
 const { verifyContractPdfBuffer } = require('./scripts/verify-contract-pdf');
 
 const app = express();
@@ -43,6 +43,29 @@ app.post('/api/verify/listing', async (req, res) => {
     return res.status(500).json({
       ok: false,
       error: error.message || '房源独立验真失败',
+    });
+  }
+});
+
+app.post('/api/listing-detail', async (req, res) => {
+  try {
+    const listingId = String(req.body?.listingId || '').trim();
+    if (!listingId) {
+      return res.status(400).json({ ok: false, error: '缺少房源 ID' });
+    }
+    const result = await fetchListingDetail({
+      listingId,
+      includeHistory: Boolean(req.body?.includeHistory),
+      runtime: null,
+      network: String(req.body?.network || 'sepolia').trim(),
+      rpcUrl: String(req.body?.rpcUrl || '').trim(),
+      contractAddress: String(req.body?.contractAddress || '').trim(),
+    });
+    return res.json({ ok: true, result });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error.message || '房源详情读取失败',
     });
   }
 });

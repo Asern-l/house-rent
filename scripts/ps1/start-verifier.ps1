@@ -5,13 +5,28 @@ $verifierDir = Join-Path $repoRoot 'verifier'
 $nodeModulesDir = Join-Path $verifierDir 'node_modules'
 $port = 3010
 
-try {
-  $existing = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort $port -State Listen -ErrorAction Stop | Select-Object -First 1
-  if ($existing) {
-    Write-Host "Verifier is already running at http://127.0.0.1:$port"
-    exit 0
+function Get-ListeningPid($Port) {
+  try {
+    $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop | Select-Object -First 1
+    if ($conn) { return [int]$conn.OwningProcess }
+  } catch {
   }
-} catch {
+
+  $line = netstat -ano | Select-String -Pattern (":$Port\s") | Select-Object -First 1
+  if ($line) {
+    $parts = ($line.ToString() -split '\s+') | Where-Object { $_ }
+    if ($parts.Length -ge 5) {
+      return [int]$parts[-1]
+    }
+  }
+  return $null
+}
+
+$existingPid = Get-ListeningPid -Port $port
+if ($existingPid) {
+  Write-Host "Stopping existing verifier process on http://127.0.0.1:$port ..."
+  Stop-Process -Id $existingPid -Force -ErrorAction Stop
+  Start-Sleep -Seconds 1
 }
 
 if (-not (Test-Path $nodeModulesDir)) {

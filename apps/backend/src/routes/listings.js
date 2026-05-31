@@ -73,6 +73,14 @@ function parseJsonArray(raw) {
   }
 }
 
+function eventIndexedStringMatches(actualValue, expectedValue) {
+  const actual = String(actualValue || '').trim().toLowerCase();
+  const expected = String(expectedValue || '').trim();
+  if (!actual || !expected) return false;
+  if (actual === expected.toLowerCase()) return true;
+  return actual === ethers.id(expected).toLowerCase();
+}
+
 // 函数 1-0: 将 ETH 字符串金额转换为 wei 字符串。
 function toWeiString(amountStr) {
   const raw = String(amountStr || '').trim();
@@ -82,6 +90,16 @@ function toWeiString(amountStr) {
   const wei = (BigInt(intPart) * (10n ** 18n)) + BigInt(frac18);
   if (wei <= 0n) return null;
   return wei.toString();
+}
+
+function getCnDateTime(date = new Date()) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mi = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
 }
 
 // 函数 5-1: 安全解析日志中的 JSON 字段。
@@ -280,13 +298,10 @@ function buildListingContentHashPayload(draft) {
     description: String(draft.description || '').trim(),
     address: String(draft.address || '').trim(),
     district: String(draft.district || '').trim(),
-    rentAmount: String(draft.rentAmount || '').trim(),
-    minLeaseMonths: Number(draft.minLeaseMonths || 1),
     bedrooms: Number(draft.bedrooms || 1),
     livingrooms: Number(draft.livingrooms || 1),
     bathrooms: Number(draft.bathrooms || 1),
     area: Number(draft.area || 0),
-    imageHashes: Array.isArray(draft.imageHashes) ? draft.imageHashes.map((x) => String(x || '').toLowerCase()) : [],
   };
   return payload;
 }
@@ -1191,7 +1206,7 @@ router.post('/:id/feedbacks', authMiddleware, asyncHandler(async (req, res) => {
     expectedFrom: authorWallet,
     eventName: 'ListingFeedbackSubmitted',
     argChecker: (args) => (
-      String(args.listingId || '') === req.params.id
+      eventIndexedStringMatches(args.listingId, req.params.id)
       && Number(args.feedbackType || 0) === feedbackTypeCode
       && String(args.commentHash || '').trim().toLowerCase() === normalizedCommentHash
       && String(args.commentCid || '').trim() === commentCid
