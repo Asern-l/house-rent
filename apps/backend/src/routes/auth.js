@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 文件说明：认证路由（钱包登录版）。
  * 提供钱包签名登录/注册、查询/更新个人信息接口。
  * 不再支持邮箱/密码、头像。
@@ -10,7 +10,6 @@ const { getUserDb, saveUserDb, parseResult, resolveUserNetwork } = require('../u
 const { JWT_SECRET, authMiddleware } = require('../auth');
 const { logApiError, logUserEvent } = require('../logger');
 const { sendError } = require('../app-error');
-const { maybeTopupLocalWallet } = require('../local-topup');
 
 const { createLoginMessage } = require('../../../frontend/src/shared/loginMessage');
 
@@ -18,6 +17,22 @@ const router = express.Router();
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const SIGN_TIME_SKEW_MS = 10 * 60 * 1000;
 const NONCE_TTL_MS = 5 * 60 * 1000;
+const LOCAL_TOPUP_TARGET_WEI = ethers.parseEther('50');
+const LOCAL_CHAIN_ID = 31337n;
+const DEMO_LOGIN_ENABLED = String(process.env.NODE_ENV || '').trim().toLowerCase() !== 'production';
+const DEMO_USERS = {
+  tenant: {
+    walletAddress: '0xde00000000000000000000000000000000000001',
+    nickname: '演示租客',
+    phone: 'demo-tenant',
+  },
+  landlord: {
+    walletAddress: '0xde00000000000000000000000000000000000002',
+    nickname: '演示房东',
+    phone: 'demo-landlord',
+  },
+};
+
 // 内存 nonce 存储（一次有效，定时清理过期）
 const nonceStore = new Map();
 setInterval(() => {
@@ -30,6 +45,102 @@ setInterval(() => {
 // 函数 1: 校验钱包地址格式。
 function isValidWalletAddress(walletAddress) {
   return /^0x[a-fA-F0-9]{40}$/.test(String(walletAddress || '').trim());
+}
+
+async function fundLocalWalletIfNeeded(walletAddress) {
+  const rpcUrl = String(process.env.LOCAL_RPC_URL || 'http://127.0.0.1:8545').trim();
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const network = await provider.getNetwork();
+  if (network.chainId !== LOCAL_CHAIN_ID) {
+    throw new Error(`local rpc chainId mismatch: expected ${LOCAL_CHAIN_ID}, got ${network.chainId}`);
+  }
+  const normalizedWallet = ethers.getAddress(walletAddress);
+  const currentBalance = await provider.getBalance(normalizedWallet);
+  if (currentBalance >= LOCAL_TOPUP_TARGET_WEI) {
+    return {
+      funded: false,
+      txHash: '',
+      previousBalanceWei: currentBalance.toString(),
+      fundedAmountWei: '0',
+      finalBalanceWei: currentBalance.toString(),
+    };
+  }
+  const signer = await provider.getSigner(0);
+  const fundedAmount = LOCAL_TOPUP_TARGET_WEI - currentBalance;
+  const tx = await signer.sendTransaction({
+    to: normalizedWallet,
+    value: fundedAmount,
+  });
+  const receipt = await tx.wait();
+  const finalBalance = await provider.getBalance(normalizedWallet);
+  return {
+    funded: true,
+    txHash: receipt?.hash || tx.hash || '',
+    previousBalanceWei: currentBalance.toString(),
+    fundedAmountWei: fundedAmount.toString(),
+    finalBalanceWei: finalBalance.toString(),
+  };
+}
+
+async function maybeTopupLocalWallet({ preferredNetwork, userId, walletAddress, requestId, stagePrefix }) {
+  if (String(preferredNetwork || '').trim().toLowerCase() !== 'local') return;
+  try {
+    const topupResult = await fundLocalWalletIfNeeded(walletAddress);
+    logUserEvent(`${stagePrefix}.local-topup`, {
+      requestId: requestId || '',
+      userId,
+      walletAddress,
+      funded: topupResult.funded,
+      txHash: topupResult.txHash,
+      previousBalanceWei: topupResult.previousBalanceWei,
+      fundedAmountWei: topupResult.fundedAmountWei,
+      finalBalanceWei: topupResult.finalBalanceWei,
+    });
+  } catch (topupError) {
+    logApiError(`${stagePrefix}.local-topup.failed`, {
+      requestId: requestId || '',
+      userId,
+      walletAddress,
+      message: topupError?.message || 'local_topup_failed',
+    });
+  }
+}
+
+// 函数 1-1: 兼容旧账号表约束，为钱包账号生成仅占位、不参与登录的字段。
+function walletPlaceholder(walletAddress) {
+  return `wallet-${String(walletAddress || '').trim().toLowerCase().replace(/^0x/, '').slice(-12)}`;
+}
+
+// 函数 1-2: 创建钱包用户。password_hash 仅用于兼容旧表结构，钱包登录不会读取它。
+function createWalletUser(db, { walletAddress, role, nickname = '', phone = '' }) {
+  const normalizedWallet = ethers.getAddress(walletAddress);
+  const userId = `uid_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const safeNickname = String(nickname || '').trim().slice(0, 32);
+  const safePhone = String(phone || '').trim().slice(0, 20) || walletPlaceholder(normalizedWallet);
+  db.run(
+    'INSERT INTO users (id, phone, password_hash, wallet_address, role, nickname) VALUES (?, ?, ?, ?, ?, ?)',
+    [userId, safePhone, 'wallet-auth-disabled', normalizedWallet, role, safeNickname]
+  );
+  saveUserDb();
+  return { id: userId, wallet_address: normalizedWallet, role, nickname: safeNickname, phone: safePhone };
+}
+
+// 函数 1-3: 签发前端统一使用的登录响应。
+function sendLoginResponse(res, user) {
+  const token = jwt.sign({ id: user.id, walletAddress: user.wallet_address, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+  res.json({
+    success: true,
+    data: {
+      token,
+      user: {
+        id: user.id,
+        walletAddress: user.wallet_address,
+        role: user.role,
+        nickname: user.nickname || '',
+        phone: user.phone || '',
+      },
+    },
+  });
 }
 
 // 函数 1-1: 获取一次性 nonce（抗重放攻击）。
@@ -148,7 +259,33 @@ router.post('/login', asyncHandler(async (req, res) => {
   }
 }));
 
-// 函数 3: 获取当前用户信息接口。
+// 函数 3: 开发环境演示登录。绕过钱包签名，只用于本地课堂演示。
+router.post('/demo-login', asyncHandler(async (req, res) => {
+  if (!DEMO_LOGIN_ENABLED) {
+    return res.status(404).json({ error: '接口不存在' });
+  }
+  const role = String(req.body?.role || 'tenant').trim().toLowerCase();
+  const demo = DEMO_USERS[role];
+  if (!demo) {
+    return res.status(400).json({ error: '演示账号仅支持 tenant 或 landlord' });
+  }
+
+  const db = await getUserDb();
+  const users = parseResult(db.exec(
+    'SELECT id, wallet_address, role, nickname, phone FROM users WHERE LOWER(wallet_address) = ?',
+    [demo.walletAddress.toLowerCase()]
+  ));
+  const user = users[0] || createWalletUser(db, {
+    walletAddress: demo.walletAddress,
+    role,
+    nickname: demo.nickname,
+    phone: demo.phone,
+  });
+  logUserEvent('auth.demo-login.success', { requestId: req.requestId || '', userId: user.id, walletAddress: demo.walletAddress, role });
+  sendLoginResponse(res, user);
+}));
+
+// 函数 4: 获取当前用户信息接口。
 router.get('/me', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getUserDb(req.user.preferredNetwork);
   const users = parseResult(db.exec(
@@ -161,7 +298,7 @@ router.get('/me', authMiddleware, asyncHandler(async (req, res) => {
   res.json({ success: true, data: users[0] });
 }));
 
-// 函数 4: 更新当前用户信息（昵称 + 手机号）。
+// 函数 5: 更新当前用户信息（昵称 + 手机号）。
 router.put('/me', authMiddleware, asyncHandler(async (req, res) => {
   const { nickname, phone } = req.body;
   const db = await getUserDb(req.user.preferredNetwork);

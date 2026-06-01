@@ -212,6 +212,18 @@ export function AuthProvider({ children }) {
     );
   }, [preferredNetwork]);
 
+  // 函数 8: 本地课堂演示登录。后端在生产环境会禁用该入口。
+  const demoLogin = async (role = 'tenant') => {
+    const res = await axios.post(`${AUTH_API_BASE}/auth/demo-login`, { role });
+    const { token, user: userData } = res.data.data;
+    const keys = storageKeys(preferredNetwork);
+    localStorage.setItem(keys.token, token);
+    localStorage.setItem(keys.user, JSON.stringify(userData));
+    axios.defaults.headers.common.Authorization = `Bearer ${token}`;
+    setUser(userData);
+    return userData;
+  };
+
   const updateProfile = async ({ nickname, phone }) => {
     const keys = storageKeys(preferredNetwork);
     const token = localStorage.getItem(keys.token) || '';
@@ -341,6 +353,7 @@ export function AuthProvider({ children }) {
       user,
       loading,
       walletLogin,
+      demoLogin,
       updateProfile,
       logout,
       connectWallet,
@@ -362,7 +375,6 @@ export function useAuth() {
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 }
-
 
 
 

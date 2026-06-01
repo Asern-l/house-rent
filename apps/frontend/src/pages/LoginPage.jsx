@@ -12,13 +12,14 @@ import {
   UserIcon,
   XIcon,
   PhoneIcon,
+  FlaskConicalIcon,
 } from 'lucide-react';
 import { useAuth } from '../app/providers/AuthContext';
 
 const CREAM = '#f5f0e8';
 
 export default function LoginPage({ onClose }) {
-  const { walletLogin } = useAuth();
+  const { walletLogin, demoLogin } = useAuth();
   const navigate = useNavigate();
   const [step, setStep] = useState('connect'); // 'connect' | 'info'
   const [form, setForm] = useState({
@@ -85,6 +86,19 @@ export default function LoginPage({ onClose }) {
     }
   };
 
+  const handleDemoLogin = async (role) => {
+    setLoading(true);
+    try {
+      await demoLogin(role);
+      toast.success(role === 'landlord' ? '已进入演示房东账号' : '已进入演示租客账号');
+      if (onClose) onClose(); else navigate('/');
+    } catch (err) {
+      toast.error(err?.response?.data?.error || '演示登录失败，请确认认证服务已启动');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
       <div
@@ -138,6 +152,32 @@ export default function LoginPage({ onClose }) {
             <p className="text-center text-xs text-slate-400">
               首次连接即自动创建账号
             </p>
+            {import.meta.env.DEV && (
+              <div className="border-t border-stone-300 pt-4">
+                <p className="mb-3 flex items-center justify-center gap-1.5 text-center text-xs font-semibold text-stone-500">
+                  <FlaskConicalIcon className="h-3.5 w-3.5" />
+                  本地演示模式，无需安装钱包
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleDemoLogin('tenant')}
+                    disabled={loading}
+                    className="flex h-10 items-center justify-center rounded-2xl border border-stone-300 bg-[#fbf7ef] text-sm font-semibold text-stone-700 transition-colors hover:bg-stone-200 disabled:opacity-60"
+                  >
+                    演示租客
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDemoLogin('landlord')}
+                    disabled={loading}
+                    className="flex h-10 items-center justify-center rounded-2xl border border-stone-300 bg-[#fbf7ef] text-sm font-semibold text-stone-700 transition-colors hover:bg-stone-200 disabled:opacity-60"
+                  >
+                    演示房东
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-4">
