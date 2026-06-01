@@ -24,14 +24,19 @@ log "Compile and deploy contract (CHAIN_ENV=$CHAIN_ENV)"
   cd "$BLOCKCHAIN_DIR"
   npm install
   npm run compile
-  npm run deploy:sepolia
+  NO_DEPLOY_PAUSE=1 npm run deploy:sepolia
 )
 
 [[ -f "$DEPLOY_JSON_PATH" ]] || { echo "Deployment file not found: $DEPLOY_JSON_PATH" >&2; exit 1; }
 
-(
-  cd "$ROOT"
-  npm run sync:abi
-)
-
 log "Reset and redeploy completed"
+NEW_ADDRESS="$(node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));process.stdout.write(String(p.address||''));" "$DEPLOY_JSON_PATH")"
+log "New sepolia contract address: $NEW_ADDRESS"
+echo
+echo "Next steps:"
+echo "1. Restart backend services"
+echo "2. Restart frontend services"
+echo "3. Create a new contract and retest payment plus fee split"
+if [[ -t 0 && "${CI:-}" != "true" ]]; then
+  read -r -p "Press Enter to exit..." _
+fi
