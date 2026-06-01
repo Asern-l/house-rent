@@ -47,6 +47,8 @@ const GAS_CAP_MULTIPLIER = 10n;
 const GAS_CAP_HARD_LIMIT_WEI = ethers.parseEther('0.005');
 const GAS_ESTIMATE_UNITS_DEFAULT = 350000n;
 const CONTRACT_REVIEW_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const PLATFORM_FEE_BPS = 10n;
+const BPS_DENOMINATOR = 10000n;
 
 const PDF_FONT_CANDIDATES = [
   path.join(__dirname, '..', 'assets', 'fonts', 'NotoSansSC-Regular.ttf'),
@@ -68,6 +70,33 @@ function normalizeAmount(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return null;
   return n.toFixed(8).replace(/\.?0+$/, '');
+}
+
+function computePlatformFeeBreakdownFromEth(amountEth) {
+  const normalized = normalizeAmount(amountEth);
+  if (!normalized) {
+    return {
+      grossAmount: '',
+      grossAmountWei: '0',
+      platformFeeBps: Number(PLATFORM_FEE_BPS),
+      platformFeeAmount: '0',
+      platformFeeWei: '0',
+      landlordNetAmount: '0',
+      landlordNetWei: '0',
+    };
+  }
+  const grossAmountWei = ethers.parseEther(String(normalized));
+  const platformFeeWei = (grossAmountWei * PLATFORM_FEE_BPS) / BPS_DENOMINATOR;
+  const landlordNetWei = grossAmountWei - platformFeeWei;
+  return {
+    grossAmount: normalized,
+    grossAmountWei: grossAmountWei.toString(),
+    platformFeeBps: Number(PLATFORM_FEE_BPS),
+    platformFeeAmount: normalizeAmount(ethers.formatEther(platformFeeWei)) || '0',
+    platformFeeWei: platformFeeWei.toString(),
+    landlordNetAmount: normalizeAmount(ethers.formatEther(landlordNetWei)) || '0',
+    landlordNetWei: landlordNetWei.toString(),
+  };
 }
 
 function contractHash(content) {
@@ -222,6 +251,9 @@ function buildContentHashSpec(content = {}) {
       address: content.address || '',
       rentAmount: content.rentAmount || '',
       oneTimeAmount: content.oneTimeAmount || '',
+      platformFeeBps: content.platformFeeBps || 0,
+      platformFeeAmount: content.platformFeeAmount || '',
+      landlordNetAmount: content.landlordNetAmount || '',
       tenantWalletAddress: content?.tenant?.walletAddress || '',
       landlordWalletAddress: content?.landlord?.walletAddress || '',
       terms: content.terms || {},
@@ -328,6 +360,18 @@ function resolveContractAddressByEnv() {
     if (!fs.existsSync(deployFile)) return '';
     const data = JSON.parse(fs.readFileSync(deployFile, 'utf8'));
     const addr = normalizeWalletAddress(data?.address || '');
+    return addr || '';
+  } catch {
+    return '';
+  }
+}
+
+function resolvePlatformFeeRecipientByEnv() {
+  const deployFile = String(CHAIN_ENV || '').toLowerCase() === 'local' ? DEPLOY_FILE_LOCAL : DEPLOY_FILE_SEPOLIA;
+  try {
+    if (!fs.existsSync(deployFile)) return '';
+    const data = JSON.parse(fs.readFileSync(deployFile, 'utf8'));
+    const addr = normalizeWalletAddress(data?.platformFeeRecipient || data?.trustedSigner || data?.deployer || '');
     return addr || '';
   } catch {
     return '';
@@ -755,6 +799,7 @@ router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req,
   if (!oneTimeAmount) {
     return sendError(res, 400, 'INITIAL_PAYMENT_AMOUNT_INVALID', '合同首笔支付金额计算失败，请检查房源配置');
   }
+  const paymentBreakdown = computePlatformFeeBreakdownFromEth(oneTimeAmount);
 
   const contractId = `cnt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const content = {
@@ -763,7 +808,10 @@ router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req,
     title: listing.title,
     address: listing.address,
     rentAmount,
-    oneTimeAmount,
+    oneTimeAmount: paymentBreakdown.grossAmount,
+    platformFeeBps: paymentBreakdown.platformFeeBps,
+    platformFeeAmount: paymentBreakdown.platformFeeAmount,
+    landlordNetAmount: paymentBreakdown.landlordNetAmount,
     tenant: { id: tenant.id, walletAddress: tenant.wallet_address },
     landlord: { id: landlord.id, walletAddress: landlord.wallet_address },
     terms: {
@@ -2056,11 +2104,13 @@ router.get('/:id/payments/prepare-onchain', authMiddleware, asyncHandler(async (
   if (!expectedAmount) {
     return res.status(400).json(error('PAYMENT_AMOUNT_INVALID', '合同首笔支付金额无效'));
   }
+  const paymentBreakdown = computePlatformFeeBreakdownFromEth(expectedAmount);
   const expectedAmountWei = (() => {
     try { return ethers.parseEther(String(expectedAmount)); } catch { return 0n; }
   })();
   const tenantAddress = normalizeWalletAddress(content?.tenant?.walletAddress || '');
   const landlordAddress = normalizeWalletAddress(content?.landlord?.walletAddress || '');
+  const platformFeeRecipient = resolvePlatformFeeRecipientByEnv();
   if (!tenantAddress || !landlordAddress) {
     return res.status(400).json(error('WALLET_NOT_BOUND', '合同绑定钱包地址无效，无法生成支付许可'));
   }
@@ -2099,6 +2149,12 @@ router.get('/:id/payments/prepare-onchain', authMiddleware, asyncHandler(async (
       orderNo,
       amount: expectedAmount,
       amountWei: expectedAmountWei.toString(),
+      platformFeeBps: paymentBreakdown.platformFeeBps,
+      platformFeeAmount: String(content?.platformFeeAmount || paymentBreakdown.platformFeeAmount || '0'),
+      platformFeeWei: paymentBreakdown.platformFeeWei,
+      landlordNetAmount: String(content?.landlordNetAmount || paymentBreakdown.landlordNetAmount || '0'),
+      landlordNetWei: paymentBreakdown.landlordNetWei,
+      platformFeeRecipient,
       permit,
     },
   });
@@ -2134,6 +2190,7 @@ router.post('/:id/payments/onchain', authMiddleware, asyncHandler(async (req, re
   if (!expectedAmount || !requestedAmount || expectedAmount !== requestedAmount) {
     return res.status(400).json(error('PAYMENT_AMOUNT_MISMATCH', '支付金额与合同首笔金额不一致', { expectedAmount }));
   }
+  const paymentBreakdown = computePlatformFeeBreakdownFromEth(expectedAmount);
   const expectedAmountWei = (() => {
     try {
       return ethers.parseEther(String(expectedAmount));
@@ -2143,6 +2200,7 @@ router.post('/:id/payments/onchain', authMiddleware, asyncHandler(async (req, re
   })();
   const tenantAddress = normalizeWalletAddress(content?.tenant?.walletAddress || '');
   const landlordAddress = normalizeWalletAddress(content?.landlord?.walletAddress || '');
+  const platformFeeRecipient = resolvePlatformFeeRecipientByEnv();
   if (!tenantAddress || !landlordAddress) {
     return res.status(400).json(error('WALLET_NOT_BOUND', '合同绑定钱包地址无效，无法校验链上支付'));
   }
@@ -2236,6 +2294,15 @@ router.post('/:id/payments/onchain', authMiddleware, asyncHandler(async (req, re
   if (BigInt(paymentEvent.args?.amountWei || 0) !== expectedAmountWei) {
     return res.status(400).json(error('PAYMENT_EVENT_AMOUNT_MISMATCH', '链上支付事件金额与合同首笔金额不一致'));
   }
+  if (BigInt(paymentEvent.args?.platformFeeWei || 0) !== BigInt(paymentBreakdown.platformFeeWei || 0)) {
+    return res.status(400).json(error('PAYMENT_EVENT_FEE_MISMATCH', '链上支付事件手续费金额与平台规则不一致'));
+  }
+  if (BigInt(paymentEvent.args?.landlordNetWei || 0) !== BigInt(paymentBreakdown.landlordNetWei || 0)) {
+    return res.status(400).json(error('PAYMENT_EVENT_NET_MISMATCH', '链上支付事件房东实收金额与平台规则不一致'));
+  }
+  if (platformFeeRecipient && toLowerHex(paymentEvent.args?.platformFeeRecipient) !== toLowerHex(platformFeeRecipient)) {
+    return res.status(400).json(error('PAYMENT_EVENT_FEE_RECIPIENT_MISMATCH', '链上手续费收款地址与平台配置不一致'));
+  }
 
   const paymentId = `pay_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   db.run(
@@ -2300,7 +2367,14 @@ router.post('/:id/payments/onchain', authMiddleware, asyncHandler(async (req, re
   res.json({
     success: true,
     message: isFutureRenewalStart ? '续约支付回写成功，合同已支付待接续' : '支付回写成功',
-    data: { paymentId, isFutureRenewalStart },
+    data: {
+      paymentId,
+      isFutureRenewalStart,
+      platformFeeBps: paymentBreakdown.platformFeeBps,
+      platformFeeAmount: String(content?.platformFeeAmount || paymentBreakdown.platformFeeAmount || '0'),
+      landlordNetAmount: String(content?.landlordNetAmount || paymentBreakdown.landlordNetAmount || '0'),
+      platformFeeRecipient,
+    },
   });
 }));
 
@@ -2693,6 +2767,8 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   doc.fontSize(10).text(`房源：${content?.title || '-'} / ${content?.address || '-'}`);
   doc.text(`月租：${content?.rentAmount || '-'} ETH / 月`);
   doc.text(`首笔支付金额：${content?.oneTimeAmount || '-'} ETH`);
+  doc.text(`平台手续费：${content?.platformFeeAmount || '0'} ETH（${content?.platformFeeBps || 0} bps）`);
+  doc.text(`房东实收：${content?.landlordNetAmount || content?.oneTimeAmount || '-'} ETH`);
   doc.text(`租期：${content?.terms?.startDate || '-'} 至 ${content?.terms?.endDate || '-'}`);
   doc.moveDown(0.5);
   doc.fontSize(11).text('附加条款');
@@ -2733,6 +2809,8 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   doc.text(`房源 ID：${contract.listing_id || '-'}`);
   doc.text(`房源快照哈希：${listingMeta.public_snapshot_hash || '-'}`);
   doc.text(`房源快照 CID：${listingMeta.public_snapshot_cid || '-'}`);
+  doc.text(`平台手续费：${content?.platformFeeAmount || '0'} ETH（${content?.platformFeeBps || 0} bps）`);
+  doc.text(`房东实收：${content?.landlordNetAmount || content?.oneTimeAmount || '-'} ETH`);
   doc.text(`租客消息哈希：${tenantMessageHash || '-'}`);
   doc.text(`房东消息哈希：${landlordMessageHash || '-'}`);
   doc.moveDown();
@@ -2853,7 +2931,11 @@ router.post('/:id/renewals', authMiddleware, requireRole('tenant'), asyncHandler
   content.contractId = renewalId;
   content.parentContractId = parent.id;
   content.rentAmount = nextRentAmount;
-  content.oneTimeAmount = normalizeAmount(Number(nextRentAmount) * nextLeaseMonths);
+  const renewalPaymentBreakdown = computePlatformFeeBreakdownFromEth(Number(nextRentAmount) * nextLeaseMonths);
+  content.oneTimeAmount = renewalPaymentBreakdown.grossAmount;
+  content.platformFeeBps = renewalPaymentBreakdown.platformFeeBps;
+  content.platformFeeAmount = renewalPaymentBreakdown.platformFeeAmount;
+  content.landlordNetAmount = renewalPaymentBreakdown.landlordNetAmount;
   content.terms = {
     ...(content.terms || {}),
     startDate: nextStartDate,

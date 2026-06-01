@@ -118,10 +118,13 @@ contract RentalChain is ReentrancyGuard {
     mapping(bytes32 => bool) private _usedPermitDigests;
 
     address public immutable trustedSigner;
+    address public immutable platformFeeRecipient;
     uint256 public immutable paymentWindowMs;
     uint256 public constant REVIEW_WINDOW_MS = 30 days;
     uint256 public constant GAS_REIMBURSE_ESTIMATED_UNITS = 350000;
     uint256 public constant GAS_REIMBURSE_MULTIPLIER = 3;
+    uint256 public constant PLATFORM_FEE_BPS = 10;
+    uint256 public constant BPS_DENOMINATOR = 10000;
 
     event ListingCreated(
         string indexed listingId,
@@ -174,6 +177,9 @@ contract RentalChain is ReentrancyGuard {
         address indexed payer,
         address indexed landlord,
         uint256 amountWei,
+        uint256 platformFeeWei,
+        uint256 landlordNetWei,
+        address platformFeeRecipient,
         string orderNo,
         uint256 paidAt
     );
@@ -224,11 +230,13 @@ contract RentalChain is ReentrancyGuard {
         uint256 createdAt
     );
 
-    constructor(uint256 paymentWindowMs_, address trustedSigner_) {
+    constructor(uint256 paymentWindowMs_, address trustedSigner_, address platformFeeRecipient_) {
         require(paymentWindowMs_ > 0, "payment window required");
         require(trustedSigner_ != address(0), "trusted signer required");
+        require(platformFeeRecipient_ != address(0), "platform fee recipient required");
         paymentWindowMs = paymentWindowMs_;
         trustedSigner = trustedSigner_;
+        platformFeeRecipient = platformFeeRecipient_;
     }
 
     modifier onlyLandlord(string calldata listingId) {
@@ -831,9 +839,15 @@ contract RentalChain is ReentrancyGuard {
             ? ContractStatus.Paid
             : ContractStatus.Active;
         record.status = nextStatus;
-        (bool ok, ) = landlord.call{value: msg.value}("");
+        uint256 platformFeeWei = (msg.value * PLATFORM_FEE_BPS) / BPS_DENOMINATOR;
+        uint256 landlordNetWei = msg.value - platformFeeWei;
+        if (platformFeeWei > 0) {
+            (bool okFee, ) = platformFeeRecipient.call{value: platformFeeWei}("");
+            require(okFee, "transfer fee failed");
+        }
+        (bool ok, ) = landlord.call{value: landlordNetWei}("");
         require(ok, "transfer to landlord failed");
-        emit RentPaymentRecorded(contractId, msg.sender, landlord, msg.value, orderNo, block.timestamp);
+        emit RentPaymentRecorded(contractId, msg.sender, landlord, msg.value, platformFeeWei, landlordNetWei, platformFeeRecipient, orderNo, block.timestamp);
         emit ContractStatusChanged(contractId, record.listingId, uint8(ContractStatus.Created), uint8(nextStatus), block.timestamp);
     }
 

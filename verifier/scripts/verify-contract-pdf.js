@@ -397,6 +397,9 @@ async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sep
     reconstructed: {
       contentJson: canonicalContent,
       contentHash: rebuiltContentHash,
+      platformFeeBps: Number(canonicalContent?.platformFeeBps || 0),
+      platformFeeAmount: String(canonicalContent?.platformFeeAmount || '0'),
+      landlordNetAmount: String(canonicalContent?.landlordNetAmount || canonicalContent?.oneTimeAmount || '0'),
       tenantMessage,
       landlordMessage,
       tenantSignature,
