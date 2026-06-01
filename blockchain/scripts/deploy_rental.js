@@ -5,63 +5,10 @@
  */
 const hre = require('hardhat');
 const fs = require('fs');
-const path = require('path');
-const { spawnSync } = require('child_process');
 
 // 函数 1: 获取部署文件名。
 function getDeploymentFile(networkName) {
   return `deployments-rental-${networkName}.json`;
-}
-
-async function verifyDeployedContract(contract, expected) {
-  const [trustedSigner, platformFeeRecipient, paymentWindowMs, feeBps] = await Promise.all([
-    contract.trustedSigner(),
-    contract.platformFeeRecipient(),
-    contract.paymentWindowMs(),
-    contract.PLATFORM_FEE_BPS(),
-  ]);
-  if (String(trustedSigner).toLowerCase() !== String(expected.trustedSigner).toLowerCase()) {
-    throw new Error(`trustedSigner 校验失败：期望 ${expected.trustedSigner}，实际 ${trustedSigner}`);
-  }
-  if (String(platformFeeRecipient).toLowerCase() !== String(expected.platformFeeRecipient).toLowerCase()) {
-    throw new Error(`platformFeeRecipient 校验失败：期望 ${expected.platformFeeRecipient}，实际 ${platformFeeRecipient}`);
-  }
-  if (String(paymentWindowMs) !== String(expected.paymentWindowMs)) {
-    throw new Error(`paymentWindowMs 校验失败：期望 ${expected.paymentWindowMs}，实际 ${paymentWindowMs}`);
-  }
-  if (String(feeBps) !== '10') {
-    throw new Error(`PLATFORM_FEE_BPS 校验失败：期望 10，实际 ${feeBps}`);
-  }
-  return {
-    trustedSigner: String(trustedSigner),
-    platformFeeRecipient: String(platformFeeRecipient),
-    paymentWindowMs: String(paymentWindowMs),
-    feeBps: String(feeBps),
-  };
-}
-
-function syncFrontendAbiAndAddress() {
-  const projectRoot = path.resolve(__dirname, '..', '..');
-  const result = spawnSync('npm', ['run', 'sync:abi'], {
-    cwd: projectRoot,
-    stdio: 'inherit',
-    shell: true,
-  });
-  if (result.status !== 0) {
-    throw new Error(`sync:abi 执行失败，退出码 ${result.status}`);
-  }
-}
-
-async function waitForEnterIfInteractive(message = '按 Enter 退出...') {
-  if (!process.stdin.isTTY || process.env.CI === 'true' || process.env.NO_DEPLOY_PAUSE === '1') return;
-  const readline = require('readline');
-  await new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(`\n${message}`, () => {
-      rl.close();
-      resolve();
-    });
-  });
 }
 
 // 函数 2: 执行部署流程。
@@ -78,13 +25,11 @@ async function main() {
   const paymentWindowHours = Math.max(1, Number(process.env.PAYMENT_WINDOW_HOURS || 2));
   const paymentWindowMs = BigInt(paymentWindowHours) * 60n * 60n * 1000n;
   const trustedSigner = process.env.TRUSTED_SIGNER_ADDRESS || deployer.address;
-  const platformFeeRecipient = process.env.PLATFORM_FEE_RECIPIENT_ADDRESS || trustedSigner;
   console.log(`支付窗口: ${paymentWindowHours} 小时 (${paymentWindowMs} ms)\n`);
   console.log(`Permit 签名者: ${trustedSigner}\n`);
-  console.log(`平台手续费收款地址: ${platformFeeRecipient}\n`);
 
   const RentalChain = await hre.ethers.getContractFactory('RentalChain');
-  const contract = await RentalChain.deploy(paymentWindowMs, trustedSigner, platformFeeRecipient);
+  const contract = await RentalChain.deploy(paymentWindowMs, trustedSigner);
   await contract.waitForDeployment();
 
   const address = await contract.getAddress();
@@ -98,36 +43,15 @@ async function main() {
     address,
     deployer: deployer.address,
     trustedSigner,
-    platformFeeRecipient,
     paymentWindowHours,
     paymentWindowMs: paymentWindowMs.toString(),
     timestamp: new Date().toISOString(),
   }, null, 2));
 
   console.log(`\n部署信息已写入 ${outputFile}`);
-
-  const verified = await verifyDeployedContract(contract, {
-    trustedSigner,
-    platformFeeRecipient,
-    paymentWindowMs: paymentWindowMs.toString(),
-  });
-  console.log('\n链上关键参数校验通过:');
-  console.log(JSON.stringify(verified, null, 2));
-
-  console.log('\n开始同步前端 ABI 与部署地址...');
-  syncFrontendAbiAndAddress();
-  console.log('前端 ABI 与部署地址同步完成。');
-
-  console.log('\n后续操作:');
-  console.log('1. 重启后端服务');
-  console.log('2. 重启前端服务');
-  console.log('3. 使用新建合同重新测试支付与手续费分账');
 }
 
-main()
-  .then(() => waitForEnterIfInteractive())
-  .catch(async (err) => {
-    console.error('部署失败:', err);
-    await waitForEnterIfInteractive('部署失败。按 Enter 退出...');
-    process.exit(1);
-  });
+main().catch((err) => {
+  console.error('部署失败:', err);
+  process.exit(1);
+});

@@ -123,23 +123,6 @@ function resolveInitialAmount(content) {
   return String((rent * months).toFixed(8).replace(/\.?0+$/, ''));
 }
 
-function resolvePlatformFeeAmount(content) {
-  const direct = Number(content?.platformFeeAmount);
-  if (Number.isFinite(direct) && direct >= 0) return String(content.platformFeeAmount);
-  const gross = Number(resolveInitialAmount(content));
-  if (!Number.isFinite(gross) || gross <= 0) return '';
-  return String((gross * 0.001).toFixed(8).replace(/\.?0+$/, ''));
-}
-
-function resolveLandlordNetAmount(content) {
-  const direct = Number(content?.landlordNetAmount);
-  if (Number.isFinite(direct) && direct >= 0) return String(content.landlordNetAmount);
-  const gross = Number(resolveInitialAmount(content));
-  if (!Number.isFinite(gross) || gross <= 0) return '';
-  const fee = Number(resolvePlatformFeeAmount(content) || 0);
-  return String((gross - fee).toFixed(8).replace(/\.?0+$/, ''));
-}
-
 function createSignMessage({ contractId, contentHash, role, signerAddress, timestamp, deadline }) {
   return [
     'CCL Housing Contract Signature',
@@ -265,8 +248,6 @@ export default function ContractPage() {
   const [pdfDownloadedThisSession, setPdfDownloadedThisSession] = useState(false);
 
   const initialAmount = resolveInitialAmount(content);
-  const platformFeeAmount = resolvePlatformFeeAmount(content);
-  const landlordNetAmount = resolveLandlordNetAmount(content);
   const selectedNetwork = NETWORK_OPTIONS.find((x) => x.key === preferredNetwork) || NETWORK_OPTIONS[0];
   const txExplorerBase = TX_EXPLORER_BASE[selectedNetwork.key] || '';
   const isActionBusy = signing || paying || proposing || cancelling;
@@ -801,13 +782,7 @@ export default function ContractPage() {
       await tx.wait();
       const paymentResp = await apiPost(`/contracts/${id}/payments/onchain`, { txHash: tx.hash, amount: String(initialAmount), payType: 'initial', period: 'initial' });
       setLastTxHash(tx.hash);
-      const paymentData = paymentResp?.data || {};
-      const feeText = paymentData.platformFeeAmount || preparedPayment.platformFeeAmount || platformFeeAmount;
-      toast.success(
-        paymentResp?.data?.isFutureRenewalStart
-          ? `续约合同已支付，待父合同结束后接续生效${feeText ? `（平台手续费 ${feeText} ETH）` : ''}`
-          : `一次性支付成功，合同已生效${feeText ? `（平台手续费 ${feeText} ETH）` : ''}`
-      );
+      toast.success(paymentResp?.data?.isFutureRenewalStart ? '续约合同已支付，待父合同结束后接续生效' : '一次性支付成功，合同已生效');
       await loadContract();
     } catch (err) {
       let walletAddress = '';
@@ -1190,8 +1165,6 @@ export default function ContractPage() {
               <div className="col-span-2"><p className="text-gray-500">地址</p><p className="font-medium text-gray-200">{content.address}</p></div>
               <div><p className="text-gray-500">租金</p><p className="font-medium text-gray-200">{content.rentAmount} ETH / 月</p></div>
               <div><p className="text-gray-500">一次性支付总额</p><p className="font-medium text-gray-200">{initialAmount || '-'} ETH</p></div>
-              <div><p className="text-gray-500">平台手续费</p><p className="font-medium text-gray-200">{platformFeeAmount || '-'} ETH</p></div>
-              <div><p className="text-gray-500">房东实收</p><p className="font-medium text-gray-200">{landlordNetAmount || '-'} ETH</p></div>
               <div><p className="text-gray-500">支付方式</p><p className="font-medium text-gray-200">{content.terms?.paymentMethod === 'one_time' ? '一次性支付' : '按月'}</p></div>
               <div><p className="text-gray-500">租期</p><p className="font-medium text-gray-200">{content.terms?.startDate || '待定'} 至 {content.terms?.endDate || '待定'}</p></div>
             </div>
@@ -1392,9 +1365,6 @@ export default function ContractPage() {
                   </p>
                   <p className="mt-2 leading-6">
                     如需进一步独立复核，请在支付前下载合同 PDF，并使用独立验真工具再次验证合同与房源信息。
-                  </p>
-                  <p className="mt-2 leading-6">
-                    当前首笔支付总额为 {initialAmount || '-'} ETH，其中平台手续费 {platformFeeAmount || '-'} ETH，房东实收 {landlordNetAmount || '-'} ETH。
                   </p>
                 </div>
                 <button onClick={handleInitialPayment} disabled={isActionBusy} className="btn-primary w-full flex items-center justify-center space-x-2">

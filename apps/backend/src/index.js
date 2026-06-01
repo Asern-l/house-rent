@@ -34,8 +34,6 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = String(process.env.HOST || '127.0.0.1');
 const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || '100mb');
 const PAYMENT_WINDOW_HOURS = Math.max(1, Number(process.env.PAYMENT_WINDOW_HOURS || 2));
-const PLATFORM_FEE_BPS = 10n;
-const BPS_DENOMINATOR = 10000n;
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // 函数 1: 生成请求追踪ID，便于前后端日志关联。
@@ -55,24 +53,6 @@ function formatCnTime(date = new Date()) {
     second: '2-digit',
     hour12: false,
   }).format(date);
-}
-
-function normalizeAmount(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return n.toFixed(8).replace(/\.?0+$/, '');
-}
-
-function computePlatformFeeBreakdownFromEth(amountEth) {
-  const normalized = normalizeAmount(amountEth);
-  if (!normalized) return { platformFeeWei: '0', landlordNetWei: '0' };
-  const grossWei = ethers.parseEther(String(normalized));
-  const feeWei = (grossWei * PLATFORM_FEE_BPS) / BPS_DENOMINATOR;
-  const netWei = grossWei - feeWei;
-  return {
-    platformFeeWei: feeWei.toString(),
-    landlordNetWei: netWei.toString(),
-  };
 }
 
 // 函数 3: 安装基础中间件（安全、跨域、解析、日志、限流）。
@@ -240,18 +220,6 @@ function getChainRuntime() {
     contractAddress = String(deploy.address || '').trim();
   }
   return { rpcUrl, contractAddress };
-}
-
-function loadCurrentDeployment() {
-  const deployFile = CHAIN_ENV === 'local'
-    ? path.join(__dirname, '..', '..', '..', 'blockchain', 'deployments-rental-localhost.json')
-    : path.join(__dirname, '..', '..', '..', 'blockchain', 'deployments-rental-sepolia.json');
-  if (!fs.existsSync(deployFile)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(deployFile, 'utf8')) || {};
-  } catch {
-    return {};
-  }
 }
 
 function normalizeWalletAddress(value) {
@@ -940,16 +908,6 @@ async function reconcileUnifiedOnchainOperations() {
         const tenantAddress = normalizeWalletAddress(content?.tenant?.walletAddress || '');
         const landlordAddress = normalizeWalletAddress(content?.landlord?.walletAddress || '');
         const expectedAmountWei = ethers.parseEther(String(content?.oneTimeAmount || '0'));
-        const paymentBreakdown = computePlatformFeeBreakdownFromEth(content?.oneTimeAmount || '0');
-        const deployment = loadCurrentDeployment();
-        const platformFeeRecipient = (() => {
-          try {
-            const addr = String(deployment?.platformFeeRecipient || deployment?.trustedSigner || deployment?.deployer || '').trim();
-            return /^0x[a-fA-F0-9]{40}$/.test(addr) ? addr.toLowerCase() : '';
-          } catch {
-            return '';
-          }
-        })();
         if (!parsedTx || parsedTx.name !== 'recordInitialRentPayment') {
           markOnchainOperationFailed(db, {
             opId: op.op_id,
@@ -989,9 +947,6 @@ async function reconcileUnifiedOnchainOperations() {
           && toLowerHex(log.args?.payer) === toLowerHex(tenantAddress)
           && toLowerHex(log.args?.landlord) === toLowerHex(landlordAddress)
           && BigInt(log.args?.amountWei || 0) === expectedAmountWei
-          && BigInt(log.args?.platformFeeWei || 0) === BigInt(paymentBreakdown.platformFeeWei || 0)
-          && BigInt(log.args?.landlordNetWei || 0) === BigInt(paymentBreakdown.landlordNetWei || 0)
-          && (!platformFeeRecipient || toLowerHex(log.args?.platformFeeRecipient) === platformFeeRecipient)
         );
         if (!paymentEvent) {
           markOnchainOperationFailed(db, {

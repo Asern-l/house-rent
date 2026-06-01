@@ -490,9 +490,6 @@ async function buildContractVerificationData(db, contract) {
     initialPayment: initialPayment ? {
       id: initialPayment.id,
       amount: initialPayment.amount,
-      platformFeeBps: Number(content?.platformFeeBps || 0),
-      platformFeeAmount: String(content?.platformFeeAmount || '0'),
-      landlordNetAmount: String(content?.landlordNetAmount || content?.oneTimeAmount || '0'),
       txHash: initialPayment.tx_hash,
       status: initialPayment.status,
       paidAt: initialPayment.paid_at,

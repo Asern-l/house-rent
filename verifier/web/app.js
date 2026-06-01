@@ -308,8 +308,6 @@ function renderContractResult(result) {
     { label: '合同状态', value: result.onchain?.status || '' },
     { label: '付款状态', value: lifecycle.paymentState || '-' },
     { label: '当前生效状态', value: lifecycle.effectiveState || '-' },
-    { label: '平台手续费', value: `${result.reconstructed?.platformFeeAmount || '0'} ETH` },
-    { label: '房东实收', value: `${result.reconstructed?.landlordNetAmount || '0'} ETH` },
     { label: '合同验真', value: result.verified ? '通过' : '未通过' },
   ]);
 
