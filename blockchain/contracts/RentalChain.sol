@@ -5,6 +5,14 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 contract RentalChain is ReentrancyGuard {
+    bytes32 private constant ACTION_CREATE_LISTING = keccak256("createListing");
+    bytes32 private constant ACTION_UPDATE_LISTING_TERMS = keccak256("updateListingTerms");
+    bytes32 private constant ACTION_SET_LISTING_STATUS = keccak256("setListingStatus");
+    bytes32 private constant ACTION_CREATE_CONTRACT = keccak256("createContractRecord");
+    bytes32 private constant ACTION_RECORD_INITIAL_PAYMENT = keccak256("recordInitialRentPayment");
+    bytes32 private constant ACTION_SUBMIT_RENTAL_REVIEW = keccak256("submitRentalReview");
+    bytes32 private constant ACTION_SUBMIT_LISTING_FEEDBACK = keccak256("submitListingFeedback");
+
     enum ListingStatus {
         Active,
         Offline,
@@ -107,7 +115,9 @@ contract RentalChain is ReentrancyGuard {
     mapping(string => string) private _activeContractByListing;
     mapping(bytes32 => GasAuthorization) private _gasAuths;
     mapping(string => RentalReview) private _rentalReviews;
+    mapping(bytes32 => bool) private _usedPermitDigests;
 
+    address public immutable trustedSigner;
     uint256 public immutable paymentWindowMs;
     uint256 public constant REVIEW_WINDOW_MS = 30 days;
     uint256 public constant GAS_REIMBURSE_ESTIMATED_UNITS = 350000;
@@ -214,9 +224,11 @@ contract RentalChain is ReentrancyGuard {
         uint256 createdAt
     );
 
-    constructor(uint256 paymentWindowMs_) {
+    constructor(uint256 paymentWindowMs_, address trustedSigner_) {
         require(paymentWindowMs_ > 0, "payment window required");
+        require(trustedSigner_ != address(0), "trusted signer required");
         paymentWindowMs = paymentWindowMs_;
+        trustedSigner = trustedSigner_;
     }
 
     modifier onlyLandlord(string calldata listingId) {
@@ -247,6 +259,136 @@ contract RentalChain is ReentrancyGuard {
 
     function _isSameString(string memory a, string memory b) private pure returns (bool) {
         return keccak256(bytes(a)) == keccak256(bytes(b));
+    }
+
+    function _stringHash(string memory value) private pure returns (bytes32) {
+        return keccak256(bytes(value));
+    }
+
+    function _permitDigest(
+        bytes32 actionHash,
+        address caller,
+        bytes32 subjectHash,
+        bytes32 paramsHash,
+        bytes32 nonce,
+        uint256 deadlineMs
+    ) private view returns (bytes32) {
+        return keccak256(abi.encode(actionHash, caller, subjectHash, paramsHash, nonce, deadlineMs, block.chainid, address(this)));
+    }
+
+    function _consumePermit(
+        bytes32 actionHash,
+        address caller,
+        bytes32 subjectHash,
+        bytes32 paramsHash,
+        bytes32 nonce,
+        uint256 deadlineMs,
+        bytes calldata signature
+    ) private {
+        require(block.timestamp * 1000 <= deadlineMs, "permit expired");
+        require(signature.length > 0, "permit signature required");
+        bytes32 digest = _permitDigest(actionHash, caller, subjectHash, paramsHash, nonce, deadlineMs);
+        require(!_usedPermitDigests[digest], "permit already used");
+        address recovered = _recoverSigner(digest, signature);
+        require(recovered == trustedSigner, "invalid permit signer");
+        _usedPermitDigests[digest] = true;
+    }
+
+    function _hashCreateListingParams(
+        string calldata listingId,
+        bytes32 contentHash,
+        uint256 rentAmountWei,
+        uint16 minLeaseMonths,
+        bytes32 imageRootHash,
+        bytes32 snapshotHash,
+        string calldata snapshotCid
+    ) private pure returns (bytes32) {
+        return keccak256(abi.encode(listingId, contentHash, rentAmountWei, minLeaseMonths, imageRootHash, snapshotHash, snapshotCid));
+    }
+
+    function _hashCreateContractParams(CreateContractParams calldata p) private pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                p.contractId,
+                p.listingId,
+                p.parentContractId,
+                p.tenant,
+                p.landlord,
+                p.contentHash,
+                p.gasAuthNonce,
+                p.initialAmountWei,
+                p.startAtMs,
+                p.endAtMs,
+                p.tenantMessageHash,
+                p.landlordMessageHash,
+                p.tenantSignedAt,
+                p.landlordSignedAt,
+                keccak256(p.tenantSignature),
+                keccak256(p.landlordSignature)
+            )
+        );
+    }
+
+    function _hashUpdateListingTermsParams(
+        string calldata listingId,
+        bytes32 newContentHash,
+        uint256 newRentAmountWei,
+        uint16 newMinLeaseMonths,
+        bytes32 newImageRootHash,
+        bytes32 newSnapshotHash,
+        string calldata newSnapshotCid,
+        uint64 expectedVersion,
+        uint64 expectedNonce
+    ) private pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                listingId,
+                newContentHash,
+                newRentAmountWei,
+                newMinLeaseMonths,
+                newImageRootHash,
+                newSnapshotHash,
+                newSnapshotCid,
+                expectedVersion,
+                expectedNonce
+            )
+        );
+    }
+
+    function _hashSetListingStatusParams(
+        string calldata listingId,
+        ListingStatus newStatus,
+        uint64 expectedVersion,
+        uint64 expectedNonce
+    ) private pure returns (bytes32) {
+        return keccak256(abi.encode(listingId, uint8(newStatus), expectedVersion, expectedNonce));
+    }
+
+    function _hashInitialPaymentParams(
+        string calldata contractId,
+        address landlord,
+        string calldata orderNo,
+        uint256 amountWei
+    ) private pure returns (bytes32) {
+        return keccak256(abi.encode(contractId, landlord, orderNo, amountWei));
+    }
+
+    function _hashRentalReviewParams(
+        string calldata contractId,
+        bytes32 commentHash,
+        uint8 rating,
+        string calldata commentCid
+    ) private pure returns (bytes32) {
+        return keccak256(abi.encode(contractId, commentHash, rating, commentCid));
+    }
+
+    function _hashListingFeedbackParams(
+        string calldata listingId,
+        uint8 feedbackType,
+        bytes32 commentHash,
+        string calldata commentCid
+    ) private pure returns (bytes32) {
+        return keccak256(abi.encode(listingId, feedbackType, commentHash, commentCid));
     }
 
     function _paymentDeadlineMs(ContractRecord storage record) private view returns (uint256) {
@@ -398,8 +540,20 @@ contract RentalChain is ReentrancyGuard {
         uint16 minLeaseMonths,
         bytes32 imageRootHash,
         bytes32 snapshotHash,
-        string calldata snapshotCid
+        string calldata snapshotCid,
+        bytes32 permitNonce,
+        uint256 permitDeadlineMs,
+        bytes calldata permitSignature
     ) external {
+        _consumePermit(
+            ACTION_CREATE_LISTING,
+            msg.sender,
+            _stringHash(listingId),
+            _hashCreateListingParams(listingId, contentHash, rentAmountWei, minLeaseMonths, imageRootHash, snapshotHash, snapshotCid),
+            permitNonce,
+            permitDeadlineMs,
+            permitSignature
+        );
         _createListing(listingId, contentHash, rentAmountWei, minLeaseMonths, imageRootHash, snapshotHash, snapshotCid);
     }
 
@@ -439,12 +593,26 @@ contract RentalChain is ReentrancyGuard {
         emit ListingSnapshotAnchored(listingId, record.version, contentHash, snapshotHash, snapshotCid, block.timestamp);
     }
 
-    function createContractRecord(CreateContractParams calldata p) external nonReentrant {
+    function createContractRecord(
+        CreateContractParams calldata p,
+        bytes32 permitNonce,
+        uint256 permitDeadlineMs,
+        bytes calldata permitSignature
+    ) external nonReentrant {
         require(bytes(p.contractId).length > 0, "contractId required");
         require(bytes(p.listingId).length > 0, "listingId required");
         require(p.tenant != address(0), "invalid tenant");
         require(p.landlord != address(0), "invalid landlord");
         require(msg.sender == p.landlord, "only landlord");
+        _consumePermit(
+            ACTION_CREATE_CONTRACT,
+            msg.sender,
+            _stringHash(p.contractId),
+            _hashCreateContractParams(p),
+            permitNonce,
+            permitDeadlineMs,
+            permitSignature
+        );
         require(p.contentHash != bytes32(0), "contentHash required");
         require(!_contracts[p.contractId].exists, "contract already exists");
         _assertContractCreateAllowed(p);
@@ -475,7 +643,10 @@ contract RentalChain is ReentrancyGuard {
         bytes32 newSnapshotHash,
         string calldata newSnapshotCid,
         uint64 expectedVersion,
-        uint64 expectedNonce
+        uint64 expectedNonce,
+        bytes32 permitNonce,
+        uint256 permitDeadlineMs,
+        bytes calldata permitSignature
     ) external nonReentrant onlyLandlord(listingId) {
         ListingRecord storage record = _listings[listingId];
         require(record.status != ListingStatus.Closed, "listing already closed");
@@ -485,6 +656,25 @@ contract RentalChain is ReentrancyGuard {
         require(newMinLeaseMonths > 0, "newMinLeaseMonths must > 0");
         require(newSnapshotHash != bytes32(0), "newSnapshotHash required");
         require(bytes(newSnapshotCid).length > 0, "newSnapshotCid required");
+        _consumePermit(
+            ACTION_UPDATE_LISTING_TERMS,
+            msg.sender,
+            _stringHash(listingId),
+            _hashUpdateListingTermsParams(
+                listingId,
+                newContentHash,
+                newRentAmountWei,
+                newMinLeaseMonths,
+                newImageRootHash,
+                newSnapshotHash,
+                newSnapshotCid,
+                expectedVersion,
+                expectedNonce
+            ),
+            permitNonce,
+            permitDeadlineMs,
+            permitSignature
+        );
         require(record.version == expectedVersion, "version mismatch");
         require(record.nonce == expectedNonce, "nonce mismatch");
 
@@ -504,10 +694,22 @@ contract RentalChain is ReentrancyGuard {
         string calldata listingId,
         ListingStatus newStatus,
         uint64 expectedVersion,
-        uint64 expectedNonce
+        uint64 expectedNonce,
+        bytes32 permitNonce,
+        uint256 permitDeadlineMs,
+        bytes calldata permitSignature
     ) external nonReentrant onlyLandlord(listingId) {
         ListingRecord storage record = _listings[listingId];
         require(!_isContractChainBlocking(_activeContractByListing[listingId]), "listing blocked by existing contract chain");
+        _consumePermit(
+            ACTION_SET_LISTING_STATUS,
+            msg.sender,
+            _stringHash(listingId),
+            _hashSetListingStatusParams(listingId, newStatus, expectedVersion, expectedNonce),
+            permitNonce,
+            permitDeadlineMs,
+            permitSignature
+        );
         require(record.version == expectedVersion, "version mismatch");
         require(record.nonce == expectedNonce, "nonce mismatch");
 
@@ -595,13 +797,25 @@ contract RentalChain is ReentrancyGuard {
     function recordInitialRentPayment(
         string calldata contractId,
         address landlord,
-        string calldata orderNo
+        string calldata orderNo,
+        bytes32 permitNonce,
+        uint256 permitDeadlineMs,
+        bytes calldata permitSignature
     ) external payable nonReentrant {
         require(bytes(contractId).length > 0, "contractId required");
         require(landlord != address(0), "invalid landlord");
         ContractRecord storage record = _contracts[contractId];
         require(record.exists, "contract not found");
         require(msg.sender == record.tenant, "only tenant can pay");
+        _consumePermit(
+            ACTION_RECORD_INITIAL_PAYMENT,
+            msg.sender,
+            _stringHash(contractId),
+            _hashInitialPaymentParams(contractId, landlord, orderNo, msg.value),
+            permitNonce,
+            permitDeadlineMs,
+            permitSignature
+        );
         require(record.landlord == landlord, "landlord mismatch");
         require(record.status == ContractStatus.Created, "contract not payable");
         require(msg.value == record.initialAmountWei, "invalid payment amount");
@@ -627,12 +841,24 @@ contract RentalChain is ReentrancyGuard {
         string calldata contractId,
         bytes32 commentHash,
         uint8 rating,
-        string calldata commentCid
+        string calldata commentCid,
+        bytes32 permitNonce,
+        uint256 permitDeadlineMs,
+        bytes calldata permitSignature
     ) external {
         require(bytes(contractId).length > 0, "contractId required");
         require(commentHash != bytes32(0), "commentHash required");
         require(rating >= 1 && rating <= 5, "rating out of range");
         require(bytes(commentCid).length > 0, "commentCid required");
+        _consumePermit(
+            ACTION_SUBMIT_RENTAL_REVIEW,
+            msg.sender,
+            _stringHash(contractId),
+            _hashRentalReviewParams(contractId, commentHash, rating, commentCid),
+            permitNonce,
+            permitDeadlineMs,
+            permitSignature
+        );
 
         ContractRecord storage record = _contracts[contractId];
         require(record.exists, "contract not found");
@@ -657,12 +883,24 @@ contract RentalChain is ReentrancyGuard {
         string calldata listingId,
         uint8 feedbackType,
         bytes32 commentHash,
-        string calldata commentCid
+        string calldata commentCid,
+        bytes32 permitNonce,
+        uint256 permitDeadlineMs,
+        bytes calldata permitSignature
     ) external {
         require(bytes(listingId).length > 0, "listingId required");
         require(commentHash != bytes32(0), "commentHash required");
         require(feedbackType >= 1 && feedbackType <= 5, "feedbackType out of range");
         require(bytes(commentCid).length > 0, "commentCid required");
+        _consumePermit(
+            ACTION_SUBMIT_LISTING_FEEDBACK,
+            msg.sender,
+            _stringHash(listingId),
+            _hashListingFeedbackParams(listingId, feedbackType, commentHash, commentCid),
+            permitNonce,
+            permitDeadlineMs,
+            permitSignature
+        );
 
         ListingRecord storage listing = _listings[listingId];
         require(listing.exists, "listing not found");

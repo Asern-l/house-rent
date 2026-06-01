@@ -9,6 +9,64 @@ const { verifyListingLocally } = require('./verify-listing');
 
 const CONTRACT_STATUS_ENUM_TO_TEXT = ['none', 'created', 'paid', 'active', 'completed', 'cancelled'];
 
+function formatCnDateTime(msValue) {
+  const ms = Number(msValue || 0);
+  if (!Number.isFinite(ms) || ms <= 0) return '';
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(new Date(ms));
+}
+
+function toMsNumber(value) {
+  const n = Number(value || 0);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function deriveContractLifecycle({ record, paymentWindowMs }) {
+  const nowMs = Date.now();
+  const statusEnum = Number(record.status || 0);
+  const createdAtMs = toMsNumber(record.createdAt) * 1000;
+  const tenantSignedAtMs = toMsNumber(record.tenantSignedAt);
+  const landlordSignedAtMs = toMsNumber(record.landlordSignedAt);
+  const startAtMs = toMsNumber(record.startAtMs);
+  const endAtMs = toMsNumber(record.endAtMs);
+  const paymentDeadlineMs = createdAtMs > 0 && Number.isFinite(Number(paymentWindowMs || 0))
+    ? createdAtMs + Number(paymentWindowMs || 0)
+    : 0;
+  const paymentRecorded = statusEnum >= 2 && statusEnum !== 5;
+  const currentlyEffective = (statusEnum === 2 || statusEnum === 3) && startAtMs > 0 && endAtMs > 0 && startAtMs <= nowMs && nowMs < endAtMs;
+  const futureEffective = (statusEnum === 2 || statusEnum === 3) && startAtMs > nowMs;
+  const endedByTime = endAtMs > 0 && nowMs >= endAtMs;
+  return {
+    nowMs,
+    createdAtMs,
+    tenantSignedAtMs,
+    landlordSignedAtMs,
+    startAtMs,
+    endAtMs,
+    paymentDeadlineMs,
+    paymentRecorded,
+    currentlyEffective,
+    futureEffective,
+    endedByTime,
+    paymentState: paymentRecorded ? '已付款' : '未付款',
+    effectiveState: currentlyEffective
+      ? '当前生效中'
+      : futureEffective
+        ? '已付款，待生效'
+        : endedByTime
+          ? '已过期/已结束'
+          : '当前未生效',
+  };
+}
+
 function usage() {
   console.log([
     'Usage:',
@@ -271,6 +329,7 @@ async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sep
   const provider = new ethers.JsonRpcProvider(runtime.rpcUrl);
   await ensureProviderReady(provider, runtime.rpcUrl);
   const contract = new ethers.Contract(runtime.contractAddress, runtime.abi, provider);
+  const paymentWindowMs = await contract.paymentWindowMs();
 
   const result = await contract.getContractRecord(markers.contractId);
   const record = typeof result.toObject === 'function' ? result.toObject() : result;
@@ -283,6 +342,7 @@ async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sep
   const tenantEvent = events.find((item) => item.role === 1);
   const landlordEvent = events.find((item) => item.role === 2);
   const createdTx = await loadContractCreatedMatch(contract, provider, markers.contractId, markers.txHash);
+  const lifecycle = deriveContractLifecycle({ record, paymentWindowMs });
   const tenantSignatureVerification = verifyEmbeddedSignature({
     role: 'tenant',
     signerAddress: String(record.tenant || ''),
@@ -353,12 +413,36 @@ async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sep
       initialAmountWei: String(record.initialAmountWei || ''),
       startAtMs: String(record.startAtMs || ''),
       endAtMs: String(record.endAtMs || ''),
+      createdAtMs: String(lifecycle.createdAtMs || ''),
       tenantMessageHash: String(record.tenantMessageHash || '').toLowerCase(),
       landlordMessageHash: String(record.landlordMessageHash || '').toLowerCase(),
       tenantSignedAt: String(record.tenantSignedAt || ''),
       landlordSignedAt: String(record.landlordSignedAt || ''),
       statusEnum: Number(record.status || 0),
       status: CONTRACT_STATUS_ENUM_TO_TEXT[Number(record.status || 0)] || `unknown(${String(record.status)})`,
+    },
+    lifecycle: {
+      paymentWindowMs: String(paymentWindowMs || ''),
+      paymentRecorded: lifecycle.paymentRecorded,
+      paymentState: lifecycle.paymentState,
+      currentlyEffective: lifecycle.currentlyEffective,
+      futureEffective: lifecycle.futureEffective,
+      endedByTime: lifecycle.endedByTime,
+      effectiveState: lifecycle.effectiveState,
+      nowMs: String(lifecycle.nowMs || ''),
+      createdAtMs: String(lifecycle.createdAtMs || ''),
+      paymentDeadlineMs: String(lifecycle.paymentDeadlineMs || ''),
+      tenantSignedAtMs: String(lifecycle.tenantSignedAtMs || ''),
+      landlordSignedAtMs: String(lifecycle.landlordSignedAtMs || ''),
+      startAtMs: String(lifecycle.startAtMs || ''),
+      endAtMs: String(lifecycle.endAtMs || ''),
+      nowCn: formatCnDateTime(lifecycle.nowMs),
+      createdAtCn: formatCnDateTime(lifecycle.createdAtMs),
+      paymentDeadlineCn: formatCnDateTime(lifecycle.paymentDeadlineMs),
+      tenantSignedAtCn: formatCnDateTime(lifecycle.tenantSignedAtMs),
+      landlordSignedAtCn: formatCnDateTime(lifecycle.landlordSignedAtMs),
+      startAtCn: formatCnDateTime(lifecycle.startAtMs),
+      endAtCn: formatCnDateTime(lifecycle.endAtMs),
     },
     signatureEvents: events,
     signatureVerification: {

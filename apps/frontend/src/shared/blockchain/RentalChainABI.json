@@ -5,6 +5,11 @@
                            "internalType":  "uint256",
                            "name":  "paymentWindowMs_",
                            "type":  "uint256"
+                       },
+                       {
+                           "internalType":  "address",
+                           "name":  "trustedSigner_",
+                           "type":  "address"
                        }
                    ],
         "stateMutability":  "nonpayable",
@@ -797,6 +802,21 @@
                            "internalType":  "struct RentalChain.CreateContractParams",
                            "name":  "p",
                            "type":  "tuple"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "permitNonce",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "internalType":  "uint256",
+                           "name":  "permitDeadlineMs",
+                           "type":  "uint256"
+                       },
+                       {
+                           "internalType":  "bytes",
+                           "name":  "permitSignature",
+                           "type":  "bytes"
                        }
                    ],
         "name":  "createContractRecord",
@@ -842,6 +862,21 @@
                            "internalType":  "string",
                            "name":  "snapshotCid",
                            "type":  "string"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "permitNonce",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "internalType":  "uint256",
+                           "name":  "permitDeadlineMs",
+                           "type":  "uint256"
+                       },
+                       {
+                           "internalType":  "bytes",
+                           "name":  "permitSignature",
+                           "type":  "bytes"
                        }
                    ],
         "name":  "createListing",
@@ -1296,6 +1331,21 @@
                            "internalType":  "string",
                            "name":  "orderNo",
                            "type":  "string"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "permitNonce",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "internalType":  "uint256",
+                           "name":  "permitDeadlineMs",
+                           "type":  "uint256"
+                       },
+                       {
+                           "internalType":  "bytes",
+                           "name":  "permitSignature",
+                           "type":  "bytes"
                        }
                    ],
         "name":  "recordInitialRentPayment",
@@ -1351,6 +1401,21 @@
                            "internalType":  "uint64",
                            "name":  "expectedNonce",
                            "type":  "uint64"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "permitNonce",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "internalType":  "uint256",
+                           "name":  "permitDeadlineMs",
+                           "type":  "uint256"
+                       },
+                       {
+                           "internalType":  "bytes",
+                           "name":  "permitSignature",
+                           "type":  "bytes"
                        }
                    ],
         "name":  "setListingStatus",
@@ -1381,6 +1446,21 @@
                            "internalType":  "string",
                            "name":  "commentCid",
                            "type":  "string"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "permitNonce",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "internalType":  "uint256",
+                           "name":  "permitDeadlineMs",
+                           "type":  "uint256"
+                       },
+                       {
+                           "internalType":  "bytes",
+                           "name":  "permitSignature",
+                           "type":  "bytes"
                        }
                    ],
         "name":  "submitListingFeedback",
@@ -1411,6 +1491,21 @@
                            "internalType":  "string",
                            "name":  "commentCid",
                            "type":  "string"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "permitNonce",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "internalType":  "uint256",
+                           "name":  "permitDeadlineMs",
+                           "type":  "uint256"
+                       },
+                       {
+                           "internalType":  "bytes",
+                           "name":  "permitSignature",
+                           "type":  "bytes"
                        }
                    ],
         "name":  "submitRentalReview",
@@ -1418,6 +1513,21 @@
 
                     ],
         "stateMutability":  "nonpayable",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+
+                   ],
+        "name":  "trustedSigner",
+        "outputs":  [
+                        {
+                            "internalType":  "address",
+                            "name":  "",
+                            "type":  "address"
+                        }
+                    ],
+        "stateMutability":  "view",
         "type":  "function"
     },
     {
@@ -1466,6 +1576,21 @@
                            "internalType":  "uint64",
                            "name":  "expectedNonce",
                            "type":  "uint64"
+                       },
+                       {
+                           "internalType":  "bytes32",
+                           "name":  "permitNonce",
+                           "type":  "bytes32"
+                       },
+                       {
+                           "internalType":  "uint256",
+                           "name":  "permitDeadlineMs",
+                           "type":  "uint256"
+                       },
+                       {
+                           "internalType":  "bytes",
+                           "name":  "permitSignature",
+                           "type":  "bytes"
                        }
                    ],
         "name":  "updateListingTerms",

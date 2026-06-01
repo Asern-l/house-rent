@@ -150,7 +150,9 @@ export default function PublishListing({ onClose }) {
       });
       const draft = prepare?.data?.draft;
       const chainAnchor = prepare?.data?.chainAnchor;
+      const permit = prepare?.data?.permit;
       if (!draft || !chainAnchor?.listingId) throw new Error('预创建返回数据无效');
+      if (!permit?.signature || !permit?.nonce) throw new Error('预创建未返回有效 permit');
 
       const networkKey = getPreferredNetwork();
       const contractAddress = String(CONTRACT_ADDR_MAP[networkKey] || '').trim();
@@ -171,7 +173,10 @@ export default function PublishListing({ onClose }) {
         Number(chainAnchor.minLeaseMonths),
         chainAnchor.imageRootHash,
         chainAnchor.snapshotHash,
-        chainAnchor.snapshotCid
+        chainAnchor.snapshotCid,
+        permit.nonce,
+        permit.deadlineMs,
+        permit.signature
       );
       await tx.wait();
 

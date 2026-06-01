@@ -24,10 +24,12 @@ async function main() {
 
   const paymentWindowHours = Math.max(1, Number(process.env.PAYMENT_WINDOW_HOURS || 2));
   const paymentWindowMs = BigInt(paymentWindowHours) * 60n * 60n * 1000n;
+  const trustedSigner = process.env.TRUSTED_SIGNER_ADDRESS || deployer.address;
   console.log(`支付窗口: ${paymentWindowHours} 小时 (${paymentWindowMs} ms)\n`);
+  console.log(`Permit 签名者: ${trustedSigner}\n`);
 
   const RentalChain = await hre.ethers.getContractFactory('RentalChain');
-  const contract = await RentalChain.deploy(paymentWindowMs);
+  const contract = await RentalChain.deploy(paymentWindowMs, trustedSigner);
   await contract.waitForDeployment();
 
   const address = await contract.getAddress();
@@ -40,6 +42,7 @@ async function main() {
     contract: 'RentalChain',
     address,
     deployer: deployer.address,
+    trustedSigner,
     paymentWindowHours,
     paymentWindowMs: paymentWindowMs.toString(),
     timestamp: new Date().toISOString(),

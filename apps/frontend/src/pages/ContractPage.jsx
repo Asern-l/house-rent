@@ -530,28 +530,36 @@ export default function ContractPage() {
             const d = new Date(`${raw}T00:00:00+08:00`);
             return Number.isNaN(d.getTime()) ? 0 : d.getTime();
           })();
-          const createParams = {
-            contractId: id,
-            listingId: String(contract?.listing_id || ''),
-            parentContractId,
-            tenant: content?.tenant?.walletAddress || ethers.ZeroAddress,
-            landlord: signerAddress,
-            contentHash: contract?.content_hash || ethers.ZeroHash,
-            gasAuthNonce,
-            initialAmountWei: ethers.parseEther(String(initialAmount || '0')),
-            startAtMs,
-            endAtMs,
-            tenantMessageHash: buildMessageHash(tenantMessage),
-            landlordMessageHash: buildMessageHash(message),
-            tenantSignedAt,
-            landlordSignedAt,
-            tenantSignature,
-            landlordSignature: signature,
-          };
-          await chainContract.createContractRecord.staticCall(createParams);
-          const estimatedGas = await chainContract.createContractRecord.estimateGas(createParams);
+          const permitResp = await apiPost(`/contracts/${id}/create-onchain-permit`, {
+            signerAddress,
+            message,
+            signature,
+          });
+          const createParams = permitResp?.data?.createParams;
+          const permit = permitResp?.data?.permit;
+          if (!createParams || !permit?.signature || !permit?.nonce) {
+            throw new Error('合同上链 permit 缺失');
+          }
+          await chainContract.createContractRecord.staticCall(
+            createParams,
+            permit.nonce,
+            permit.deadlineMs,
+            permit.signature
+          );
+          const estimatedGas = await chainContract.createContractRecord.estimateGas(
+            createParams,
+            permit.nonce,
+            permit.deadlineMs,
+            permit.signature
+          );
           const gasLimit = (estimatedGas * 120n) / 100n;
-          const onchainTx = await chainContract.createContractRecord(createParams, { gasLimit });
+          const onchainTx = await chainContract.createContractRecord(
+            createParams,
+            permit.nonce,
+            permit.deadlineMs,
+            permit.signature,
+            { gasLimit }
+          );
           await onchainTx.wait();
           gasAuthorization = { txHash: String(onchainTx.hash || '') };
           setLastTxHash(String(onchainTx.hash || ''));
@@ -728,20 +736,34 @@ export default function ContractPage() {
       const signerAddress = (await signer.getAddress()).toLowerCase();
       const tenantAddress = (content?.tenant?.walletAddress || '').toLowerCase();
       if (tenantAddress && tenantAddress !== signerAddress) { toast.error(`当前钱包与合同绑定地址不一致：${tenantAddress}`); return; }
-      const weiAmount = ethers.parseEther(String(initialAmount));
-      const orderNo = `order_${Date.now()}`;
+      const prepareResp = await apiGet(`/contracts/${id}/payments/prepare-onchain`);
+      const preparedPayment = prepareResp?.data || {};
+      const permit = preparedPayment?.permit;
+      if (!permit?.signature || !permit?.nonce) throw new Error('支付 permit 缺失');
+      const weiAmount = BigInt(String(preparedPayment.amountWei || '0'));
+      const orderNo = String(preparedPayment.orderNo || '').trim();
+      const landlordAddress = String(preparedPayment.landlord || '').trim();
+      if (!orderNo || !ethers.isAddress(landlordAddress) || weiAmount <= 0n) {
+        throw new Error('支付链上参数无效');
+      }
       const rContract = new ethers.Contract(contractAddr, RentalChainABI, signer);
       try {
         await rContract.recordInitialRentPayment.staticCall(
           id,
-          content?.landlord?.walletAddress || ethers.ZeroAddress,
+          landlordAddress,
           orderNo,
+          permit.nonce,
+          permit.deadlineMs,
+          permit.signature,
           { value: weiAmount }
         );
         await rContract.recordInitialRentPayment.estimateGas(
           id,
-          content?.landlord?.walletAddress || ethers.ZeroAddress,
+          landlordAddress,
           orderNo,
+          permit.nonce,
+          permit.deadlineMs,
+          permit.signature,
           { value: weiAmount }
         );
       } catch (precheckErr) {
@@ -750,8 +772,11 @@ export default function ContractPage() {
       }
       const tx = await rContract.recordInitialRentPayment(
         id,
-        content?.landlord?.walletAddress || ethers.ZeroAddress,
+        landlordAddress,
         orderNo,
+        permit.nonce,
+        permit.deadlineMs,
+        permit.signature,
         { value: weiAmount }
       );
       await tx.wait();
@@ -820,12 +845,30 @@ export default function ContractPage() {
         commentHash,
       });
       const commentCid = String(prepare?.data?.commentCid || '').trim();
+      const permit = prepare?.data?.permit;
       if (!commentCid) {
         throw new Error('评价 commentCid 生成失败');
       }
-      await chainContract.submitRentalReview.staticCall(id, commentHash, reviewRating, commentCid);
-      const estimatedGas = await chainContract.submitRentalReview.estimateGas(id, commentHash, reviewRating, commentCid);
-      const tx = await chainContract.submitRentalReview(id, commentHash, reviewRating, commentCid, {
+      if (!permit?.signature || !permit?.nonce) throw new Error('评价 permit 缺失');
+      await chainContract.submitRentalReview.staticCall(
+        id,
+        commentHash,
+        reviewRating,
+        commentCid,
+        permit.nonce,
+        permit.deadlineMs,
+        permit.signature
+      );
+      const estimatedGas = await chainContract.submitRentalReview.estimateGas(
+        id,
+        commentHash,
+        reviewRating,
+        commentCid,
+        permit.nonce,
+        permit.deadlineMs,
+        permit.signature
+      );
+      const tx = await chainContract.submitRentalReview(id, commentHash, reviewRating, commentCid, permit.nonce, permit.deadlineMs, permit.signature, {
         gasLimit: (estimatedGas * 120n) / 100n,
       });
       await tx.wait();

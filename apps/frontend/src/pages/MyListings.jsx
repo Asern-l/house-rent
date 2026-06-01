@@ -308,6 +308,7 @@ export default function MyListings() {
     try {
       const prepare = await apiPost(`/listings/${id}/status/prepare`, { status });
       const prepared = prepare?.data;
+      const permit = prepared?.permit;
       const { contract, chainState } = await getContractAndState(id);
       const currentChainStatus = Number(chainState?.status ?? chainState?.[6]);
       const expectedCurrentStatus = { available: 1, offline: 0, closed: currentChainStatus }[status];
@@ -319,12 +320,16 @@ export default function MyListings() {
       }
       const expectedVersion = chainState[7];
       const expectedNonce = chainState[8];
-      await contract.setListingStatus.staticCall(id, Number(prepared.toStatusEnum), expectedVersion, expectedNonce);
+      if (!permit?.signature || !permit?.nonce) throw new Error('状态更新未返回有效 permit');
+      await contract.setListingStatus.staticCall(id, Number(prepared.toStatusEnum), expectedVersion, expectedNonce, permit.nonce, permit.deadlineMs, permit.signature);
       const estimatedGas = await contract.setListingStatus.estimateGas(
         id,
         Number(prepared.toStatusEnum),
         expectedVersion,
-        expectedNonce
+        expectedNonce,
+        permit.nonce,
+        permit.deadlineMs,
+        permit.signature
       );
       const gasLimit = (estimatedGas * 12n) / 10n;
       const tx = await contract.setListingStatus(
@@ -332,6 +337,9 @@ export default function MyListings() {
         Number(prepared.toStatusEnum),
         expectedVersion,
         expectedNonce,
+        permit.nonce,
+        permit.deadlineMs,
+        permit.signature,
         { gasLimit }
       );
       await tx.wait();
@@ -430,6 +438,7 @@ export default function MyListings() {
       });
       const prepared = prepare?.data;
       const chainAnchor = prepared?.chainAnchor;
+      const permit = prepared?.permit;
       const { contract, chainState } = await getContractAndState(item.id);
       const expectedVersion = chainState?.version ?? chainState?.[7];
       const expectedNonce = chainState?.nonce ?? chainState?.[8];
@@ -452,6 +461,7 @@ export default function MyListings() {
       if (expectedVersion === undefined || expectedVersion === null) throw new Error('上链参数缺失: expectedVersion');
       if (expectedNonce === undefined || expectedNonce === null) throw new Error('上链参数缺失: expectedNonce');
 
+      if (!permit?.signature || !permit?.nonce) throw new Error('房源信息修改未返回有效 permit');
       const tx = await contract.updateListingTerms(
         listingIdArg,
         contentHashArg,
@@ -461,7 +471,10 @@ export default function MyListings() {
         snapshotHashArg,
         snapshotCidArg,
         expectedVersion,
-        expectedNonce
+        expectedNonce,
+        permit.nonce,
+        permit.deadlineMs,
+        permit.signature
       );
       await tx.wait();
 

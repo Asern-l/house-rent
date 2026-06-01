@@ -131,9 +131,11 @@ export default function ListingReviewsPage() {
       if (!commentCid) {
         throw new Error('反馈 commentCid 生成失败');
       }
-      await contract.submitListingFeedback.staticCall(id, option.code, commentHash, commentCid);
-      const estimatedGas = await contract.submitListingFeedback.estimateGas(id, option.code, commentHash, commentCid);
-      const tx = await contract.submitListingFeedback(id, option.code, commentHash, commentCid, {
+      const permit = prepare?.data?.permit;
+      if (!permit?.signature || !permit?.nonce) throw new Error('反馈未返回有效 permit');
+      await contract.submitListingFeedback.staticCall(id, option.code, commentHash, commentCid, permit.nonce, permit.deadlineMs, permit.signature);
+      const estimatedGas = await contract.submitListingFeedback.estimateGas(id, option.code, commentHash, commentCid, permit.nonce, permit.deadlineMs, permit.signature);
+      const tx = await contract.submitListingFeedback(id, option.code, commentHash, commentCid, permit.nonce, permit.deadlineMs, permit.signature, {
         gasLimit: (estimatedGas * 120n) / 100n,
       });
       await tx.wait();

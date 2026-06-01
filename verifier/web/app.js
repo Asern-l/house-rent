@@ -77,6 +77,10 @@ function buildIpfsGatewayUrl(cid) {
   return normalized ? `http://127.0.0.1:8080/ipfs/${normalized}` : '';
 }
 
+function displayCnDateTime(value) {
+  return String(value || '').trim() || '-';
+}
+
 function buildSnapshotImageUrls(snapshot) {
   const imageCids = Array.isArray(snapshot?.imageCids) ? snapshot.imageCids.filter(Boolean).map((x) => String(x)) : [];
   return imageCids.map((cid) => buildIpfsGatewayUrl(cid)).filter(Boolean);
@@ -294,6 +298,7 @@ function renderListingDetailResult(result) {
 }
 
 function renderContractResult(result) {
+  const lifecycle = result.lifecycle || {};
   const summary = renderKeyValueGrid([
     { label: '验真来源', value: result.source || '' },
     { label: '验真模式', value: result.verificationMode === 'rebuild-hash-and-self-verify-signatures' ? '强校验：重算哈希并自验签' : (result.verificationMode || '') },
@@ -301,6 +306,8 @@ function renderContractResult(result) {
     { label: '合同 ID', value: result.onchain?.contractId || result.pdfMarkers?.contractId || '' },
     { label: '房源 ID', value: result.onchain?.listingId || result.pdfMarkers?.listingId || '' },
     { label: '合同状态', value: result.onchain?.status || '' },
+    { label: '付款状态', value: lifecycle.paymentState || '-' },
+    { label: '当前生效状态', value: lifecycle.effectiveState || '-' },
     { label: '合同验真', value: result.verified ? '通过' : '未通过' },
   ]);
 
@@ -317,12 +324,25 @@ function renderContractResult(result) {
     : '';
   const tenantMessage = result.reconstructed?.tenantMessage || '';
   const landlordMessage = result.reconstructed?.landlordMessage || '';
+  const timeline = renderKeyValueGrid([
+    { label: '当前中国时间', value: displayCnDateTime(lifecycle.nowCn) },
+    { label: '链上创建时间', value: displayCnDateTime(lifecycle.createdAtCn) },
+    { label: '租客签署时间', value: displayCnDateTime(lifecycle.tenantSignedAtCn) },
+    { label: '房东签署时间', value: displayCnDateTime(lifecycle.landlordSignedAtCn) },
+    { label: '付款截止时间', value: displayCnDateTime(lifecycle.paymentDeadlineCn) },
+    { label: '合同起始时间', value: displayCnDateTime(lifecycle.startAtCn) },
+    { label: '合同结束时间', value: displayCnDateTime(lifecycle.endAtCn) },
+  ]);
 
   return `
     <section class="section-block">
       <h3>合同验真结果</h3>
       <p class="summary ${result.verified ? 'is-ok' : 'is-bad'}">${escapeHtml(result.conclusion || '')}</p>
       ${summary}
+    </section>
+    <section class="section-block">
+      <h3>合同时间线（中国时间）</h3>
+      ${timeline}
     </section>
     <section class="section-block">
       <h3>合同比对项</h3>

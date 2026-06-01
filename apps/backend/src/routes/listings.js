@@ -30,6 +30,14 @@ const {
   readIpfsText,
   sha256Hex,
 } = require('../ipfs');
+const {
+  ACTIONS,
+  issuePermit,
+  hashCreateListingParams,
+  hashUpdateListingTermsParams,
+  hashSetListingStatusParams,
+  hashListingFeedbackParams,
+} = require('../permit');
 
 const router = express.Router();
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -730,6 +738,20 @@ router.post('/prepare-create', authMiddleware, requireRole('landlord'), asyncHan
         snapshotCid: storedSnapshot.cid,
         snapshotHash: storedSnapshot.contentHash,
       },
+      permit: await issuePermit({
+        action: ACTIONS.CREATE_LISTING,
+        caller: landlordWallet,
+        subjectId: listingId,
+        paramsHash: hashCreateListingParams({
+          listingId,
+          contentHash,
+          rentAmountWei,
+          minLeaseMonths: minLeaseMonthsNum,
+          imageRootHash,
+          snapshotHash: storedSnapshot.contentHash,
+          snapshotCid: storedSnapshot.cid,
+        }),
+      }),
     },
   });
 }));
@@ -1154,6 +1176,17 @@ router.post('/:id/feedbacks/prepare-onchain', authMiddleware, asyncHandler(async
       commentHash: normalizedCommentHash,
       commentCid: uploaded.cid,
       commentGatewayUrl: buildGatewayUrl(uploaded.cid),
+      permit: await issuePermit({
+        action: ACTIONS.SUBMIT_LISTING_FEEDBACK,
+        caller: authorWallet,
+        subjectId: req.params.id,
+        paramsHash: hashListingFeedbackParams({
+          listingId: req.params.id,
+          feedbackTypeCode: LISTING_FEEDBACK_TYPE_TO_CODE[feedbackType],
+          commentHash: normalizedCommentHash,
+          commentCid: uploaded.cid,
+        }),
+      }),
     },
   });
 }));
@@ -1305,7 +1338,7 @@ router.post('/:id/status/prepare', authMiddleware, requireRole('landlord'), asyn
     return sendError(res, 400, 'LISTING_STATUS_INVALID', '状态仅支持 available / offline / closed');
   }
   const db = await getDb();
-  const rows = parseResult(db.exec('SELECT id, status FROM listings WHERE id = ? AND landlord_id = ?', [req.params.id, req.user.id]));
+  const rows = parseResult(db.exec('SELECT id, status, chain_version, chain_nonce FROM listings WHERE id = ? AND landlord_id = ?', [req.params.id, req.user.id]));
   if (!rows.length) {
     return sendError(res, 403, 'LISTING_FORBIDDEN', '无权限操作该房源');
   }
@@ -1317,6 +1350,13 @@ router.post('/:id/status/prepare', authMiddleware, requireRole('landlord'), asyn
     return sendError(res, 400, 'LISTING_STATUS_UNCHANGED', '状态未变化，无需重复提交');
   }
   const chainStatusMap = { available: 0, offline: 1, closed: 2 };
+  const userDb = await getUserDb();
+  const users = parseUserResult(userDb.exec('SELECT wallet_address FROM users WHERE id = ?', [req.user.id]));
+  if (!users.length) return sendError(res, 404, 'USER_NOT_FOUND', '用户不存在');
+  const boundWallet = String(users[0].wallet_address || '').trim();
+  if (!/^0x[a-fA-F0-9]{40}$/.test(boundWallet)) {
+    return sendError(res, 400, 'WALLET_NOT_BOUND', '请先在个人中心绑定有效钱包地址后再修改房源状态');
+  }
   res.json({
     success: true,
     data: {
@@ -1324,6 +1364,17 @@ router.post('/:id/status/prepare', authMiddleware, requireRole('landlord'), asyn
       fromStatus: currentStatus,
       toStatus: status,
       toStatusEnum: chainStatusMap[status],
+      permit: await issuePermit({
+        action: ACTIONS.SET_LISTING_STATUS,
+        caller: boundWallet,
+        subjectId: req.params.id,
+        paramsHash: hashSetListingStatusParams({
+          listingId: req.params.id,
+          newStatus: chainStatusMap[status],
+          expectedVersion: Number(rows[0].chain_version || 0),
+          expectedNonce: Number(rows[0].chain_nonce || 0),
+        }),
+      }),
     },
   });
 }));
@@ -1533,6 +1584,13 @@ router.post('/:id/terms/prepare', authMiddleware, requireRole('landlord'), async
   if (!String(storedSnapshot.cid || '').trim()) {
     return sendError(res, 503, 'IPFS_SNAPSHOT_UNAVAILABLE', 'IPFS 快照写入失败，当前不能更新链上房源');
   }
+  const userDb = await getUserDb();
+  const users = parseUserResult(userDb.exec('SELECT wallet_address FROM users WHERE id = ?', [req.user.id]));
+  if (!users.length) return sendError(res, 404, 'USER_NOT_FOUND', '用户不存在');
+  const boundWallet = String(users[0].wallet_address || '').trim();
+  if (!/^0x[a-fA-F0-9]{40}$/.test(boundWallet)) {
+    return sendError(res, 400, 'WALLET_NOT_BOUND', '请先在个人中心绑定有效钱包地址后再修改房源信息');
+  }
 
   res.json({
     success: true,
@@ -1554,6 +1612,22 @@ router.post('/:id/terms/prepare', authMiddleware, requireRole('landlord'), async
         snapshotCid: storedSnapshot.cid,
         snapshotHash: storedSnapshot.contentHash,
       },
+      permit: await issuePermit({
+        action: ACTIONS.UPDATE_LISTING_TERMS,
+        caller: boundWallet,
+        subjectId: req.params.id,
+        paramsHash: hashUpdateListingTermsParams({
+          listingId: req.params.id,
+          contentHash,
+          rentAmountWei,
+          minLeaseMonths,
+          imageRootHash,
+          snapshotHash: storedSnapshot.contentHash,
+          snapshotCid: storedSnapshot.cid,
+          expectedVersion: Number(listing.chain_version || 0),
+          expectedNonce: Number(listing.chain_nonce || 0),
+        }),
+      }),
     },
   });
 }));

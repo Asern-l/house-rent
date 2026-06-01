@@ -22,6 +22,13 @@ const { authMiddleware, requireRole } = require('../auth');
 const { logSignFlow, logRiskEvent } = require('../logger');
 const { resolveListingPublicState } = require('../listing-public-state');
 const { isIpfsEnabled, addJsonToIpfs, buildGatewayUrl } = require('../ipfs');
+const {
+  ACTIONS,
+  issuePermit,
+  hashCreateContractParams,
+  hashInitialPaymentParams,
+  hashRentalReviewParams,
+} = require('../permit');
 
 const router = express.Router();
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -1407,6 +1414,101 @@ router.post('/:id/gas-authorization/revoke', authMiddleware, asyncHandler(async 
   res.json({ success: true, message: 'gas 授权已撤销' });
 }));
 
+router.post('/:id/create-onchain-permit', authMiddleware, asyncHandler(async (req, res) => {
+  const { signerAddress, signature, message } = req.body || {};
+  const db = await getDb();
+  const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
+  if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
+  const contract = rows[0];
+
+  if (contract.landlord_id !== req.user.id) return sendError(res, 403, 'SIGN_FORBIDDEN', '无权限签署');
+  if (contract.status !== 'tenant_signed') {
+    return res.status(400).json(error('SIGN_STATUS_INVALID', '当前状态不允许房东签署', { currentStatus: contract.status }));
+  }
+  if (String(contract.landlord_signed_at || '').trim()) {
+    return res.status(400).json(error('LANDLORD_ALREADY_SIGNED', '房东已签署，请勿重复提交'));
+  }
+
+  const content = typeof contract.content_json === 'string' ? JSON.parse(contract.content_json) : (contract.content_json || {});
+  const tenantAddress = String(content?.tenant?.walletAddress || '').trim();
+  const landlordAddress = String(content?.landlord?.walletAddress || '').trim();
+  const normalizedTenantAddress = normalizeWalletAddress(tenantAddress);
+  const normalizedLandlordAddress = normalizeWalletAddress(landlordAddress);
+  const submittedAddress = normalizeWalletAddress(signerAddress);
+  if (!normalizedTenantAddress || !normalizedLandlordAddress) {
+    return res.status(400).json(error('WALLET_NOT_BOUND', '合同绑定钱包地址不完整或格式无效，请租客和房东先在个人中心绑定钱包后重新发起合同'));
+  }
+  if (!submittedAddress || submittedAddress.toLowerCase() !== normalizedLandlordAddress.toLowerCase()) {
+    return res.status(400).json(error('WALLET_MISMATCH', '当前签署钱包与合同绑定房东钱包不一致'));
+  }
+  const verified = verifyContractSignature({ contract, role: 'landlord', signerAddress: submittedAddress, signature, message });
+  if (!verified.ok) return res.status(400).json(error(verified.code, verified.message));
+
+  const gasAuthRows = parseResult(db.exec(
+    `SELECT id, tenant_address, nonce, status, lock_tx_hash
+     FROM contract_gas_authorizations
+     WHERE contract_id = ?
+     LIMIT 1`,
+    [req.params.id]
+  ));
+  if (!gasAuthRows.length) {
+    return res.status(400).json(error('GAS_AUTH_NOT_FOUND', '未找到租客 gas 补偿授权，房东暂不可签署'));
+  }
+  const gasAuth = gasAuthRows[0];
+  if (String(gasAuth.status || '') !== 'active') {
+    return res.status(400).json(error('GAS_AUTH_STATUS_INVALID', '租客 gas 补偿授权已失效，房东暂不可签署', { gasAuthStatus: gasAuth.status }));
+  }
+  if (!/^0x[a-fA-F0-9]{64}$/.test(String(gasAuth.lock_tx_hash || '').trim())) {
+    return res.status(400).json(error('GAS_AUTH_LOCK_MISSING', '租客尚未完成链上 gas 锁仓，房东暂不可签署'));
+  }
+
+  const parentContractId = String(contract.parent_contract_id || content?.parentContractId || '').trim();
+  const initialAmountWei = (() => {
+    try { return ethers.parseEther(String(content?.oneTimeAmount || '0')); } catch { return 0n; }
+  })();
+  const tenantMessageHash = buildMessageHash(contract.tenant_signature_message || '');
+  const landlordMessageHash = buildMessageHash(message || '');
+  const tenantSignedAt = (() => {
+    const d = parseCnDateTime(contract.tenant_signed_at);
+    return d ? d.getTime() : 0;
+  })();
+  const landlordMessageFields = parseSignMessageFields(message);
+  const landlordSignedAt = Number(landlordMessageFields.timestamp || 0);
+  const startAtMs = parseStartDateMs(content);
+  const endAtMs = parseEndDateMs(content);
+  const createParams = {
+    contractId: req.params.id,
+    listingId: contract.listing_id,
+    parentContractId,
+    tenant: normalizedTenantAddress,
+    landlord: submittedAddress,
+    contentHash: contract.content_hash || ethers.ZeroHash,
+    gasAuthNonce: String(gasAuth.nonce || ''),
+    initialAmountWei: initialAmountWei.toString(),
+    startAtMs,
+    endAtMs,
+    tenantMessageHash,
+    landlordMessageHash,
+    tenantSignedAt,
+    landlordSignedAt,
+    tenantSignature: String(contract.tenant_signature || ''),
+    landlordSignature: String(signature || ''),
+  };
+  const permit = await issuePermit({
+    action: ACTIONS.CREATE_CONTRACT,
+    caller: submittedAddress,
+    subjectId: req.params.id,
+    paramsHash: hashCreateContractParams(createParams),
+  });
+  res.json({
+    success: true,
+    data: {
+      createParams,
+      permit,
+    },
+  });
+}));
+
 // 函数 5: 房东签署合同接口。
 router.post('/:id/sign-landlord', authMiddleware, asyncHandler(async (req, res) => {
   try {
@@ -1830,6 +1932,72 @@ router.post('/:id/sign-landlord', authMiddleware, asyncHandler(async (req, res) 
 }));
 
 // 函数 6: 支付成功回写接口（当前仅支持一次性首笔支付）。
+router.get('/:id/payments/prepare-onchain', authMiddleware, asyncHandler(async (req, res) => {
+  const db = await getDb();
+  const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
+  if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
+  const contract = rows[0];
+
+  if (contract.tenant_id !== req.user.id) {
+    return sendError(res, 403, 'TENANT_ONLY', '仅租客可发起首笔支付');
+  }
+  if (contract.status !== 'pending_payment') {
+    return res.status(400).json(error('PAYMENT_STATUS_INVALID', '当前状态不允许首笔支付', { currentStatus: contract.status }));
+  }
+
+  const content = typeof contract.content_json === 'string' ? JSON.parse(contract.content_json) : contract.content_json;
+  const expectedAmount = normalizeAmount(content?.oneTimeAmount || '');
+  if (!expectedAmount) {
+    return res.status(400).json(error('PAYMENT_AMOUNT_INVALID', '合同首笔支付金额无效'));
+  }
+  const expectedAmountWei = (() => {
+    try { return ethers.parseEther(String(expectedAmount)); } catch { return 0n; }
+  })();
+  const tenantAddress = normalizeWalletAddress(content?.tenant?.walletAddress || '');
+  const landlordAddress = normalizeWalletAddress(content?.landlord?.walletAddress || '');
+  if (!tenantAddress || !landlordAddress) {
+    return res.status(400).json(error('WALLET_NOT_BOUND', '合同绑定钱包地址无效，无法生成支付许可'));
+  }
+
+  const deadlineAt = parseCnDateTime(contract.payment_deadline || contract.expires_at);
+  if (!deadlineAt || deadlineAt <= new Date()) {
+    return res.status(400).json(error('PAYMENT_DEADLINE_EXPIRED', '合同已超过支付截止时间，不可支付'));
+  }
+
+  const priorInitial = parseResult(db.exec(
+    'SELECT id FROM payments WHERE contract_id = ? AND pay_type = ? AND status = ?',
+    [req.params.id, 'initial', 'confirmed']
+  ));
+  if (priorInitial.length > 0) {
+    return sendError(res, 409, 'INITIAL_PAYMENT_ALREADY_RECORDED', '该合同首笔支付已完成');
+  }
+
+  const orderNo = `order_${Date.now()}`;
+  const permit = await issuePermit({
+    action: ACTIONS.RECORD_INITIAL_PAYMENT,
+    caller: tenantAddress,
+    subjectId: req.params.id,
+    paramsHash: hashInitialPaymentParams({
+      contractId: req.params.id,
+      landlord: landlordAddress,
+      orderNo,
+      amountWei: expectedAmountWei.toString(),
+    }),
+  });
+
+  res.json({
+    success: true,
+    data: {
+      contractId: req.params.id,
+      landlord: landlordAddress,
+      orderNo,
+      amount: expectedAmount,
+      amountWei: expectedAmountWei.toString(),
+      permit,
+    },
+  });
+}));
+
 router.post('/:id/payments/onchain', authMiddleware, asyncHandler(async (req, res) => {
   const { txHash, amount, payType = 'initial', period = '' } = req.body || {};
   if (!/^0x[a-fA-F0-9]{64}$/.test(txHash || '')) {
@@ -2117,6 +2285,17 @@ router.post('/:id/review/prepare-onchain', authMiddleware, requireRole('tenant')
       commentHash: normalizedCommentHash,
       commentCid: uploaded.cid,
       commentGatewayUrl: buildGatewayUrl(uploaded.cid),
+      permit: await issuePermit({
+        action: ACTIONS.SUBMIT_RENTAL_REVIEW,
+        caller: tenantWallet,
+        subjectId: contract.id,
+        paramsHash: hashRentalReviewParams({
+          contractId: contract.id,
+          commentHash: normalizedCommentHash,
+          rating: ratingNum,
+          commentCid: uploaded.cid,
+        }),
+      }),
     },
   });
 }));

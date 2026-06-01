@@ -23,11 +23,14 @@ async function main() {
 
   const artifactPath = path.resolve(__dirname, '..', 'artifacts', 'contracts', 'RentalChain.sol', 'RentalChain.json');
   const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+  const paymentWindowHours = Math.max(1, Number(process.env.PAYMENT_WINDOW_HOURS || 2));
+  const paymentWindowMs = BigInt(paymentWindowHours) * 60n * 60n * 1000n;
+  const trustedSigner = process.env.TRUSTED_SIGNER_ADDRESS || wallet.address;
 
   const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, wallet);
   console.log('开始部署...');
 
-  const contract = await factory.deploy();
+  const contract = await factory.deploy(paymentWindowMs, trustedSigner);
   await contract.waitForDeployment();
 
   const addr = await contract.getAddress();
@@ -39,6 +42,9 @@ async function main() {
     contract: 'RentalChain',
     address: addr,
     deployer: wallet.address,
+    trustedSigner,
+    paymentWindowHours,
+    paymentWindowMs: paymentWindowMs.toString(),
     timestamp: new Date().toISOString(),
   }, null, 2));
 
