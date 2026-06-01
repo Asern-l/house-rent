@@ -29,6 +29,7 @@ const {
   hashInitialPaymentParams,
   hashRentalReviewParams,
 } = require('../permit');
+const { createNotifications } = require('../notifications');
 
 const router = express.Router();
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -304,6 +305,10 @@ function parseStartDateMs(content = {}) {
   if (!startDateOnly) return 0;
   const d = new Date(`${startDateOnly}T00:00:00+08:00`);
   return Number.isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+function enqueueContractNotifications(db, entries) {
+  createNotifications(db, entries);
 }
 
 function parseEndDateMs(content = {}) {
@@ -785,6 +790,20 @@ router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req,
      VALUES (?, ?, 1, ?, ?, ?, '初始系统草稿', 'accepted', datetime('now', '+8 hours'), ?)`,
     [`cv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, contractId, req.user.id, contentJson, contentHash, req.user.id]
   );
+  enqueueContractNotifications(db, [
+    {
+      recipientId: listing.landlord_id,
+      actorId: req.user.id,
+      actorRole: 'tenant',
+      kind: 'contract.applied',
+      entityType: 'contract',
+      entityId: contractId,
+      title: '新的签约申请',
+      body: `租客已申请房源「${listing.title}」的合同签约。`,
+      metadata: { contractId, listingId, listingTitle: listing.title, startDate: startDateOnly, leaseMonths: leaseMonthsNum },
+      dedupeKey: `contract.applied:${contractId}`,
+    },
+  ]);
   saveDb();
 
   res.json({ success: true, data: { contractId, contentHash, expiresAt } });
@@ -893,6 +912,20 @@ router.post('/:id/clauses/submit', authMiddleware, asyncHandler(async (req, res)
     "UPDATE contracts SET negotiation_status = 'proposed' WHERE id = ? AND status = 'pending'",
     [req.params.id]
   );
+  enqueueContractNotifications(db, [
+    {
+      recipientId: contract.landlord_id,
+      actorId: req.user.id,
+      actorRole: 'tenant',
+      kind: 'contract.clauses_submitted',
+      entityType: 'contract',
+      entityId: req.params.id,
+      title: '租客提交了条款修改申请',
+      body: `合同 ${req.params.id} 有新的条款修改申请，等待房东审核。`,
+      metadata: { contractId: req.params.id, listingId: contract.listing_id, proposalId, version: nextVersion },
+      dedupeKey: `contract.clauses_submitted:${proposalId}`,
+    },
+  ]);
   saveDb();
   res.json({ success: true, message: '条款提案已提交，等待房东审核', data: { proposalId, version: nextVersion, contentHash: nextHash } });
 }));
@@ -968,6 +1001,22 @@ router.post('/:id/clauses/review', authMiddleware, asyncHandler(async (req, res)
         req.user.id,
       ]
     );
+    enqueueContractNotifications(db, [
+      {
+        recipientId: contract.tenant_id,
+        actorId: req.user.id,
+        actorRole: 'landlord',
+        kind: 'contract.clauses_approved',
+        entityType: 'contract',
+        entityId: req.params.id,
+        title: reviewAction === 'approved_with_edits' ? '房东已调整并确认条款' : '房东已确认条款',
+        body: reviewAction === 'approved_with_edits'
+          ? `合同 ${req.params.id} 的条款申请已由房东调整后确认。`
+          : `合同 ${req.params.id} 的条款申请已被房东确认。`,
+        metadata: { contractId: req.params.id, listingId: contract.listing_id, proposalId: proposal.id, reviewAction, note: reviewNote },
+        dedupeKey: `contract.clauses_approved:${proposal.id}`,
+      },
+    ]);
     saveDb();
     return res.json({ success: true, message: '房东已确认当前条款版本', data: { version: landlordFinalVersion, contentHash: landlordFinalHash } });
   }
@@ -980,6 +1029,20 @@ router.post('/:id/clauses/review', authMiddleware, asyncHandler(async (req, res)
     "UPDATE contract_versions SET status = 'rejected', decided_at = datetime('now', '+8 hours'), decided_by = ?, change_note = ? WHERE id = ?",
     [req.user.id, reviewNote, proposal.id]
   );
+  enqueueContractNotifications(db, [
+    {
+      recipientId: contract.tenant_id,
+      actorId: req.user.id,
+      actorRole: 'landlord',
+      kind: 'contract.clauses_rejected',
+      entityType: 'contract',
+      entityId: req.params.id,
+      title: '房东退回了条款申请',
+      body: `合同 ${req.params.id} 的条款申请已被房东退回，请修改后重新提交。`,
+      metadata: { contractId: req.params.id, listingId: contract.listing_id, proposalId: proposal.id, note: reviewNote },
+      dedupeKey: `contract.clauses_rejected:${proposal.id}`,
+    },
+  ]);
   saveDb();
   res.json({ success: true, message: '房东已退回该提议，租客可继续修改并重新提交' });
 }));
@@ -1154,6 +1217,20 @@ router.post('/:id/sign-tenant', authMiddleware, asyncHandler(async (req, res) =>
     );
     db.run('DELETE FROM contract_gas_authorization_prepares WHERE contract_id = ?', [req.params.id]);
     db.run('COMMIT');
+    enqueueContractNotifications(db, [
+      {
+        recipientId: contract.landlord_id,
+        actorId: req.user.id,
+        actorRole: 'tenant',
+        kind: 'contract.tenant_signed',
+        entityType: 'contract',
+        entityId: req.params.id,
+        title: '租客已签署合同',
+        body: `合同 ${req.params.id} 已由租客完成签署，等待房东签署。`,
+        metadata: { contractId: req.params.id, listingId: contract.listing_id, gasAuthorizationLockTxHash: gasAuthLockTxHash },
+        dedupeKey: `contract.tenant_signed:${req.params.id}:${gasAuthLockTxHash}`,
+      },
+    ]);
     saveDb();
   } catch (txErr) {
     try { db.run('ROLLBACK'); } catch { /* ignore */ }
@@ -1410,6 +1487,21 @@ router.post('/:id/gas-authorization/revoke', authMiddleware, asyncHandler(async 
     payload: { contractId: req.params.id, actorId: req.user.id },
     result: { gasAuthStatusBefore: gasAuth.status, gasAuthStatusAfter: 'revoked' },
   });
+  enqueueContractNotifications(db, [
+    {
+      recipientId: contract.tenant_id,
+      actorId: req.user.id,
+      actorRole: String(req.user.role || ''),
+      kind: 'contract.gas_refund_ready',
+      entityType: 'contract',
+      entityId: req.params.id,
+      title: 'Gas 预付已取回',
+      body: `合同 ${req.params.id} 的 gas 预付授权已撤销并完成链上确认。`,
+      metadata: { contractId: req.params.id, listingId: contract.listing_id, txHash: revokeTxHash },
+      dedupeKey: `contract.gas_refund_ready:${req.params.id}:${revokeTxHash}`,
+      allowSelf: true,
+    },
+  ]);
   saveDb();
   res.json({ success: true, message: 'gas 授权已撤销' });
 }));
@@ -1909,6 +2001,20 @@ router.post('/:id/sign-landlord', authMiddleware, asyncHandler(async (req, res) 
       payload: signOpPayload,
       result: { paymentDeadline, onchainState: 'confirmed' },
     });
+    enqueueContractNotifications(db, [
+      {
+        recipientId: contract.tenant_id,
+        actorId: req.user.id,
+        actorRole: 'landlord',
+        kind: 'contract.pending_payment',
+        entityType: 'contract',
+        entityId: req.params.id,
+        title: '房东已签署，合同待支付',
+        body: `合同 ${req.params.id} 已完成上链签署，当前等待租客支付。`,
+        metadata: { contractId: req.params.id, listingId: contract.listing_id, txHash: normalizedSignTxHash, paymentDeadline },
+        dedupeKey: `contract.pending_payment:${req.params.id}:${normalizedSignTxHash}`,
+      },
+    ]);
     saveDb();
 
     res.json({
@@ -2159,6 +2265,37 @@ router.post('/:id/payments/onchain', authMiddleware, asyncHandler(async (req, re
     payload: { contractId: req.params.id, payerId: req.user.id, payType, amount: String(amount), period: period || '' },
     result: { paymentId, contractStatusAfter: 'active', isFutureRenewalStart },
   });
+  enqueueContractNotifications(db, [
+    {
+      recipientId: contract.landlord_id,
+      actorId: req.user.id,
+      actorRole: 'tenant',
+      kind: 'contract.payment_confirmed',
+      entityType: 'contract',
+      entityId: req.params.id,
+      title: isFutureRenewalStart ? '续约合同已支付待接续' : '合同首笔支付已完成',
+      body: isFutureRenewalStart
+        ? `租客已完成合同 ${req.params.id} 的首笔支付，合同已支付待接续。`
+        : `租客已完成合同 ${req.params.id} 的首笔支付。`,
+      metadata: { contractId: req.params.id, listingId: contract.listing_id, txHash: normalizedPaymentTxHash, paymentId, isFutureRenewalStart },
+      dedupeKey: `contract.payment_confirmed.landlord:${req.params.id}:${normalizedPaymentTxHash}`,
+    },
+    {
+      recipientId: contract.tenant_id,
+      actorId: req.user.id,
+      actorRole: 'tenant',
+      kind: 'contract.payment_confirmed',
+      entityType: 'contract',
+      entityId: req.params.id,
+      title: isFutureRenewalStart ? '续约付款已确认' : '付款已确认',
+      body: isFutureRenewalStart
+        ? `合同 ${req.params.id} 的首笔支付已确认，合同将按约定时间接续生效。`
+        : `合同 ${req.params.id} 的首笔支付已确认。`,
+      metadata: { contractId: req.params.id, listingId: contract.listing_id, txHash: normalizedPaymentTxHash, paymentId, isFutureRenewalStart },
+      dedupeKey: `contract.payment_confirmed.tenant:${req.params.id}:${normalizedPaymentTxHash}`,
+      allowSelf: true,
+    },
+  ]);
   saveDb();
   res.json({
     success: true,
@@ -2208,6 +2345,24 @@ router.post('/:id/cancel', authMiddleware, asyncHandler(async (req, res) => {
       return sendError(res, 409, 'CONTRACT_STATE_CHANGED', '合同状态已变化，无法取消');
     }
   }
+  const counterpartyId = req.user.id === contract.tenant_id ? contract.landlord_id : contract.tenant_id;
+  const actorRole = req.user.id === contract.tenant_id ? 'tenant' : 'landlord';
+  enqueueContractNotifications(db, [
+    {
+      recipientId: counterpartyId,
+      actorId: req.user.id,
+      actorRole,
+      kind: 'contract.cancelled_by_party',
+      entityType: 'contract',
+      entityId: req.params.id,
+      title: actorRole === 'tenant' ? '租客已取消合同' : '房东已取消合同',
+      body: contract.status === 'expired'
+        ? `合同 ${req.params.id} 已被确认结束。`
+        : `合同 ${req.params.id} 已被${actorRole === 'tenant' ? '租客' : '房东'}取消。`,
+      metadata: { contractId: req.params.id, listingId: contract.listing_id, gasReleasePending, actorRole, priorStatus: contract.status },
+      dedupeKey: `contract.cancelled_by_party.${actorRole}:${req.params.id}:${contract.status}`,
+    },
+  ]);
   saveDb();
   res.json({
     success: true,
@@ -2416,6 +2571,20 @@ router.post('/:id/review/onchain', authMiddleware, requireRole('tenant'), asyncH
       CHAIN_ENV,
     ]
   );
+  enqueueContractNotifications(db, [
+    {
+      recipientId: contract.landlord_id,
+      actorId: req.user.id,
+      actorRole: 'tenant',
+      kind: 'contract.review_submitted',
+      entityType: 'contract',
+      entityId: contract.id,
+      title: '租客提交了租后评价',
+      body: `合同 ${contract.id} 已收到一条新的租后评价。`,
+      metadata: { contractId: contract.id, listingId: contract.listing_id, reviewId, rating: ratingNum, txHash: normalizedReviewTxHash, commentCid: normalizedCommentCid },
+      dedupeKey: `contract.review_submitted:${normalizedReviewTxHash}`,
+    },
+  ]);
   saveDb();
   res.json({
     success: true,

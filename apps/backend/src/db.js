@@ -89,6 +89,24 @@ function tableSqlContainsAll(sql, fragments) {
   return fragments.every((fragment) => String(sql).includes(fragment));
 }
 
+function ensureNotificationTable(d) {
+  d.run(`CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    recipient_id TEXT NOT NULL,
+    actor_id TEXT DEFAULT '',
+    actor_role TEXT DEFAULT '',
+    kind TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    metadata_json TEXT DEFAULT '{}',
+    dedupe_key TEXT UNIQUE,
+    read_at TEXT DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
+  )`);
+}
+
 function ensureIndexes(d) {
   d.run('CREATE INDEX IF NOT EXISTS idx_contracts_tenant ON contracts(tenant_id)');
   d.run('CREATE INDEX IF NOT EXISTS idx_contracts_landlord ON contracts(landlord_id)');
@@ -105,6 +123,8 @@ function ensureIndexes(d) {
   d.run('CREATE INDEX IF NOT EXISTS idx_contract_reviews_contract ON contract_reviews(contract_id)');
   d.run('CREATE INDEX IF NOT EXISTS idx_onchain_operations_entity ON onchain_operations(entity_type, entity_id)');
   d.run('CREATE INDEX IF NOT EXISTS idx_onchain_operations_status ON onchain_operations(status, operation_kind)');
+  d.run('CREATE INDEX IF NOT EXISTS idx_notifications_recipient_created ON notifications(recipient_id, created_at)');
+  d.run('CREATE INDEX IF NOT EXISTS idx_notifications_recipient_read ON notifications(recipient_id, read_at, created_at)');
 }
 
 // 函数 7: 严格校验关键业务表结构。
@@ -157,6 +177,11 @@ function assertStrictSchema(d) {
     'comment_text', 'comment_hash', 'comment_cid', 'tx_hash', 'chain_env', 'created_at'
   ]);
 
+  assertRequiredColumns(d, 'notifications', [
+    'id', 'recipient_id', 'actor_id', 'actor_role', 'kind', 'entity_type', 'entity_id',
+    'title', 'body', 'metadata_json', 'dedupe_key', 'read_at', 'created_at'
+  ]);
+
   const contractsSql = getTableCreateSql(d, 'contracts');
   if (!tableSqlContainsAll(contractsSql, ["'draft'", "'proposed'", "'finalized'", "'locked'"])) {
     throw new Error('[DB_SCHEMA_MISMATCH] contracts.negotiation_status 约束未包含 locked');
@@ -172,12 +197,15 @@ async function migrate() {
   const dbExists = fs.existsSync(DB_PATH);
   const d = await getDb();
   if (dbExists) {
+    ensureNotificationTable(d);
+    ensureIndexes(d);
     try {
       assertStrictSchema(d);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       throw new Error(`[DB_SCHEMA_MISMATCH] 当前数据库结构不受支持，请删除后重建：${DB_PATH}。详细原因：${reason}`);
     }
+    saveDb();
     console.log(`数据库结构校验通过（CHAIN_ENV=${CHAIN_ENV}，DB=${DB_PATH}）`);
     return;
   }
@@ -390,6 +418,8 @@ async function migrate() {
     created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
   )`);
+
+  ensureNotificationTable(d);
 
   ensureIndexes(d);
 

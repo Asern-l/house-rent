@@ -38,6 +38,7 @@ const {
   hashSetListingStatusParams,
   hashListingFeedbackParams,
 } = require('../permit');
+const { createNotifications } = require('../notifications');
 
 const router = express.Router();
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -79,6 +80,10 @@ function parseJsonArray(raw) {
   } catch {
     return [];
   }
+}
+
+function enqueueListingNotifications(db, entries) {
+  createNotifications(db, entries);
 }
 
 function eventIndexedStringMatches(actualValue, expectedValue) {
@@ -1252,6 +1257,20 @@ router.post('/:id/feedbacks', authMiddleware, asyncHandler(async (req, res) => {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [feedbackId, req.params.id, req.user.id, String(req.user.role || ''), authorWallet, feedbackType, commentText, normalizedCommentHash, commentCid, normalizedTxHash, CHAIN_ENV]
   );
+  enqueueListingNotifications(db, [
+    {
+      recipientId: listing.landlord_id,
+      actorId: req.user.id,
+      actorRole: String(req.user.role || ''),
+      kind: 'listing.feedback_submitted',
+      entityType: 'listing',
+      entityId: req.params.id,
+      title: '房源收到新的看房反馈',
+      body: `房源 ${req.params.id} 收到一条新的公开反馈。`,
+      metadata: { listingId: req.params.id, feedbackId, feedbackType, txHash: normalizedTxHash, commentCid },
+      dedupeKey: `listing.feedback_submitted:${normalizedTxHash}`,
+    },
+  ]);
   saveDb();
   res.json({
     success: true,

@@ -22,8 +22,10 @@ const {
 } = require('./onchain-operations');
 const { parseContractEndAtMs } = require('./listing-public-state');
 const { isIpfsEnabled, addJsonToIpfs, sha256Hex } = require('./ipfs');
+const { createNotifications } = require('./notifications');
 const contractRoutes = require('./routes/contracts');
 const listingRoutes = require('./routes/listings');
+const notificationRoutes = require('./routes/notifications');
 const { AppError, error: buildError } = require('./app-error');
 const iface = new ethers.Interface(RENTAL_CHAIN_ABI);
 
@@ -90,6 +92,7 @@ function setupRoutes() {
   app.use('/api/auth', require('./routes/auth'));
   app.use('/api/listings', listingRoutes);
   app.use('/api/contracts', contractRoutes);
+  app.use('/api/notifications', notificationRoutes);
   app.use('/api/verify', require('./routes/verify'));
 
   app.get('/api/health', (req, res) => {
@@ -262,6 +265,10 @@ function safeParseJsonObject(raw, fallback = {}) {
   } catch {
     return fallback;
   }
+}
+
+function enqueueNotificationsForDb(db, entries) {
+  createNotifications(db, entries);
 }
 
 function buildListingPublicSnapshotPayload({
@@ -810,6 +817,20 @@ async function reconcileUnifiedOnchainOperations() {
              AND status = 'active'`,
           [op.tx_hash, contractRow.id]
         );
+        enqueueNotificationsForDb(db, [
+          {
+            recipientId: contractRow.tenant_id,
+            actorId: contractRow.landlord_id,
+            actorRole: 'landlord',
+            kind: 'contract.pending_payment',
+            entityType: 'contract',
+            entityId: contractRow.id,
+            title: '房东已签署，合同待支付',
+            body: `合同 ${contractRow.id} 已完成上链签署，当前等待租客支付。`,
+            metadata: { contractId: contractRow.id, listingId: contractRow.listing_id, txHash: op.tx_hash, paymentDeadline },
+            dedupeKey: `contract.pending_payment:${contractRow.id}:${op.tx_hash}`,
+          },
+        ]);
         markOnchainOperationConfirmed(db, {
           opId: op.op_id,
           entityType: op.entity_type,
@@ -960,6 +981,37 @@ async function reconcileUnifiedOnchainOperations() {
         const startDateOnly = normalizeDateOnly(content?.terms?.startDate);
         const startAt = startDateOnly ? new Date(`${startDateOnly}T00:00:00+08:00`) : null;
         const isFutureRenewalStart = !!(contractRow.parent_contract_id && startAt && !Number.isNaN(startAt.getTime()) && startAt.getTime() > Date.now());
+        enqueueNotificationsForDb(db, [
+          {
+            recipientId: contractRow.landlord_id,
+            actorId: contractRow.tenant_id,
+            actorRole: 'tenant',
+            kind: 'contract.payment_confirmed',
+            entityType: 'contract',
+            entityId: contractRow.id,
+            title: isFutureRenewalStart ? '续约合同已支付待接续' : '合同首笔支付已完成',
+            body: isFutureRenewalStart
+              ? `租客已完成合同 ${contractRow.id} 的首笔支付，合同已支付待接续。`
+              : `租客已完成合同 ${contractRow.id} 的首笔支付。`,
+            metadata: { contractId: contractRow.id, listingId: contractRow.listing_id, txHash: op.tx_hash, isFutureRenewalStart },
+            dedupeKey: `contract.payment_confirmed.landlord:${contractRow.id}:${op.tx_hash}`,
+          },
+          {
+            recipientId: contractRow.tenant_id,
+            actorId: contractRow.tenant_id,
+            actorRole: 'tenant',
+            kind: 'contract.payment_confirmed',
+            entityType: 'contract',
+            entityId: contractRow.id,
+            title: isFutureRenewalStart ? '续约付款已确认' : '付款已确认',
+            body: isFutureRenewalStart
+              ? `合同 ${contractRow.id} 的首笔支付已确认，合同将按约定时间接续生效。`
+              : `合同 ${contractRow.id} 的首笔支付已确认。`,
+            metadata: { contractId: contractRow.id, listingId: contractRow.listing_id, txHash: op.tx_hash, isFutureRenewalStart },
+            dedupeKey: `contract.payment_confirmed.tenant:${contractRow.id}:${op.tx_hash}`,
+            allowSelf: true,
+          },
+        ]);
         markOnchainOperationConfirmed(db, {
           opId: op.op_id,
           entityType: op.entity_type,
@@ -1028,6 +1080,20 @@ async function reconcileUnifiedOnchainOperations() {
            WHERE contract_id = ?`,
           [op.tx_hash, contractRow.id]
         );
+        enqueueNotificationsForDb(db, [
+          {
+            recipientId: contractRow.tenant_id,
+            actorId: String(safeParseJsonObject(op.payload_json, {}).actorId || ''),
+            kind: 'contract.gas_refund_ready',
+            entityType: 'contract',
+            entityId: contractRow.id,
+            title: 'Gas 预付已取回',
+            body: `合同 ${contractRow.id} 的 gas 预付授权已撤销并完成链上确认。`,
+            metadata: { contractId: contractRow.id, listingId: contractRow.listing_id, txHash: op.tx_hash },
+            dedupeKey: `contract.gas_refund_ready:${contractRow.id}:${op.tx_hash}`,
+            allowSelf: true,
+          },
+        ]);
         markOnchainOperationConfirmed(db, {
           opId: op.op_id,
           entityType: op.entity_type,
@@ -1054,7 +1120,7 @@ async function reconcileUnifiedOnchainOperations() {
 async function expirePendingPaymentContracts() {
   const db = await getDb();
   const timeoutContracts = parseResult(db.exec(
-    `SELECT id, listing_id, tenant_id
+    `SELECT id, listing_id, tenant_id, landlord_id
      FROM contracts
      WHERE status = 'pending_payment'
        AND landlord_signed_at IS NOT NULL
@@ -1072,6 +1138,28 @@ async function expirePendingPaymentContracts() {
       [item.id]
     );
     if (db.getRowsModified() !== 1) return;
+    enqueueNotificationsForDb(db, [
+      {
+        recipientId: item.tenant_id,
+        kind: 'contract.payment_timeout_cancelled',
+        entityType: 'contract',
+        entityId: item.id,
+        title: '合同已因支付超时取消',
+        body: `合同 ${item.id} 已因超过支付时限自动取消。`,
+        metadata: { contractId: item.id, listingId: item.listing_id },
+        dedupeKey: `contract.payment_timeout_cancelled.tenant:${item.id}`,
+      },
+      {
+        recipientId: item.landlord_id,
+        kind: 'contract.payment_timeout_cancelled',
+        entityType: 'contract',
+        entityId: item.id,
+        title: '合同已因租客支付超时取消',
+        body: `合同 ${item.id} 已因租客未在时限内完成支付而自动取消。`,
+        metadata: { contractId: item.id, listingId: item.listing_id },
+        dedupeKey: `contract.payment_timeout_cancelled.landlord:${item.id}`,
+      },
+    ]);
 
     getUserDb().then((userDb) => {
       userDb.run(
@@ -1095,7 +1183,7 @@ async function expirePendingPaymentContracts() {
 async function expireUnsignedContractsByExpiresAt() {
   const db = await getDb();
   const timeoutContracts = parseResult(db.exec(
-    `SELECT id, listing_id, tenant_id, status, expires_at
+    `SELECT id, listing_id, tenant_id, landlord_id, status, expires_at
      FROM contracts
      WHERE status IN ('pending', 'tenant_signed')
        AND datetime(expires_at) <= datetime('now', '+8 hours')`
@@ -1108,6 +1196,28 @@ async function expireUnsignedContractsByExpiresAt() {
       [item.id]
     );
     if (db.getRowsModified() !== 1) return;
+    enqueueNotificationsForDb(db, [
+      {
+        recipientId: item.tenant_id,
+        kind: 'contract.sign_timeout_expired',
+        entityType: 'contract',
+        entityId: item.id,
+        title: '合同已因签约超时关闭',
+        body: `合同 ${item.id} 已超过签约时限，系统已自动关闭。`,
+        metadata: { contractId: item.id, listingId: item.listing_id, fromStatus: item.status, expiresAt: item.expires_at },
+        dedupeKey: `contract.sign_timeout_expired.tenant:${item.id}`,
+      },
+      {
+        recipientId: item.landlord_id,
+        kind: 'contract.sign_timeout_expired',
+        entityType: 'contract',
+        entityId: item.id,
+        title: '合同申请已因签约超时关闭',
+        body: `合同 ${item.id} 已超过签约时限，系统已自动关闭。`,
+        metadata: { contractId: item.id, listingId: item.listing_id, fromStatus: item.status, expiresAt: item.expires_at },
+        dedupeKey: `contract.sign_timeout_expired.landlord:${item.id}`,
+      },
+    ]);
 
     logRiskEvent('contract.auto-expire.release', {
       contractId: item.id,
@@ -1126,7 +1236,7 @@ async function expireUnsignedContractsByExpiresAt() {
 async function expireActiveContractsByEndDate() {
   const db = await getDb();
   const activeContracts = parseResult(db.exec(
-    `SELECT id, listing_id, content_json
+    `SELECT id, listing_id, tenant_id, landlord_id, content_json
      FROM contracts
      WHERE status = 'active'`
   ));
@@ -1153,6 +1263,28 @@ async function expireActiveContractsByEndDate() {
       [item.id]
     );
     if (db.getRowsModified() !== 1) return;
+    enqueueNotificationsForDb(db, [
+      {
+        recipientId: item.tenant_id,
+        kind: 'contract.ended_by_time',
+        entityType: 'contract',
+        entityId: item.id,
+        title: '合同租期已结束',
+        body: `合同 ${item.id} 已按租期自然结束。`,
+        metadata: { contractId: item.id, listingId: item.listing_id },
+        dedupeKey: `contract.ended_by_time.tenant:${item.id}`,
+      },
+      {
+        recipientId: item.landlord_id,
+        kind: 'contract.ended_by_time',
+        entityType: 'contract',
+        entityId: item.id,
+        title: '合同租期已结束',
+        body: `合同 ${item.id} 已按租期自然结束。`,
+        metadata: { contractId: item.id, listingId: item.listing_id },
+        dedupeKey: `contract.ended_by_time.landlord:${item.id}`,
+      },
+    ]);
     changed = true;
   });
 

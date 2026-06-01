@@ -3,6 +3,7 @@ import { Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from './providers/AuthContext';
 import {
   ArrowRightIcon,
+  BellIcon,
   FileTextIcon,
   HomeIcon,
   LogOutIcon,
@@ -25,6 +26,7 @@ const MyContracts = lazy(() => import('../pages/MyContracts'));
 const MyListings = lazy(() => import('../pages/MyListings'));
 const ProfilePage = lazy(() => import('../pages/ProfilePage'));
 const VerifyPage = lazy(() => import('../pages/VerifyPage'));
+const NotificationsPage = lazy(() => import('../pages/NotificationsPage'));
 
 function PageFallback() {
   return (
@@ -47,6 +49,7 @@ export default function App() {
   const [authModal, setAuthModal] = useState(location.pathname === '/login' ? 'login' : null);
   const [profileModalOpen, setProfileModalOpen] = useState(location.pathname === '/profile');
   const [backendHealth, setBackendHealth] = useState({ sepolia: null, local: null });
+  const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
 
   const navItems = [
     { path: '/', label: '首页', icon: HomeIcon },
@@ -54,6 +57,7 @@ export default function App() {
     ...(user?.role === 'landlord' ? [{ path: '/publish', label: '发布房源', icon: PlusCircleIcon }] : []),
     { path: '/contracts', label: '合同', icon: FileTextIcon },
     { path: '/verify', label: '链上验真', icon: ShieldCheckIcon },
+    ...(user ? [{ path: '/notifications', label: '通知', icon: BellIcon }] : []),
   ];
 
   const isActive = (path) => location.pathname === path;
@@ -88,10 +92,47 @@ export default function App() {
     const handleSessionExpired = () => {
       setAuthModal('login');
       setMobileOpen(false);
+      setNotificationUnreadCount(0);
     };
     window.addEventListener('auth-session-expired', handleSessionExpired);
     return () => window.removeEventListener('auth-session-expired', handleSessionExpired);
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const apiBase = preferredNetwork === 'local'
+      ? (import.meta.env.VITE_API_BASE_LOCAL || '/api-local')
+      : (import.meta.env.VITE_API_BASE_SEPOLIA || '/api');
+
+    const loadUnreadCount = async () => {
+      if (!user) {
+        if (mounted) setNotificationUnreadCount(0);
+        return;
+      }
+      try {
+        const token = localStorage.getItem(`token:${preferredNetwork}`) || '';
+        const res = await fetch(`${apiBase}/notifications/unread-count`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const payload = await res.json();
+        if (!mounted) return;
+        setNotificationUnreadCount(Number(payload?.data?.unreadCount || 0));
+      } catch {
+        // ignore polling errors
+      }
+    };
+
+    loadUnreadCount();
+    const timer = setInterval(loadUnreadCount, 15000);
+    const handleChanged = () => loadUnreadCount();
+    window.addEventListener('notifications-changed', handleChanged);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+      window.removeEventListener('notifications-changed', handleChanged);
+    };
+  }, [user, preferredNetwork]);
 
   const selectedBackendOk = preferredNetwork === 'local' ? backendHealth.local : backendHealth.sepolia;
 
@@ -174,6 +215,18 @@ export default function App() {
                     连接钱包
                   </button>
                 )}
+                <Link
+                  to="/notifications"
+                  className="relative rounded-full p-2 text-slate-300 transition-colors hover:bg-white/5 hover:text-slate-100"
+                  title="通知"
+                >
+                  <BellIcon className="h-4 w-4" />
+                  {notificationUnreadCount > 0 && (
+                    <span className="absolute -right-0.5 -top-0.5 inline-flex min-w-[18px] items-center justify-center rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-semibold text-slate-950">
+                      {notificationUnreadCount > 99 ? '99+' : notificationUnreadCount}
+                    </span>
+                  )}
+                </Link>
                 <button
                   type="button"
                   onClick={openProfileModal}
@@ -230,6 +283,11 @@ export default function App() {
                 >
                   <item.icon className="h-4 w-4" />
                   {item.label}
+                  {item.path === '/notifications' && notificationUnreadCount > 0 && (
+                    <span className="ml-auto rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-semibold text-slate-950">
+                      {notificationUnreadCount > 99 ? '99+' : notificationUnreadCount}
+                    </span>
+                  )}
                 </Link>
               ))}
             </div>
@@ -294,6 +352,7 @@ export default function App() {
               <Route path="/my-listings" element={<MyListings />} />
               <Route path="/profile" element={<HomePage />} />
               <Route path="/verify" element={<VerifyPage />} />
+              <Route path="/notifications" element={<NotificationsPage />} />
             </Routes>
           </Suspense>
         </div>

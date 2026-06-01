@@ -523,62 +523,12 @@ router.get('/listing/:id', asyncHandler(async (req, res) => {
   const rebuiltContentHash = calcListingContentHash({ listingId: listing.id, landlordWallet, listing });
   const dbContentHash = String(listing.content_hash || '').trim().toLowerCase() || rebuiltContentHash;
   const dbContractMapping = resolveDbListingContractMapping(db, listing.id);
-  if (!String(listing.content_hash || '').trim() && /^0x[a-f0-9]{64}$/i.test(rebuiltContentHash)) {
-    db.run("UPDATE listings SET content_hash = ?, updated_at = datetime('now', '+8 hours') WHERE id = ?", [rebuiltContentHash, listing.id]);
-    saveDb();
-    listing.content_hash = rebuiltContentHash;
-  }
 
-let onchain = null;
+  let onchain = null;
   try {
     onchain = await readOnchainListing(listing.id);
   } catch (error) {
-    onchain = { readable: false, reason: error?.message || '读取链上房源失败' };
-  }
-  if (onchain?.exists) {
-    const nextStatus = String(onchain.status || '').trim().toLowerCase();
-    const nextRentAmount = formatWeiToEthString(onchain.rentAmountWei);
-    const nextMinLeaseMonths = Number(onchain.minLeaseMonths || 0);
-    const nextContentHash = String(onchain.contentHash || '').trim().toLowerCase();
-    const nextVersion = Number(onchain.version || 0);
-    const nextNonce = Number(onchain.nonce || 0);
-    const shouldSync =
-      nextVersion > Number(listing.chain_version || 0) ||
-      nextNonce > Number(listing.chain_nonce || 0) ||
-      nextStatus !== String(listing.status || '').trim().toLowerCase() ||
-      (nextRentAmount && nextRentAmount !== String(listing.rent_amount || '').trim()) ||
-      (nextMinLeaseMonths > 0 && nextMinLeaseMonths !== Number(listing.min_lease_months || 0)) ||
-      (nextContentHash && nextContentHash !== String(listing.content_hash || '').trim().toLowerCase());
-    if (shouldSync) {
-      db.run(
-        `UPDATE listings
-         SET status = ?,
-             rent_amount = CASE WHEN ? <> '' THEN ? ELSE rent_amount END,
-             min_lease_months = CASE WHEN ? > 0 THEN ? ELSE min_lease_months END,
-             content_hash = CASE WHEN ? <> '' THEN ? ELSE content_hash END,
-             chain_version = CASE WHEN ? > chain_version THEN ? ELSE chain_version END,
-             chain_nonce = CASE WHEN ? > chain_nonce THEN ? ELSE chain_nonce END,
-             updated_at = datetime('now', '+8 hours')
-         WHERE id = ?`,
-        [
-          nextStatus,
-          nextRentAmount,
-          nextRentAmount,
-          nextMinLeaseMonths,
-          nextMinLeaseMonths,
-          nextContentHash,
-          nextContentHash,
-          nextVersion,
-          nextVersion,
-          nextNonce,
-          nextNonce,
-          listing.id,
-        ]
-      );
-      saveDb();
-      rows = parseResult(db.exec('SELECT * FROM listings WHERE id = ?', [req.params.id]));
-      listing = rows[0];
-    }
+    onchain = { readable: false, reason: error?.message || '????????' };
   }
   const syncedImageHashes = parseJsonArray(listing.image_hashes);
   const syncedImageUrls = parseJsonArray(listing.image_urls);
