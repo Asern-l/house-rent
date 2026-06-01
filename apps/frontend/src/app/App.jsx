@@ -41,8 +41,6 @@ function getHealthTone(ok) {
   return 'border-white/10 bg-white/5 text-slate-300';
 }
 
-const BG_IMAGE = 'https://hoirqrkdgbmvpwutwuwj.supabase.co/storage/v1/object/public/assets/assets/b88b71ee-6e8c-4230-b004-094bc0a9f86f_3840w.jpg';
-
 export default function App() {
   const { user, logout, connectWallet, walletInfo, preferredNetwork, updatePreferredNetwork } = useAuth();
   const location = useLocation();
@@ -50,7 +48,6 @@ export default function App() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [authModal, setAuthModal] = useState(location.pathname === '/login' ? 'login' : null);
   const [profileModalOpen, setProfileModalOpen] = useState(location.pathname === '/profile');
-  const [verifyOpen, setVerifyOpen] = useState(false);
   const [backendHealth, setBackendHealth] = useState({ sepolia: null, local: null });
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
 
@@ -59,6 +56,7 @@ export default function App() {
     { path: '/listings', label: '房源', icon: SearchIcon },
     ...(user?.role === 'landlord' ? [{ path: '/publish', label: '发布房源', icon: PlusCircleIcon }] : []),
     { path: '/contracts', label: '合同', icon: FileTextIcon },
+    { path: '/verify', label: '链上验真', icon: ShieldCheckIcon },
     ...(user ? [{ path: '/notifications', label: '通知', icon: BellIcon }] : []),
   ];
 
@@ -155,19 +153,6 @@ export default function App() {
 
   return (
     <div className="relative flex h-screen flex-col overflow-hidden text-slate-100">
-      {/* ── Global background image (fixed, behind all pages) ── */}
-      <div className="fixed inset-0 -z-10 pointer-events-none">
-        <img
-          src={BG_IMAGE}
-          alt=""
-          className="h-full w-full object-cover object-center"
-          style={{ opacity: 0.9, filter: 'brightness(0.5)' }}
-        />
-        <div className="absolute inset-0" style={{
-          background: 'linear-gradient(180deg, rgba(8,6,4,0.45) 0%, rgba(8,6,4,0.60) 60%, rgba(8,6,4,0.78) 100%)',
-        }} />
-      </div>
-
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute -left-24 top-0 h-80 w-80 rounded-full bg-amber-400/14 blur-3xl" />
         <div className="absolute right-0 top-10 h-96 w-96 rounded-full bg-sky-400/12 blur-3xl" />
@@ -200,14 +185,6 @@ export default function App() {
                 {item.label}
               </Link>
             ))}
-            <button
-              type="button"
-              onClick={() => setVerifyOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors text-stone-500 hover:text-stone-900 hover:bg-stone-900/5"
-            >
-              <ShieldCheckIcon className="w-3.5 h-3.5" />
-              链上验真
-            </button>
           </nav>
 
           <div className="ml-auto flex items-center gap-2">
@@ -313,14 +290,6 @@ export default function App() {
                   )}
                 </Link>
               ))}
-              <button
-                type="button"
-                onClick={() => { setVerifyOpen(true); setMobileOpen(false); }}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-300 hover:bg-white/5 w-full"
-              >
-                <ShieldCheckIcon className="h-4 w-4" />
-                链上验真
-              </button>
             </div>
 
             {user ? (
@@ -368,7 +337,7 @@ export default function App() {
         )}
       </header>
 
-      <main className="relative z-10 flex-1 overflow-y-auto px-4 py-5 md:px-6 xl:px-8" style={{ background: 'transparent' }}>
+      <main className="relative z-10 flex-1 overflow-y-auto px-4 py-5 md:px-6 xl:px-8">
         <div className="mx-auto max-w-7xl">
           <Suspense fallback={<PageFallback />}>
             <Routes>
@@ -398,9 +367,6 @@ export default function App() {
         <Suspense fallback={null}>
           <ProfilePage onClose={closeProfileModal} />
         </Suspense>
-      )}
-      {verifyOpen && (
-        <VerifyPage onClose={() => setVerifyOpen(false)} />
       )}
     </div>
   );

@@ -18,8 +18,27 @@ html, body, #root {
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  @apply text-gray-100;
-  background: transparent;
+  background:
+    linear-gradient(180deg, rgba(6, 10, 18, 0.74), rgba(6, 10, 18, 0.86)),
+    var(--global-bg-image);
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  color: var(--page-fg);
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: radial-gradient(circle at center, black 18%, transparent 80%);
+  -webkit-mask-image: radial-gradient(circle at center, black 18%, transparent 80%);
+  opacity: 0.25;
 }
 
 .btn-primary {

@@ -226,8 +226,8 @@ export default function ListingDetail() {
         <span>返回</span>
       </button>
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 items-start">
-        <div className="card sticky top-6 self-start">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        <div className="card">
           {imageUrls.length > 0 ? (
             <div className="p-3">
               <img src={resolveImageUrl(imageUrls[0])} alt={listing.title || 'listing'} className="h-64 w-full rounded-lg object-cover" />

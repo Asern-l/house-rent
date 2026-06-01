@@ -6,7 +6,6 @@ import { apiPost } from '../shared/api/api';
 import RentalChainABI from '../shared/blockchain/RentalChainABI.json';
 import toast from 'react-hot-toast';
 import { AlertCircleIcon, HomeIcon, LoaderIcon, PlusCircleIcon, XIcon } from 'lucide-react';
-import LocationPicker from '../shared/LocationPicker';
 
 const MAX_IMAGE_COUNT = 12;
 
@@ -256,11 +255,6 @@ export default function PublishListing({ onClose }) {
           <Panel>
             <Field label="标题 *"><input type="text" className="auth-input" value={form.title} onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))} required /></Field>
             <Field label="描述 *"><textarea className="auth-input min-h-[84px] resize-none py-2" value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} required /></Field>
-            <LocationPicker
-              onSelect={({ address, district }) =>
-                setForm((p) => ({ ...p, address, district }))
-              }
-            />
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <Field label="地址 *"><input type="text" className="auth-input" value={form.address} onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))} required /></Field>
               <Field label="区域"><input type="text" className="auth-input" value={form.district} onChange={(e) => setForm((p) => ({ ...p, district: e.target.value }))} /></Field>
