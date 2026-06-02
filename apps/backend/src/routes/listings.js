@@ -1019,53 +1019,95 @@ async function attachPublicListingState(rows) {
 }
 
 // 函数 2-2: 解析自然语言搜索为结构化过滤条件。
-router.post('/parse-search', asyncHandler(async (req, res) => {
-  const raw = String(req.body?.query || '').trim();
-  if (!raw) return res.json({ success: true, data: { keyword: '', district: '', minRent: 0, maxRent: 0, bedrooms: 0 } });
-
+// 正则兜底解析器
+function regexParseSearch(raw) {
   let remaining = raw;
   const result = { keyword: '', district: '', minRent: 0, maxRent: 0, bedrooms: 0 };
-
-  // 户型：一/1/两/2/三/3/四/4 室
   const bedroomMap = { '一': 1, '1': 1, '两': 2, '二': 2, '2': 2, '三': 3, '3': 3, '四': 4, '4': 4, '五': 5, '5': 5 };
   const bedroomMatch = remaining.match(/([一二两三四五1-5])室/);
-  if (bedroomMatch) {
-    result.bedrooms = bedroomMap[bedroomMatch[1]] || 0;
-    remaining = remaining.replace(bedroomMatch[0], ' ');
-  }
-
-  // 价格区间：0.2-0.5 或 0.2到0.5
+  if (bedroomMatch) { result.bedrooms = bedroomMap[bedroomMatch[1]] || 0; remaining = remaining.replace(bedroomMatch[0], ' '); }
   const rangeMatch = remaining.match(/(\d+\.?\d*)\s*[-到~至]\s*(\d+\.?\d*)\s*(eth|ETH)?/);
   if (rangeMatch) {
     result.minRent = parseFloat(rangeMatch[1]) || 0;
     result.maxRent = parseFloat(rangeMatch[2]) || 0;
     remaining = remaining.replace(rangeMatch[0], ' ');
   } else {
-    // 最高价：0.3以内/以下/不超过
     const maxMatch = remaining.match(/(\d+\.?\d*)\s*(eth|ETH)?\s*(以内|以下|不超过|左右|上下)/);
-    if (maxMatch) {
-      result.maxRent = parseFloat(maxMatch[1]) || 0;
-      remaining = remaining.replace(maxMatch[0], ' ');
-    }
-    // 最低价：0.2以上/起
+    if (maxMatch) { result.maxRent = parseFloat(maxMatch[1]) || 0; remaining = remaining.replace(maxMatch[0], ' '); }
     const minMatch = remaining.match(/(\d+\.?\d*)\s*(eth|ETH)?\s*(以上|起)/);
-    if (minMatch) {
-      result.minRent = parseFloat(minMatch[1]) || 0;
-      remaining = remaining.replace(minMatch[0], ' ');
-    }
+    if (minMatch) { result.minRent = parseFloat(minMatch[1]) || 0; remaining = remaining.replace(minMatch[0], ' '); }
   }
-
-  // 地区：XX区 / XX街道 / XX路 (2-6字)
   const districtMatch = remaining.match(/[一-龥]{2,6}(区|街道|镇|园|路|街)/);
-  if (districtMatch) {
-    result.district = districtMatch[0];
-    remaining = remaining.replace(districtMatch[0], ' ');
-  }
-
-  // 剩余有效文字作为关键词
+  if (districtMatch) { result.district = districtMatch[0]; remaining = remaining.replace(districtMatch[0], ' '); }
   result.keyword = remaining.replace(/[一二两三四五1-5]厅|ETH|eth|找|要|想|租|在|的|一个|附近/g, '').replace(/\s+/g, ' ').trim();
+  return result;
+}
 
-  res.json({ success: true, data: result });
+// DeepSeek API 解析（需要 DEEPSEEK_API_KEY 环境变量）
+async function deepseekParseSearch(raw) {
+  const apiKey = String(process.env.DEEPSEEK_API_KEY || '').trim();
+  if (!apiKey) return null;
+
+  const systemPrompt = `你是一个租房搜索解析助手。用户输入中文自然语言的租房需求，你需要提取结构化字段并以 JSON 回复。
+
+字段说明：
+- keyword: 去除结构化信息后的剩余关键词（如楼盘名、小区名等），无则为空字符串
+- district: 地区（如"西城区"、"朝阳区"、"金融街"等），无则为空字符串
+- minRent: 最低月租金（ETH 单位的数字），无则为 0
+- maxRent: 最高月租金（ETH 单位的数字），无则为 0
+- bedrooms: 卧室数量（整数），无则为 0，"4室+"对应4
+
+只返回 JSON，不要解释，格式：
+{"keyword":"...","district":"...","minRent":0,"maxRent":0,"bedrooms":0}`;
+
+  const resp = await fetch('https://api.deepseek.com/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'deepseek-chat',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: raw },
+      ],
+      temperature: 0,
+      max_tokens: 128,
+      response_format: { type: 'json_object' },
+    }),
+  });
+
+  if (!resp.ok) throw new Error(`DeepSeek API error: ${resp.status}`);
+  const json = await resp.json();
+  const text = json?.choices?.[0]?.message?.content || '';
+  const parsed = JSON.parse(text);
+  return {
+    keyword: String(parsed.keyword || '').trim(),
+    district: String(parsed.district || '').trim(),
+    minRent: parseFloat(parsed.minRent) || 0,
+    maxRent: parseFloat(parsed.maxRent) || 0,
+    bedrooms: parseInt(parsed.bedrooms, 10) || 0,
+  };
+}
+
+router.post('/parse-search', asyncHandler(async (req, res) => {
+  const raw = String(req.body?.query || '').trim();
+  if (!raw) return res.json({ success: true, data: { keyword: '', district: '', minRent: 0, maxRent: 0, bedrooms: 0 }, engine: 'none' });
+
+  // 优先 DeepSeek，失败则正则兜底
+  let result = null;
+  let engine = 'regex';
+  try {
+    result = await deepseekParseSearch(raw);
+    if (result) engine = 'deepseek';
+  } catch (err) {
+    // DeepSeek 调用失败，静默降级
+    result = null;
+  }
+  if (!result) result = regexParseSearch(raw);
+
+  res.json({ success: true, data: result, engine });
 }));
 
 // 函数 2-3: 获取房源列表接口。
