@@ -4,6 +4,8 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $verifierDir = Join-Path $repoRoot 'verifier'
 $nodeModulesDir = Join-Path $verifierDir 'node_modules'
 $port = 3010
+$healthUrl = "http://127.0.0.1:$port/api/health"
+$siteUrl = "http://127.0.0.1:$port"
 
 function Get-ListeningPid($Port) {
   try {
@@ -22,6 +24,21 @@ function Get-ListeningPid($Port) {
   return $null
 }
 
+function Wait-ForVerifierReady($Url, $TimeoutSeconds = 20) {
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+    try {
+      $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 2
+      if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300) {
+        return $true
+      }
+    } catch {
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  return $false
+}
+
 $existingPid = Get-ListeningPid -Port $port
 if ($existingPid) {
   Write-Host "Stopping existing verifier process on http://127.0.0.1:$port ..."
@@ -36,9 +53,22 @@ if (-not (Test-Path $nodeModulesDir)) {
   exit 1
 }
 
-Push-Location $verifierDir
-try {
-  node server.js
-} finally {
-  Pop-Location
+$nodeCmd = Get-Command node -ErrorAction Stop
+$proc = Start-Process -FilePath $nodeCmd.Source `
+  -ArgumentList 'server.js' `
+  -WorkingDirectory $verifierDir `
+  -WindowStyle Hidden `
+  -PassThru
+
+if (-not (Wait-ForVerifierReady -Url $healthUrl)) {
+  try {
+    if (-not $proc.HasExited) {
+      Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+    }
+  } catch {
+  }
+  throw "Verifier failed to become ready at $healthUrl"
 }
+
+Write-Host "Verifier is ready at $siteUrl"
+Start-Process $siteUrl

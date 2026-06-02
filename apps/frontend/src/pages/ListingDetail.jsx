@@ -51,6 +51,40 @@ function renderStars(rating) {
   return '★'.repeat(Math.max(0, Number(rating || 0))) + '☆'.repeat(Math.max(0, 5 - Number(rating || 0)));
 }
 
+function normalizeDateOnly(value) {
+  const s = String(value || '').trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  const d = new Date(year, month - 1, day);
+  if (
+    Number.isNaN(d.getTime()) ||
+    d.getFullYear() !== year ||
+    d.getMonth() !== month - 1 ||
+    d.getDate() !== day
+  ) return null;
+  return s;
+}
+
+function addMonthsDateOnly(startDateOnly, months) {
+  const normalized = normalizeDateOnly(startDateOnly);
+  if (!normalized) return '';
+  const [year, month, day] = normalized.split('-').map(Number);
+  const monthOffset = Number(months);
+  const targetMonthStart = new Date(year, (month - 1) + monthOffset, 1);
+  const targetYear = targetMonthStart.getFullYear();
+  const targetMonth = targetMonthStart.getMonth();
+  const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+  const safeDay = Math.min(day, lastDayOfTargetMonth);
+  const d = new Date(targetYear, targetMonth, safeDay);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function normalizeHistorySnapshot(item) {
   const raw = item?.after?.snapshot || item?.after || null;
   if (!raw || typeof raw !== 'object') return null;
@@ -179,6 +213,7 @@ export default function ListingDetail() {
   const feedbacks = Array.isArray(listing.feedbacks) ? listing.feedbacks : [];
   const tenantReviews = Array.isArray(listing.tenant_reviews) ? listing.tenant_reviews : [];
   const reviewSummary = listing.review_summary || {};
+  const expectedEndDate = addMonthsDateOnly(startDate, leaseMonths);
 
   return (
     <div className="mx-auto max-w-4xl animate-fade-in">
@@ -455,7 +490,11 @@ export default function ListingDetail() {
                   </select>
                 </div>
               </div>
-              <p className="text-xs text-gray-500">该房源最少租期：{minLeaseMonths}个月，最长12个月。</p>
+              <div className="space-y-1 text-xs text-gray-500">
+                <p>该房源最少租期：{minLeaseMonths}个月，最长12个月。</p>
+                {expectedEndDate ? <p>预计结束日期：{expectedEndDate}</p> : null}
+                <p>租期按自然月计算；如到期月无对应日期，则取该月最后一日。</p>
+              </div>
               <button type="button" onClick={handleApply} disabled={applying} className="btn-primary flex w-full items-center justify-center space-x-2 py-3">
                 {applying ? <LoaderIcon className="h-5 w-5 animate-spin" /> : null}
                 <span>{applying ? '申请中...' : '申请签约'}</span>

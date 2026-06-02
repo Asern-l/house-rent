@@ -70,7 +70,7 @@ function deriveContractLifecycle({ record, paymentWindowMs }) {
 function usage() {
   console.log([
     'Usage:',
-    '  node verifier/scripts/verify-contract-pdf.js --pdf <path> [--network sepolia|local] [--rpc-url <url>] [--contract-address <addr>]',
+    '  node verifier/scripts/verify-contract-pdf.js --pdf <path> [--network sepolia|local] [--rpc-url <url>] [--contract-address <addr>] [--verify-listing 1]',
     '',
     'Example:',
     '  node verifier/scripts/verify-contract-pdf.js --pdf D:\\contracts\\cnt_xxx.pdf --network sepolia',
@@ -80,8 +80,10 @@ function usage() {
 function extractMarkersFromText(text) {
   const lines = String(text || '').split(/\r?\n/);
   const pick = (name) => {
-    const match = String(text || '').match(new RegExp(`${name}=([^\\r\\n\\)<>;]+)`));
-    return match ? String(match[1] || '').trim() : '';
+    const matches = [...String(text || '').matchAll(new RegExp(`${name}=([^\\r\\n\\)<>;]+)`, 'g'))];
+    if (!matches.length) return '';
+    const match = matches[matches.length - 1];
+    return String(match?.[1] || '').trim();
   };
   const pickChunkedBase64 = (prefix) => {
     const chunks = [];
@@ -108,6 +110,12 @@ function extractMarkersFromText(text) {
   };
   return {
     contractId: pick('VERIFY_CONTRACT_ID'),
+    chainEnv: pick('VERIFY_CHAIN_ENV').toLowerCase(),
+    chainId: pick('VERIFY_CHAIN_ID'),
+    rpcUrl: pick('VERIFY_RENTAL_CHAIN_RPC_URL'),
+    contractAddress: pick('VERIFY_RENTAL_CHAIN_ADDRESS'),
+    chainDeployedAt: pick('VERIFY_RENTAL_CHAIN_DEPLOYED_AT'),
+    contractCreatedAt: pick('VERIFY_CONTRACT_CREATED_AT'),
     contentHash: pick('VERIFY_CONTENT_HASH').toLowerCase(),
     txHash: pick('VERIFY_TX_HASH').toLowerCase(),
     listingId: pick('VERIFY_LISTING_ID'),
@@ -123,6 +131,17 @@ function extractMarkersFromText(text) {
     tenantSignatureB64: pickChunkedBase64('VERIFY_TENANT_SIGNATURE_B64'),
     landlordSignatureB64: pickChunkedBase64('VERIFY_LANDLORD_SIGNATURE_B64'),
   };
+}
+
+function resolvePdfDrivenNetwork(markers, explicitNetwork) {
+  const normalizedExplicit = String(explicitNetwork || '').trim().toLowerCase();
+  if (normalizedExplicit === 'local' || normalizedExplicit === 'sepolia') return normalizedExplicit;
+  const normalizedMarkerEnv = String(markers?.chainEnv || '').trim().toLowerCase();
+  if (normalizedMarkerEnv === 'local' || normalizedMarkerEnv === 'sepolia') return normalizedMarkerEnv;
+  const chainIdNum = Number(markers?.chainId || 0);
+  if (chainIdNum === 31337) return 'local';
+  if (chainIdNum === 11155111) return 'sepolia';
+  return 'sepolia';
 }
 
 async function extractMarkers(pdfBuffer) {
@@ -305,7 +324,7 @@ async function loadContractCreatedMatch(contract, provider, contractId, txHash) 
   return { checked: true, match: matched };
 }
 
-async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sepolia', rpcUrl = '', contractAddress = '' }) {
+async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sepolia', rpcUrl = '', contractAddress = '', verifyListing = false }) {
   const markers = await extractMarkers(pdfBuffer);
   if (!markers.contractId || !markers.contentHash) {
     throw new Error('missing VERIFY_CONTRACT_ID or VERIFY_CONTENT_HASH in PDF');
@@ -321,11 +340,20 @@ async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sep
   const canonicalContent = JSON.parse(canonicalContentJson);
   const rebuiltContentHash = makeContractContentHash(canonicalContent).toLowerCase();
 
-  const runtime = resolveRuntime(network, {
-    network,
-    'rpc-url': rpcUrl,
-    'contract-address': contractAddress,
+  const runtime = resolveRuntime('', {
+    network: resolvePdfDrivenNetwork(markers, network),
+    'chain-id': String(markers.chainId || '').trim(),
+    'rpc-url': String(rpcUrl || '').trim() || String(markers.rpcUrl || '').trim(),
+    'contract-address': String(contractAddress || '').trim() || String(markers.contractAddress || '').trim(),
+    'contract-deployed-at': String(markers.chainDeployedAt || '').trim(),
   });
+  if (String(markers.chainDeployedAt || '').trim()) {
+    runtime.deploymentMeta = {
+      ...(runtime.deploymentMeta || {}),
+      timestamp: String(markers.chainDeployedAt || '').trim(),
+      source: 'pdf-marker',
+    };
+  }
   const provider = new ethers.JsonRpcProvider(runtime.rpcUrl);
   await ensureProviderReady(provider, runtime.rpcUrl);
   const contract = new ethers.Contract(runtime.contractAddress, runtime.abi, provider);
@@ -373,7 +401,7 @@ async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sep
     tenantRecoveredMessageHashMatch: tenantSignatureVerification.messageHash === String(record.tenantMessageHash || '').toLowerCase(),
     landlordRecoveredMessageHashMatch: landlordSignatureVerification.messageHash === String(record.landlordMessageHash || '').toLowerCase(),
   };
-  const listingVerification = markers.listingId
+  const listingVerification = verifyListing && markers.listingId
     ? await verifyListingLocally({
         listingId: markers.listingId,
         traceAtSec: Number(record.createdAt || 0),
@@ -390,6 +418,8 @@ async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sep
     source: 'local-pdf',
     verificationMode: 'rebuild-hash-and-self-verify-signatures',
     network: runtime.network,
+    selectedConfigName: runtime.selectedConfigName || '',
+    chainId: runtime.deploymentMeta?.chainId || Number(markers.chainId || 0),
     rpcUrl: runtime.rpcUrl,
     contractAddress: runtime.contractAddress,
     pdfPath,
@@ -464,7 +494,7 @@ async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sep
   return output;
 }
 
-async function verifyContractPdfFile({ pdfPath, network = 'sepolia', rpcUrl = '', contractAddress = '' }) {
+async function verifyContractPdfFile({ pdfPath, network = 'sepolia', rpcUrl = '', contractAddress = '', verifyListing = false }) {
   const absPath = path.resolve(process.cwd(), pdfPath);
   if (!fs.existsSync(absPath)) {
     throw new Error(`pdf not found: ${absPath}`);
@@ -476,6 +506,7 @@ async function verifyContractPdfFile({ pdfPath, network = 'sepolia', rpcUrl = ''
     network,
     rpcUrl,
     contractAddress,
+    verifyListing,
   });
 }
 
@@ -492,6 +523,7 @@ async function main() {
     network: args.network || 'sepolia',
     rpcUrl: args['rpc-url'] || '',
     contractAddress: args['contract-address'] || '',
+    verifyListing: String(args['verify-listing'] || '').trim() === '1',
   });
 
   console.log(JSON.stringify(output, null, 2));

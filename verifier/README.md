@@ -7,11 +7,26 @@
 - 独立安装依赖
 - 只连接链上和 IPFS，不依赖平台账号系统
 - 以本地 Web 前端作为正式入口，底层保留 node 脚本便于开发调试
+- 默认运行参数使用 `verifier/config/runtime.json` 独立维护，不直接依赖 `blockchain/` 部署文件
 
 当前入口：
 - `verifier/server.js`
 - `verifier/scripts/verify-contract-pdf.js`
 - `verifier/scripts/verify-listing.js`
+
+独立运行参数：
+- `verifier/config/runtime.json`
+- 当前用于维护：
+  - `sepolia.chainId`
+  - `sepolia.rpcUrl`
+  - `sepolia.contractAddress`
+  - `local.chainId`
+  - `local.rpcUrl`
+  - `local.contractAddress`
+- 说明：
+  - `合同 PDF 验真` 默认优先读取 PDF 内嵌的 `chainEnv / chainId / contractAddress`
+  - `房源验真` 与 `房源详情` 默认读取 `verifier/config/runtime.json`
+  - 表单中的 `RPC URL / 合约地址` 仍可作为高级覆盖项手动填写
 
 当前支持：
 - 合同 PDF 独立验真
@@ -69,6 +84,12 @@ npm start
 PDF 排版说明：
 - 合同正文单独成页
 - 验真摘要单独成页
+- 验真摘要页会额外提供显眼的“可复制验真参数”区块，直接展示：
+  - `VERIFY_CONTRACT_ID`
+  - `VERIFY_CHAIN_ENV`
+  - `VERIFY_CHAIN_ID`
+- `VERIFY_RENTAL_CHAIN_ADDRESS`
+  - 指 `RentalChain` 链上智能合约地址，不是业务合同编号
 - 验真材料明文区单独成页
 - `VERIFY_*` 与 `*_B64_*` 机器标记单独作为附录页，弱化显示，不与正文混排
 

@@ -108,15 +108,31 @@ function normalizeDateOnly(value) {
   const s = String(value || '').trim();
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
   if (!m) return null;
-  const d = new Date(`${s}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  const d = new Date(year, month - 1, day);
+  if (
+    Number.isNaN(d.getTime()) ||
+    d.getFullYear() !== year ||
+    d.getMonth() !== month - 1 ||
+    d.getDate() !== day
+  ) return null;
   return s;
 }
 
 // 函数 5: 计算结束日期（按月偏移）。
 function addMonthsDateOnly(startDateOnly, months) {
-  const d = new Date(`${startDateOnly}T00:00:00`);
-  d.setMonth(d.getMonth() + Number(months));
+  const normalized = normalizeDateOnly(startDateOnly);
+  if (!normalized) return '';
+  const [year, month, day] = normalized.split('-').map(Number);
+  const monthOffset = Number(months);
+  const targetMonthStart = new Date(year, (month - 1) + monthOffset, 1);
+  const targetYear = targetMonthStart.getFullYear();
+  const targetMonth = targetMonthStart.getMonth();
+  const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+  const safeDay = Math.min(day, lastDayOfTargetMonth);
+  const d = new Date(targetYear, targetMonth, safeDay);
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
@@ -407,7 +423,21 @@ function resolveChainRuntimeByEnv() {
   const chainId = resolveChainIdByEnv();
   const rpcUrl = resolveRpcUrlByChainId(chainId);
   const contractAddress = resolveContractAddressByEnv();
-  return { chainId, rpcUrl, contractAddress };
+  return { chainId, rpcUrl, contractAddress, deployedAt: resolveContractDeploymentTimestamp(contractAddress) };
+}
+
+function resolveContractDeploymentTimestamp(contractAddress) {
+  const normalizedAddress = String(contractAddress || '').trim().toLowerCase();
+  if (!normalizedAddress) return '';
+  const deploymentFilePath = path.join(__dirname, '..', '..', '..', '..', 'blockchain', `deployments-rental-${CHAIN_ENV}.json`);
+  if (!fs.existsSync(deploymentFilePath)) return '';
+  try {
+    const deployment = JSON.parse(fs.readFileSync(deploymentFilePath, 'utf8').replace(/^\uFEFF/, ''));
+    if (String(deployment?.address || '').trim().toLowerCase() !== normalizedAddress) return '';
+    return String(deployment?.timestamp || '').trim();
+  } catch {
+    return '';
+  }
 }
 
 async function loadConfirmedContractTx(txHash) {
@@ -2732,6 +2762,7 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
      ORDER BY paid_at ASC`,
     [req.params.id]
   ));
+  const chainRuntime = resolveChainRuntimeByEnv();
 
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${contract.id}.pdf"`);
@@ -2814,6 +2845,44 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   doc.text(`租客消息哈希：${tenantMessageHash || '-'}`);
   doc.text(`房东消息哈希：${landlordMessageHash || '-'}`);
   doc.moveDown();
+  const runtimeConfigLines = [
+    `VERIFY_CHAIN_ENV=${CHAIN_ENV}`,
+    `VERIFY_CHAIN_ID=${chainRuntime.chainId}`,
+    `VERIFY_RENTAL_CHAIN_RPC_URL=${chainRuntime.rpcUrl || ''}`,
+    `VERIFY_RENTAL_CHAIN_ADDRESS=${chainRuntime.contractAddress || ''}`,
+    `VERIFY_RENTAL_CHAIN_DEPLOYED_AT=${chainRuntime.deployedAt || ''}`,
+  ];
+  const boxX = doc.page.margins.left;
+  const boxWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const boxHeaderHeight = 20;
+  const boxLineHeight = 14;
+  const boxPaddingX = 12;
+  const boxPaddingY = 10;
+  const boxY = doc.y;
+  const runtimeNoteHeight = 30;
+  const runtimeBoxHeight = boxHeaderHeight + (runtimeConfigLines.length * boxLineHeight) + runtimeNoteHeight + (boxPaddingY * 2);
+  doc.save();
+  doc.roundedRect(boxX, boxY, boxWidth, runtimeBoxHeight, 8).lineWidth(1).strokeColor('#2563eb').fillColor('#eff6ff').fillAndStroke();
+  doc.fontSize(12).fillColor('#1d4ed8').text('可复制链上智能合约配置', boxX + boxPaddingX, boxY + boxPaddingY, {
+    width: boxWidth - (boxPaddingX * 2),
+  });
+  let lineY = boxY + boxPaddingY + boxHeaderHeight;
+  runtimeConfigLines.forEach((line) => {
+    doc.fontSize(10).fillColor('#111827').text(line, boxX + boxPaddingX, lineY, {
+      width: boxWidth - (boxPaddingX * 2),
+    });
+    lineY += boxLineHeight;
+  });
+  doc.fontSize(8).fillColor('#475569').text(
+    '说明：以上用于绑定独立验真工具的 RPC、链 ID 与 RentalChain 智能合约实例；其中 VERIFY_RENTAL_CHAIN_ADDRESS 为链上智能合约地址，不是本合同编号。',
+    boxX + boxPaddingX,
+    lineY + 2,
+    {
+      width: boxWidth - (boxPaddingX * 2),
+    }
+  );
+  doc.restore();
+  doc.y = boxY + runtimeBoxHeight + 12;
   doc.fontSize(9).fillColor('gray').text('说明：平台已使用上述锚点完成上链与签名一致性校验。若需进一步独立复核，请下载 PDF 并导入独立验真工具。');
 
   doc.addPage();
@@ -2849,6 +2918,12 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   doc.fontSize(9).fillColor('gray').text('附录：机器验真标记');
   doc.fontSize(7).fillColor('gray').text('说明：以下 VERIFY_* 与 Base64 分块供独立验真工具稳定读取，不面向人工比对。');
   doc.fontSize(7).fillColor('gray').text(`VERIFY_CONTRACT_ID=${contract.id}`);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_CHAIN_ENV=${CHAIN_ENV}`);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_CHAIN_ID=${chainRuntime.chainId}`);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_RENTAL_CHAIN_RPC_URL=${chainRuntime.rpcUrl || ''}`);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_RENTAL_CHAIN_ADDRESS=${chainRuntime.contractAddress || ''}`);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_RENTAL_CHAIN_DEPLOYED_AT=${chainRuntime.deployedAt || ''}`);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_CONTRACT_CREATED_AT=${contract.created_at || ''}`);
   doc.fontSize(7).fillColor('gray').text(`VERIFY_CONTENT_HASH=${contract.content_hash}`);
   doc.fontSize(7).fillColor('gray').text(`VERIFY_TX_HASH=${contract.tx_hash || ''}`);
   doc.fontSize(7).fillColor('gray').text(`VERIFY_TENANT_SIGNER=${contract.tenant_signer_address || ''}`);
@@ -2874,7 +2949,7 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
     doc.fontSize(7).fillColor('gray').text(line);
   });
   doc.info.Title = `CCL Contract ${contract.id}`;
-  doc.info.Subject = `VERIFY_CONTRACT_ID=${contract.id};VERIFY_CONTENT_HASH=${contract.content_hash};VERIFY_TX_HASH=${contract.tx_hash || ''};VERIFY_TENANT_SIGNER=${contract.tenant_signer_address || ''};VERIFY_LANDLORD_SIGNER=${contract.landlord_signer_address || ''};VERIFY_TENANT_MESSAGE_HASH=${tenantMessageHash || ''};VERIFY_LANDLORD_MESSAGE_HASH=${landlordMessageHash || ''};VERIFY_LISTING_ID=${contract.listing_id || ''};VERIFY_LISTING_SNAPSHOT_CID=${listingMeta.public_snapshot_cid || ''};VERIFY_LISTING_SNAPSHOT_HASH=${listingMeta.public_snapshot_hash || ''}`;
+  doc.info.Subject = `VERIFY_CONTRACT_ID=${contract.id};VERIFY_CHAIN_ENV=${CHAIN_ENV};VERIFY_CHAIN_ID=${chainRuntime.chainId};VERIFY_RENTAL_CHAIN_RPC_URL=${chainRuntime.rpcUrl || ''};VERIFY_RENTAL_CHAIN_ADDRESS=${chainRuntime.contractAddress || ''};VERIFY_RENTAL_CHAIN_DEPLOYED_AT=${chainRuntime.deployedAt || ''};VERIFY_CONTRACT_CREATED_AT=${contract.created_at || ''};VERIFY_CONTENT_HASH=${contract.content_hash};VERIFY_TX_HASH=${contract.tx_hash || ''};VERIFY_TENANT_SIGNER=${contract.tenant_signer_address || ''};VERIFY_LANDLORD_SIGNER=${contract.landlord_signer_address || ''};VERIFY_TENANT_MESSAGE_HASH=${tenantMessageHash || ''};VERIFY_LANDLORD_MESSAGE_HASH=${landlordMessageHash || ''};VERIFY_LISTING_ID=${contract.listing_id || ''};VERIFY_LISTING_SNAPSHOT_CID=${listingMeta.public_snapshot_cid || ''};VERIFY_LISTING_SNAPSHOT_HASH=${listingMeta.public_snapshot_hash || ''}`;
   doc.info.Keywords = `contract,verify,${contract.id},${contract.content_hash}`;
   doc.end();
 }));

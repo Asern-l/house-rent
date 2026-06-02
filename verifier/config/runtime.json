@@ -1,0 +1,12 @@
+{
+  "activeConfigName": "sepolia",
+  "configs": {
+    "sepolia": {
+      "name": "sepolia",
+      "rpcUrl": "https://ethereum-sepolia.publicnode.com",
+      "chainId": 11155111,
+      "contractAddress": "0x1Aa0c85f57Cbe581b36a8671969Dd5ac2DB8e8CF",
+      "contractDeployedAt": "2026-06-01T14:02:49.631Z"
+    }
+  }
+}

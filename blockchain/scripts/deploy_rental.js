@@ -7,6 +7,8 @@ const hre = require('hardhat');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const dotenv = require('dotenv');
+const { ethers } = require('ethers');
 
 // 函数 1: 获取部署文件名。
 function getDeploymentFile(networkName) {
@@ -52,6 +54,39 @@ function syncFrontendAbiAndAddress() {
   }
 }
 
+function normalizePrivateKey(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return '';
+  const body = value.startsWith('0x') ? value.slice(2) : value;
+  if (!/^[0-9a-fA-F]{64}$/.test(body)) return '';
+  return `0x${body}`;
+}
+
+function readFallbackPrivateKeyFromBlockchainEnv() {
+  try {
+    const envPath = path.resolve(__dirname, '..', '.env');
+    if (!fs.existsSync(envPath)) return '';
+    const parsed = dotenv.parse(fs.readFileSync(envPath, 'utf8'));
+    return normalizePrivateKey(parsed.TRUSTED_SIGNER_PRIVATE_KEY || parsed.PRIVATE_KEY || '');
+  } catch {
+    return '';
+  }
+}
+
+function resolveTrustedSignerAddress(networkName, deployerAddress) {
+  const explicitAddress = String(process.env.TRUSTED_SIGNER_ADDRESS || '').trim();
+  if (explicitAddress) return explicitAddress;
+  const fallbackKey = normalizePrivateKey(
+    process.env.TRUSTED_SIGNER_PRIVATE_KEY
+    || process.env.PRIVATE_KEY
+    || readFallbackPrivateKeyFromBlockchainEnv()
+  );
+  if (networkName === 'localhost' && fallbackKey) {
+    return new ethers.Wallet(fallbackKey).address;
+  }
+  return deployerAddress;
+}
+
 async function waitForEnterIfInteractive(message = '按 Enter 退出...') {
   if (!process.stdin.isTTY || process.env.CI === 'true' || process.env.NO_DEPLOY_PAUSE === '1') return;
   const readline = require('readline');
@@ -77,7 +112,7 @@ async function main() {
 
   const paymentWindowHours = Math.max(1, Number(process.env.PAYMENT_WINDOW_HOURS || 2));
   const paymentWindowMs = BigInt(paymentWindowHours) * 60n * 60n * 1000n;
-  const trustedSigner = process.env.TRUSTED_SIGNER_ADDRESS || deployer.address;
+  const trustedSigner = resolveTrustedSignerAddress(networkName, deployer.address);
   const platformFeeRecipient = process.env.PLATFORM_FEE_RECIPIENT_ADDRESS || trustedSigner;
   console.log(`支付窗口: ${paymentWindowHours} 小时 (${paymentWindowMs} ms)\n`);
   console.log(`Permit 签名者: ${trustedSigner}\n`);

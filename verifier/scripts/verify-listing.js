@@ -21,12 +21,12 @@ const LISTING_FEEDBACK_CODE_TO_TYPE = {
 function usage() {
   console.log([
     'Usage:',
-    '  node verifier/scripts/verify-listing.js --listing-id <id> [--snapshot-cid <cid>] [--snapshot-hash <hash>] [--at-sec <unixSec>] [--network sepolia|local] [--rpc-url <url>] [--contract-address <addr>]',
+    '  node verifier/scripts/verify-listing.js --listing-id <id> [--snapshot-cid <cid>] [--snapshot-hash <hash>] [--at-sec <unixSec>] [--config-name <name>] [--rpc-url <url>] [--contract-address <addr>]',
     '',
     'Examples:',
-    '  node verifier/scripts/verify-listing.js --listing-id lst_xxx --network sepolia',
-    '  node verifier/scripts/verify-listing.js --listing-id lst_xxx --snapshot-cid bafy... --snapshot-hash 0x... --network sepolia',
-    '  node verifier/scripts/verify-listing.js --listing-id lst_xxx --at-sec 1780209098 --network sepolia',
+    '  node verifier/scripts/verify-listing.js --listing-id lst_xxx --config-name sepolia',
+    '  node verifier/scripts/verify-listing.js --listing-id lst_xxx --snapshot-cid bafy... --snapshot-hash 0x... --config-name sepolia',
+    '  node verifier/scripts/verify-listing.js --listing-id lst_xxx --at-sec 1780209098 --config-name sepolia',
   ].join('\n'));
 }
 
@@ -283,12 +283,12 @@ async function fetchListingDetail({
   listingId,
   includeHistory = false,
   runtime = null,
-  network = 'sepolia',
+  configName = '',
   rpcUrl = '',
   contractAddress = '',
 }) {
-  const ownRuntime = runtime || resolveRuntime(network, {
-    network,
+  const ownRuntime = runtime || resolveRuntime(configName, {
+    'config-name': configName,
     'rpc-url': rpcUrl,
     'contract-address': contractAddress,
   });
@@ -361,6 +361,8 @@ async function fetchListingDetail({
   return {
     source: 'local-listing-detail',
     network: ownRuntime.network,
+    selectedConfigName: ownRuntime.selectedConfigName || '',
+    chainId: ownRuntime.deploymentMeta?.chainId || 0,
     rpcUrl: ownRuntime.rpcUrl,
     contractAddress: ownRuntime.contractAddress,
     listingId,
@@ -379,12 +381,12 @@ async function verifyListingLocally({
   expectedSnapshotHash = '',
   traceAtSec = 0,
   runtime = null,
-  network = 'sepolia',
+  configName = '',
   rpcUrl = '',
   contractAddress = '',
 }) {
-  const ownRuntime = runtime || resolveRuntime(network, {
-    network,
+  const ownRuntime = runtime || resolveRuntime(configName, {
+    'config-name': configName,
     'rpc-url': rpcUrl,
     'contract-address': contractAddress,
   });
@@ -412,6 +414,8 @@ async function verifyListingLocally({
   const output = {
     source: traceAtSec ? 'local-listing-history' : (snapshotCid ? 'local-listing-and-ipfs-explicit' : 'local-listing-latest-anchor'),
     network: ownRuntime.network,
+    selectedConfigName: ownRuntime.selectedConfigName || '',
+    chainId: ownRuntime.deploymentMeta?.chainId || 0,
     rpcUrl: ownRuntime.rpcUrl,
     contractAddress: ownRuntime.contractAddress,
     listingId,
@@ -557,13 +561,14 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  const runtime = resolveRuntime(args.network, args);
+  const runtime = resolveRuntime(args['config-name'] || '', args);
   const result = await verifyListingLocally({
     listingId: String(args['listing-id']).trim(),
     snapshotCid: String(args['snapshot-cid'] || '').trim(),
     expectedSnapshotHash: trimLower(args['snapshot-hash']),
     traceAtSec: Number(args['at-sec'] || 0),
     runtime,
+    configName: String(args['config-name'] || '').trim(),
   });
   console.log(JSON.stringify(result, null, 2));
 }

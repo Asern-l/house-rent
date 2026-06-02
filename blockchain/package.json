@@ -6,7 +6,7 @@
     "compile": "hardhat compile",
     "deploy:sepolia": "hardhat run scripts/deploy_rental.js --network sepolia",
     "deploy:local": "hardhat run scripts/deploy_rental.js --network localhost",
-    "node:local": "ganache --server.host 127.0.0.1 --server.port 8545 --chain.chainId 31337 --database.dbPath ./.ganache-db"
+    "node:local": "ganache --server.host 127.0.0.1 --server.port 8545 --chain.chainId 31337 --wallet.defaultBalance 1000 --database.dbPath ./.ganache-db"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",

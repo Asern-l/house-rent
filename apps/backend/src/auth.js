@@ -3,6 +3,7 @@
  * 提供 JWT 解析和角色校验能力（基于钱包地址登录）。
  */
 const jwt = require('jsonwebtoken');
+const { maybeTopupLocalWallet } = require('./local-topup');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
 
@@ -11,7 +12,7 @@ function resolveChainEnv() {
 }
 
 // 函数 1: 校验登录令牌并挂载用户信息（钱包地址 + id + role）。
-function authMiddleware(req, res, next) {
+async function authMiddleware(req, res, next) {
   const raw = req.headers.authorization || '';
   if (!raw.startsWith('Bearer ')) {
     return res.status(401).json({ error: '未登录或登录已失效' });
@@ -22,6 +23,15 @@ function authMiddleware(req, res, next) {
     const isAuthRoute = String(req.baseUrl || '').startsWith('/api/auth');
     if (tokenNetwork && !isAuthRoute && tokenNetwork !== resolveChainEnv()) {
       return res.status(401).json({ error: '登录网络与当前后端不一致，请切换网络后重新登录' });
+    }
+    if (!isAuthRoute) {
+      await maybeTopupLocalWallet({
+        preferredNetwork: tokenNetwork || resolveChainEnv(),
+        userId: req.user?.id || '',
+        walletAddress: req.user?.walletAddress || '',
+        requestId: req.requestId || '',
+        stagePrefix: 'auth.middleware',
+      });
     }
     next();
   } catch (error) {

@@ -11,6 +11,10 @@ const CONTRACT_ADDR_MAP = {
   sepolia: import.meta.env.VITE_CONTRACT_ADDRESS_SEPOLIA || '',
   local:   import.meta.env.VITE_CONTRACT_ADDRESS_LOCAL  || '',
 };
+const API_BASE_MAP = {
+  sepolia: import.meta.env.VITE_API_BASE_SEPOLIA || '/api',
+  local: import.meta.env.VITE_API_BASE_LOCAL || '/api-local',
+};
 
 const genRequestId = () => `web_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -974,7 +978,8 @@ export default function ContractPage() {
 
   const handleDownloadPdf = async () => {
     const token = localStorage.getItem(`token:${preferredNetwork}`) || '';
-    const res = await fetch(`/api/contracts/${id}/pdf`, { headers: { Authorization: `Bearer ${token}` } });
+    const apiBase = API_BASE_MAP[preferredNetwork] || API_BASE_MAP.sepolia;
+    const res = await fetch(`${apiBase}/contracts/${id}/pdf`, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) {
       toast.error('PDF 下载失败');
       return;

@@ -10,51 +10,125 @@
   <main class="app">
     <header class="hero">
       <h1>独立验真工具</h1>
-      <p>不依赖平台账号系统。直接读取本地 PDF、链上记录和 IPFS 材料，完成合同、房源、反馈和租后评价的独立验真与详情查看。</p>
+      <p>不依赖平台账号系统。支持合同 PDF 验真、房源验真、房源详情查询，以及房源反馈和租后评价材料校验。</p>
     </header>
 
     <section class="tabs">
+      <button class="tab" data-tab="config">合约配置</button>
       <button class="tab is-active" data-tab="contract">合同 PDF 验真</button>
       <button class="tab" data-tab="listing">房源验真</button>
       <button class="tab" data-tab="listing-detail">房源详情</button>
     </section>
 
+    <section class="panel" data-panel="config">
+      <section class="card config-card">
+        <div class="section-head">
+          <div>
+            <h2>验真合约配置</h2>
+            <p class="hint">每个配置名唯一。重名保存时，可改名或勾选替换原配置。保存后，房源验真和房源详情可直接选用，不必每次重复填写。</p>
+          </div>
+          <div class="section-actions">
+            <button type="button" id="refresh-configs-btn" class="ghost-btn">刷新配置</button>
+          </div>
+        </div>
+
+        <div class="config-overview">
+          <label class="field">
+            <span>当前使用配置</span>
+            <select id="active-config-select"></select>
+          </label>
+          <div class="actions">
+            <button type="button" id="activate-config-btn">设为当前配置</button>
+          </div>
+        </div>
+
+        <div class="config-layout">
+          <section class="config-pane">
+            <h3>粘贴链上智能合约配置</h3>
+            <label class="field">
+              <span>粘贴合同 PDF 摘要中的蓝框内容</span>
+              <textarea id="config-import-text" rows="8" placeholder="粘贴 PDF 蓝框中的 VERIFY_CHAIN_ENV / VERIFY_CHAIN_ID / VERIFY_RENTAL_CHAIN_RPC_URL / VERIFY_RENTAL_CHAIN_ADDRESS / VERIFY_RENTAL_CHAIN_DEPLOYED_AT"></textarea>
+            </label>
+            <div class="actions">
+              <button type="button" id="parse-config-text-btn">解析到表单</button>
+            </div>
+          </section>
+
+          <section class="config-pane">
+            <h3>手动编辑并保存</h3>
+            <form id="config-form">
+              <label class="field">
+                <span>配置名</span>
+                <input type="text" name="name" placeholder="例如 sepolia-main">
+              </label>
+              <label class="field">
+                <span>RPC URL</span>
+                <input type="text" name="rpcUrl" placeholder="https://...">
+              </label>
+              <label class="field">
+                <span>链 ID</span>
+                <input type="number" name="chainId" placeholder="11155111">
+              </label>
+              <label class="field">
+                <span>链上智能合约地址</span>
+                <input type="text" name="contractAddress" placeholder="0x...">
+              </label>
+              <label class="field">
+                <span>合约部署时间（可选）</span>
+                <input type="text" name="contractDeployedAt" placeholder="2026-06-01T14:02:49.631Z">
+              </label>
+              <label class="field checkbox-field">
+                <input type="checkbox" name="replace" value="1">
+                <span>同名时替换原配置</span>
+              </label>
+              <label class="field checkbox-field">
+                <input type="checkbox" name="activate" value="1" checked>
+                <span>保存后设为当前配置</span>
+              </label>
+              <div class="actions">
+                <button type="submit">保存合约配置</button>
+                <button type="button" id="reset-config-form-btn" class="ghost-btn">清空表单</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      </section>
+      <section class="result card">
+        <div id="status-config" class="status">等待开始</div>
+        <div id="result-config" class="result-body">
+          <p class="muted">尚未执行配置操作。</p>
+        </div>
+      </section>
+    </section>
+
     <section class="panel is-active" data-panel="contract">
       <form id="contract-form" class="card">
-        <label class="field">
-          <span>网络</span>
-          <select name="network">
-            <option value="sepolia">sepolia</option>
-            <option value="local">local</option>
-          </select>
-        </label>
         <label class="field">
           <span>合同 PDF</span>
           <input type="file" name="pdf" accept=".pdf,application/pdf" required>
         </label>
-        <label class="field">
-          <span>RPC URL（可选）</span>
-          <input type="text" name="rpcUrl" placeholder="留空则使用默认 RPC">
-        </label>
-        <label class="field">
-          <span>合约地址（可选）</span>
-          <input type="text" name="contractAddress" placeholder="留空则读取部署文件">
+        <label class="field checkbox-field">
+          <input type="checkbox" name="verifyListing" value="1">
+          <span>顺带验证合同关联房源</span>
         </label>
         <div class="actions">
           <button type="submit">开始验真</button>
         </div>
-        <p class="hint">合同会同时顺带校验关联房源。若 PDF 内含房源标识，将继续校验房源公开快照以及链上评论材料。</p>
+        <p class="hint">合同 PDF 默认自带链 ID、链上智能合约地址、合约哈希、签名消息与签名值。上传后直接验证合同；仅在勾选时才顺带校验合同关联房源。验真通过后，可选择是否把 PDF 中的链上智能合约配置导入到上方表单。</p>
       </form>
+      <section class="result card">
+        <div id="status-contract" class="status">等待开始</div>
+        <div id="result-contract" class="result-body">
+          <p class="muted">尚未执行合同验真。</p>
+        </div>
+      </section>
     </section>
 
     <section class="panel" data-panel="listing">
       <form id="listing-form" class="card">
         <label class="field">
-          <span>网络</span>
-          <select name="network">
-            <option value="sepolia">sepolia</option>
-            <option value="local">local</option>
-          </select>
+          <span>合约配置</span>
+          <select name="configName" class="config-select"></select>
         </label>
         <label class="field">
           <span>房源 ID</span>
@@ -72,29 +146,24 @@
           <span>追溯时间戳秒（可选）</span>
           <input type="number" name="atSec" placeholder="例如 1780209098；填写后按历史版本追溯">
         </label>
-        <label class="field">
-          <span>RPC URL（可选）</span>
-          <input type="text" name="rpcUrl" placeholder="留空则使用默认 RPC">
-        </label>
-        <label class="field">
-          <span>合约地址（可选）</span>
-          <input type="text" name="contractAddress" placeholder="留空则读取部署文件">
-        </label>
         <div class="actions">
           <button type="submit">开始验真</button>
         </div>
-        <p class="hint">房源验真默认核对当前链上房源，并自动尝试读取最新快照锚点；若填写追溯时间戳，则改为按该时间点之前最近的历史版本验真。评论和租后评价会按链上 commentCid 联动读取。</p>
+        <p class="hint">房源验真会读取所选合约配置对应的 RPC 与智能合约地址，默认核对当前链上房源，并自动尝试读取最新快照锚点；若填写追溯时间戳，则改为按该时间点之前最近的历史版本验真。</p>
       </form>
+      <section class="result card">
+        <div id="status-listing" class="status">等待开始</div>
+        <div id="result-listing" class="result-body">
+          <p class="muted">尚未执行房源验真。</p>
+        </div>
+      </section>
     </section>
 
     <section class="panel" data-panel="listing-detail">
       <form id="listing-detail-form" class="card">
         <label class="field">
-          <span>网络</span>
-          <select name="network">
-            <option value="sepolia">sepolia</option>
-            <option value="local">local</option>
-          </select>
+          <span>合约配置</span>
+          <select name="configName" class="config-select"></select>
         </label>
         <label class="field">
           <span>房源 ID</span>
@@ -104,26 +173,17 @@
           <input type="checkbox" name="includeHistory" value="1">
           <span>同时查询全部历史版本</span>
         </label>
-        <label class="field">
-          <span>RPC URL（可选）</span>
-          <input type="text" name="rpcUrl" placeholder="留空则使用默认 RPC">
-        </label>
-        <label class="field">
-          <span>合约地址（可选）</span>
-          <input type="text" name="contractAddress" placeholder="留空则读取部署文件">
-        </label>
         <div class="actions">
           <button type="submit">查看详情</button>
         </div>
-        <p class="hint">房源详情会读取当前链上房源、最新快照、图片、反馈与租后评价。勾选后会额外拉取该房源全部链上快照历史。</p>
+        <p class="hint">房源详情会读取所选合约配置对应的链上房源、最新快照、图片、反馈与租后评价。勾选后会额外拉取该房源全部链上快照历史。</p>
       </form>
-    </section>
-
-    <section class="result card">
-      <div id="status" class="status">等待开始</div>
-      <div id="result" class="result-body">
-        <p class="muted">尚未执行验真或详情查询。</p>
-      </div>
+      <section class="result card">
+        <div id="status-listing-detail" class="status">等待开始</div>
+        <div id="result-listing-detail" class="result-body">
+          <p class="muted">尚未执行房源详情查询。</p>
+        </div>
+      </section>
     </section>
   </main>
 

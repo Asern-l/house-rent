@@ -10,6 +10,7 @@ const { getUserDb, saveUserDb, parseResult, resolveUserNetwork } = require('../u
 const { JWT_SECRET, authMiddleware } = require('../auth');
 const { logApiError, logUserEvent } = require('../logger');
 const { sendError } = require('../app-error');
+const { maybeTopupLocalWallet } = require('../local-topup');
 
 const { createLoginMessage } = require('../../../frontend/src/shared/loginMessage');
 
@@ -17,9 +18,6 @@ const router = express.Router();
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const SIGN_TIME_SKEW_MS = 10 * 60 * 1000;
 const NONCE_TTL_MS = 5 * 60 * 1000;
-const LOCAL_TOPUP_TARGET_WEI = ethers.parseEther('50');
-const LOCAL_CHAIN_ID = 31337n;
-
 // 内存 nonce 存储（一次有效，定时清理过期）
 const nonceStore = new Map();
 setInterval(() => {
@@ -32,65 +30,6 @@ setInterval(() => {
 // 函数 1: 校验钱包地址格式。
 function isValidWalletAddress(walletAddress) {
   return /^0x[a-fA-F0-9]{40}$/.test(String(walletAddress || '').trim());
-}
-
-async function fundLocalWalletIfNeeded(walletAddress) {
-  const rpcUrl = String(process.env.LOCAL_RPC_URL || 'http://127.0.0.1:8545').trim();
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
-  const network = await provider.getNetwork();
-  if (network.chainId !== LOCAL_CHAIN_ID) {
-    throw new Error(`local rpc chainId mismatch: expected ${LOCAL_CHAIN_ID}, got ${network.chainId}`);
-  }
-  const normalizedWallet = ethers.getAddress(walletAddress);
-  const currentBalance = await provider.getBalance(normalizedWallet);
-  if (currentBalance >= LOCAL_TOPUP_TARGET_WEI) {
-    return {
-      funded: false,
-      txHash: '',
-      previousBalanceWei: currentBalance.toString(),
-      fundedAmountWei: '0',
-      finalBalanceWei: currentBalance.toString(),
-    };
-  }
-  const signer = await provider.getSigner(0);
-  const fundedAmount = LOCAL_TOPUP_TARGET_WEI - currentBalance;
-  const tx = await signer.sendTransaction({
-    to: normalizedWallet,
-    value: fundedAmount,
-  });
-  const receipt = await tx.wait();
-  const finalBalance = await provider.getBalance(normalizedWallet);
-  return {
-    funded: true,
-    txHash: receipt?.hash || tx.hash || '',
-    previousBalanceWei: currentBalance.toString(),
-    fundedAmountWei: fundedAmount.toString(),
-    finalBalanceWei: finalBalance.toString(),
-  };
-}
-
-async function maybeTopupLocalWallet({ preferredNetwork, userId, walletAddress, requestId, stagePrefix }) {
-  if (String(preferredNetwork || '').trim().toLowerCase() !== 'local') return;
-  try {
-    const topupResult = await fundLocalWalletIfNeeded(walletAddress);
-    logUserEvent(`${stagePrefix}.local-topup`, {
-      requestId: requestId || '',
-      userId,
-      walletAddress,
-      funded: topupResult.funded,
-      txHash: topupResult.txHash,
-      previousBalanceWei: topupResult.previousBalanceWei,
-      fundedAmountWei: topupResult.fundedAmountWei,
-      finalBalanceWei: topupResult.finalBalanceWei,
-    });
-  } catch (topupError) {
-    logApiError(`${stagePrefix}.local-topup.failed`, {
-      requestId: requestId || '',
-      userId,
-      walletAddress,
-      message: topupError?.message || 'local_topup_failed',
-    });
-  }
 }
 
 // 函数 1-1: 获取一次性 nonce（抗重放攻击）。
