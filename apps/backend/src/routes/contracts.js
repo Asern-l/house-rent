@@ -3220,6 +3220,19 @@ router.get('/', authMiddleware, asyncHandler(async (req, res) => {
     row.onchain_state = onchain.status;
     row.onchain_error_message = onchain.errorMessage;
     row.onchain_tx_hash = onchain.txHash;
+
+    // 评价窗口与评价状态
+    const reviewState = getContractReviewState(row);
+    row.review_window_open = reviewState.canReview;
+    const reviewRows = parseResult(db.exec('SELECT id FROM contract_reviews WHERE contract_id = ? LIMIT 1', [row.id]));
+    row.has_review = reviewRows.length > 0;
+
+    // 是否已有进行中的续租子合同
+    const renewalRows = parseResult(db.exec(
+      `SELECT id FROM contracts WHERE parent_contract_id = ? AND status NOT IN ('cancelled','expired','ended') LIMIT 1`,
+      [row.id]
+    ));
+    row.renewal_child_contract = renewalRows[0] || null;
   });
   res.json({ success: true, data: rows });
 }));

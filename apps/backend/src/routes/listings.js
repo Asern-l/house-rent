@@ -1018,25 +1018,107 @@ async function attachPublicListingState(rows) {
   });
 }
 
+// 函数 2-2: 解析自然语言搜索为结构化过滤条件。
+router.post('/parse-search', asyncHandler(async (req, res) => {
+  const raw = String(req.body?.query || '').trim();
+  if (!raw) return res.json({ success: true, data: { keyword: '', district: '', minRent: 0, maxRent: 0, bedrooms: 0 } });
+
+  let remaining = raw;
+  const result = { keyword: '', district: '', minRent: 0, maxRent: 0, bedrooms: 0 };
+
+  // 户型：一/1/两/2/三/3/四/4 室
+  const bedroomMap = { '一': 1, '1': 1, '两': 2, '二': 2, '2': 2, '三': 3, '3': 3, '四': 4, '4': 4, '五': 5, '5': 5 };
+  const bedroomMatch = remaining.match(/([一二两三四五1-5])室/);
+  if (bedroomMatch) {
+    result.bedrooms = bedroomMap[bedroomMatch[1]] || 0;
+    remaining = remaining.replace(bedroomMatch[0], ' ');
+  }
+
+  // 价格区间：0.2-0.5 或 0.2到0.5
+  const rangeMatch = remaining.match(/(\d+\.?\d*)\s*[-到~至]\s*(\d+\.?\d*)\s*(eth|ETH)?/);
+  if (rangeMatch) {
+    result.minRent = parseFloat(rangeMatch[1]) || 0;
+    result.maxRent = parseFloat(rangeMatch[2]) || 0;
+    remaining = remaining.replace(rangeMatch[0], ' ');
+  } else {
+    // 最高价：0.3以内/以下/不超过
+    const maxMatch = remaining.match(/(\d+\.?\d*)\s*(eth|ETH)?\s*(以内|以下|不超过|左右|上下)/);
+    if (maxMatch) {
+      result.maxRent = parseFloat(maxMatch[1]) || 0;
+      remaining = remaining.replace(maxMatch[0], ' ');
+    }
+    // 最低价：0.2以上/起
+    const minMatch = remaining.match(/(\d+\.?\d*)\s*(eth|ETH)?\s*(以上|起)/);
+    if (minMatch) {
+      result.minRent = parseFloat(minMatch[1]) || 0;
+      remaining = remaining.replace(minMatch[0], ' ');
+    }
+  }
+
+  // 地区：XX区 / XX街道 / XX路 (2-6字)
+  const districtMatch = remaining.match(/[一-龥]{2,6}(区|街道|镇|园|路|街)/);
+  if (districtMatch) {
+    result.district = districtMatch[0];
+    remaining = remaining.replace(districtMatch[0], ' ');
+  }
+
+  // 剩余有效文字作为关键词
+  result.keyword = remaining.replace(/[一二两三四五1-5]厅|ETH|eth|找|要|想|租|在|的|一个|附近/g, '').replace(/\s+/g, ' ').trim();
+
+  res.json({ success: true, data: result });
+}));
+
 // 函数 2-3: 获取房源列表接口。
 router.get('/', asyncHandler(async (req, res) => {
   const rawKeyword = String(req.query.keyword || '').trim();
   const status = String(req.query.status || 'public').trim();
+  const district = String(req.query.district || '').trim();
+  const minRent = parseFloat(req.query.minRent || '0') || 0;
+  const maxRent = parseFloat(req.query.maxRent || '0') || 0;
+  const bedrooms = parseInt(req.query.bedrooms || '0', 10) || 0;
   // 转义 LIKE 通配符，防止 % 和 _ 绕过关键词过滤
   const keyword = rawKeyword.replace(/[%_]/g, '\\$&');
   const db = await getDb();
   const isPublicStatusFilter = ['public', 'available', 'signing', 'rented'].includes(status);
-  const statusSql = isPublicStatusFilter
-    ? "status IN ('available','rented')"
-    : 'status = ?';
-  const params = isPublicStatusFilter
-    ? [`%${keyword}%`, `%${keyword}%`, `%${keyword}%`]
-    : [status, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`];
+
+  // 动态构建 WHERE 子句
+  const whereParts = [];
+  const params = [];
+
+  if (isPublicStatusFilter) {
+    whereParts.push("status IN ('available','rented')");
+  } else {
+    whereParts.push('status = ?');
+    params.push(status);
+  }
+
+  if (keyword) {
+    whereParts.push("(title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' OR address LIKE ? ESCAPE '\\')");
+    params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+  }
+
+  if (district) {
+    whereParts.push('(district = ? OR address LIKE ?)');
+    params.push(district, `%${district}%`);
+  }
+
+  if (minRent > 0) {
+    whereParts.push('CAST(rent_amount AS REAL) >= ?');
+    params.push(minRent);
+  }
+
+  if (maxRent > 0) {
+    whereParts.push('CAST(rent_amount AS REAL) <= ?');
+    params.push(maxRent);
+  }
+
+  if (bedrooms > 0) {
+    whereParts.push('CAST(bedrooms AS INTEGER) = ?');
+    params.push(bedrooms);
+  }
+
   const rows = parseResult(db.exec(
-    `SELECT *
-     FROM listings
-     WHERE ${statusSql} AND (title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' OR address LIKE ? ESCAPE '\\')
-     ORDER BY created_at DESC`,
+    `SELECT * FROM listings WHERE ${whereParts.join(' AND ')} ORDER BY created_at DESC`,
     params
   ));
   let data = await attachPublicListingState(rows);
