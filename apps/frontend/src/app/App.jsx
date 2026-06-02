@@ -221,7 +221,7 @@ export default function App() {
 
           <Link to="/" className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center">
             <p className="text-sm font-semibold tracking-[0.16em] text-slate-100">链上安居</p>
-            <p className="text-[10px] uppercase tracking-[0.22em] text-slate-400">Blockchain Housing Flow</p>
+            <p className="text-[10px] uppercase tracking-[0.22em] text-slate-400">Onchain Housing</p>
           </Link>
 
           <div className="ml-auto flex items-center gap-2">

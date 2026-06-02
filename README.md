@@ -3,8 +3,8 @@
 <p align="center"><sub>链上安居：一个围绕房源、合同、支付与独立验真的区块链租房原型——<b>中心化交易层 + 链上可验证真相层 + IPFS 验真材料层</b>。</sub></p>
 
 <p align="center">
-  <a href="docs/assets/lian-shang-an-ju-banner.html">
-    <img src="docs/assets/lian-shang-an-ju-banner-preview.png" alt="链上安居 — 每一份合同上链留存" width="100%" />
+  <a href="docs/assets/onchain-housing-banner.html">
+    <img src="docs/assets/onchain-housing-banner-preview.png" alt="链上安居 — 每一份合同上链留存" width="100%" />
   </a>
 </p>
 
@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/assets/lian-shang-an-ju-banner.html">🎨 欢迎页 HTML 源码</a> · <a href="#界面预览">📸 界面截图</a> · <a href="#快速开始">⚡ 快速开始</a>
+  <a href="docs/assets/onchain-housing-banner.html">🎨 欢迎页 HTML 源码</a> · <a href="#界面预览">📸 界面截图</a> · <a href="#快速开始">⚡ 快速开始</a>
 </p>
 
 ---

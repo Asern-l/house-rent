@@ -1,5 +1,5 @@
 {
-  "name": "lian-shang-an-ju-verifier",
+  "name": "onchain-housing-verifier",
   "version": "1.0.0",
   "private": true,
   "description": "Independent verifier for contracts and listings",

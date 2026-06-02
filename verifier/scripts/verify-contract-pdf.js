@@ -172,7 +172,7 @@ function makeContractContentHash(content) {
 
 function createSignMessage({ contractId, contentHash, role, signerAddress, timestamp, deadline }) {
   return [
-    '链上安居 Contract Signature',
+    'Onchain Housing Contract Signature',
     `contractId:${contractId}`,
     `contentHash:${contentHash}`,
     `role:${role}`,

@@ -190,7 +190,7 @@ function setTenantRiskCooldown(userDb, userId, hours) {
 
 function createSignMessage({ contractId, contentHash, role, signerAddress, timestamp, deadline }) {
   return [
-    '链上安居 Contract Signature',
+    'Onchain Housing Contract Signature',
     `contractId:${contractId}`,
     `contentHash:${contentHash}`,
     `role:${role}`,
@@ -2798,7 +2798,7 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   };
   const renderHeader = (subtitle = '') => {
     doc.x = doc.page.margins.left;
-    doc.fillColor('#0f172a').fontSize(9).text('链上安居 · 电子租赁合同', { align: 'right' });
+    doc.fillColor('#0f172a').fontSize(9).text('Onchain Housing · 电子租赁合同', { align: 'right' });
     doc.moveDown(0.35);
     doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y)
       .lineWidth(1.2).strokeColor('#a47864').stroke();
@@ -2814,7 +2814,7 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
     doc.moveTo(doc.page.margins.left, y - 8).lineTo(doc.page.width - doc.page.margins.right, y - 8)
       .lineWidth(0.6).strokeColor('#cbd5e1').stroke();
     doc.fillColor('#64748b').fontSize(8)
-      .text(`链上安居 · ${label}`, doc.page.margins.left, y, { width: pageWidth / 2 })
+      .text(`Onchain Housing · ${label}`, doc.page.margins.left, y, { width: pageWidth / 2 })
       .text(`第 ${pageNumber} 页`, doc.page.margins.left + (pageWidth / 2), y, { width: pageWidth / 2, align: 'right' });
     doc.page.margins.bottom = previousBottomMargin;
     doc.x = previousX;
