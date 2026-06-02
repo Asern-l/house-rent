@@ -20,6 +20,7 @@ old-docs/
 .ipfs-data/
 tmp/ipfs/
 .tools/ipfs/
+verifier/config/runtime.json
 
 # Environment files
 .env

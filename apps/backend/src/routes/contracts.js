@@ -429,7 +429,10 @@ function resolveChainRuntimeByEnv() {
 function resolveContractDeploymentTimestamp(contractAddress) {
   const normalizedAddress = String(contractAddress || '').trim().toLowerCase();
   if (!normalizedAddress) return '';
-  const deploymentFilePath = path.join(__dirname, '..', '..', '..', '..', 'blockchain', `deployments-rental-${CHAIN_ENV}.json`);
+  const deploymentFileName = String(CHAIN_ENV || '').trim().toLowerCase() === 'local'
+    ? 'deployments-rental-localhost.json'
+    : `deployments-rental-${CHAIN_ENV}.json`;
+  const deploymentFilePath = path.join(__dirname, '..', '..', '..', '..', 'blockchain', deploymentFileName);
   if (!fs.existsSync(deploymentFilePath)) return '';
   try {
     const deployment = JSON.parse(fs.readFileSync(deploymentFilePath, 'utf8').replace(/^\uFEFF/, ''));
