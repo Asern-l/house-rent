@@ -1,6 +1,7 @@
 /**
- * Admin configuration routes (no auth required for local demo).
+ * Admin configuration routes — localhost-only, no user auth required.
  * Mounted at /api/admin/
+ * WARNING: Do NOT expose this on a public network without additional auth.
  */
 const express = require('express');
 const { ethers } = require('ethers');
@@ -8,6 +9,14 @@ const { readConfig, writeConfig } = require('../runtime-config');
 const { isIpfsEnabled, isPinataMode, addJsonToIpfs } = require('../ipfs');
 
 const router = express.Router();
+
+// 限制仅本地访问，防止服务意外绑定到公网时被利用。
+function requireLocalhost(req, res, next) {
+  const ip = (req.ip || req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
+  if (ip === '127.0.0.1' || ip === '::1') return next();
+  return res.status(403).json({ error: 'Admin API 仅限本地访问' });
+}
+router.use(requireLocalhost);
 
 function normalizePrivateKey(raw) {
   const value = String(raw || '').trim();

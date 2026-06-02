@@ -5,11 +5,12 @@
  */
 
 export const LISTING_STATUS_META = {
-  available: { label: '可租', badge: 'badge-green' },
-  offline: { label: '已下架', badge: 'badge-gray' },
-  locked: { label: '签约锁定中', badge: 'badge-yellow' },
-  rented: { label: '已出租', badge: 'badge-blue' },
-  closed: { label: '已关闭', badge: 'badge-gray' },
+  available: { label: '可租',     badge: 'badge-green',  dot: 'badge-dot-green badge-dot-pulse' },
+  offline:   { label: '已下架',   badge: 'badge-gray',   dot: 'badge-dot-gray' },
+  locked:    { label: '签约中',   badge: 'badge-yellow', dot: 'badge-dot-yellow' },
+  signing:   { label: '签约中',   badge: 'badge-yellow', dot: 'badge-dot-yellow' },
+  rented:    { label: '已出租',   badge: 'badge-blue',   dot: 'badge-dot-blue' },
+  closed:    { label: '已关闭',   badge: 'badge-gray',   dot: 'badge-dot-gray' },
 };
 
 // 函数 1: 解析后端返回的房源图片字段。
@@ -48,5 +49,5 @@ export function formatRentEth(value) {
 
 // 函数 5: 获取房源状态展示配置。
 export function getListingStatusMeta(status) {
-  return LISTING_STATUS_META[status] || { label: status || '未知状态', badge: 'badge-gray' };
+  return LISTING_STATUS_META[status] || { label: status || '未知状态', badge: 'badge-gray', dot: 'badge-dot-gray' };
 }

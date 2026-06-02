@@ -2,6 +2,7 @@
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { AlertCircleIcon, ArrowLeftIcon, CalendarDaysIcon, ChevronLeftIcon, ChevronRightIcon, HomeIcon, LoaderIcon, MapPinIcon } from 'lucide-react';
+import { getListingStatusMeta as getSharedStatusMeta } from '../shared/listingUtils';
 
 function openMap(address) {
   const q = encodeURIComponent(address);
@@ -259,11 +260,10 @@ function StackedImageCarousel({ imageUrls, alt, className = '' }) {
 
 function getListingStatusMeta(listing) {
   const status = String(listing?.public_status || listing?.status || '').trim().toLowerCase();
-  if (status === 'signing') return { key: 'signing', label: '签署中', className: 'badge-yellow' };
-  if (status === 'rented') return { key: 'rented', label: '已租出', className: 'badge-gray' };
-  if (status === 'offline') return { key: 'offline', label: '已下架', className: 'badge-gray' };
-  if (status === 'closed') return { key: 'closed', label: '已关闭', className: 'badge-red' };
-  return { key: 'available', label: '可租', className: 'badge-green' };
+  const meta = getSharedStatusMeta(status);
+  // 向后兼容：保留 key、className 字段供下方逻辑使用
+  const keyMap = { '可租': 'available', '签约中': 'signing', '已出租': 'rented', '已下架': 'offline', '已关闭': 'closed' };
+  return { key: keyMap[meta.label] || status || 'available', label: meta.label, className: meta.badge, dot: meta.dot };
 }
 
 function renderStars(rating) {
@@ -424,7 +424,8 @@ export default function ListingDetail() {
 
         <div className="space-y-4">
           <div>
-            <span className={`${statusMeta.className} mb-2 inline-block`}>
+            <span className={`${statusMeta.className} mb-2`}>
+              <span className={statusMeta.dot} />
               {statusMeta.label}
             </span>
             <h1 className="mt-2 text-2xl font-bold text-gray-100">{listing.title}</h1>

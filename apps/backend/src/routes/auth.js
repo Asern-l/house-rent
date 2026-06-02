@@ -30,7 +30,8 @@ const SIGN_TIME_SKEW_MS = 10 * 60 * 1000;
 const NONCE_TTL_MS = 5 * 60 * 1000;
 const LOCAL_TOPUP_TARGET_WEI = ethers.parseEther('50');
 const LOCAL_CHAIN_ID = 31337n;
-const DEMO_LOGIN_ENABLED = String(process.env.NODE_ENV || '').trim().toLowerCase() !== 'production';
+// 演示登录：必须显式设置 DEMO_LOGIN_ENABLED=true 才开启，默认关闭。
+const DEMO_LOGIN_ENABLED = String(process.env.DEMO_LOGIN_ENABLED || '').trim().toLowerCase() === 'true';
 const DEMO_USERS = {
   tenant: {
     walletAddress: '0xde00000000000000000000000000000000000001',

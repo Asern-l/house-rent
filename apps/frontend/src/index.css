@@ -111,13 +111,30 @@ body::before {
 }
 
 .badge {
-  @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide;
+  backdrop-filter: blur(10px) saturate(140%);
+  box-shadow: 0 1px 6px rgba(0,0,0,0.35), inset 0 0.5px 0 rgba(255,255,255,0.08);
 }
-.badge-green  { @apply badge border border-green-800/50 bg-green-900/50 text-green-300; }
-.badge-blue   { @apply badge border border-blue-800/50 bg-blue-900/50 text-blue-300; }
-.badge-yellow { @apply badge border border-yellow-800/50 bg-yellow-900/50 text-yellow-300; }
-.badge-red    { @apply badge border border-red-800/50 bg-red-900/50 text-red-300; }
-.badge-gray   { @apply badge border border-slate-700/60 bg-slate-900/60 text-slate-300; }
+.badge-green  { @apply badge border border-green-500/25 bg-green-950/70 text-green-300; }
+.badge-blue   { @apply badge border border-blue-500/25 bg-blue-950/70 text-blue-300; }
+.badge-yellow { @apply badge border border-yellow-500/25 bg-yellow-950/70 text-yellow-300; }
+.badge-red    { @apply badge border border-red-500/25 bg-red-950/70 text-red-300; }
+.badge-gray   { @apply badge border border-slate-600/30 bg-slate-950/70 text-slate-400; }
+
+/* 徽章指示点 */
+.badge-dot {
+  @apply inline-block h-1.5 w-1.5 rounded-full shrink-0;
+}
+.badge-dot-green  { @apply badge-dot bg-green-400; }
+.badge-dot-blue   { @apply badge-dot bg-blue-400; }
+.badge-dot-yellow { @apply badge-dot bg-yellow-400; }
+.badge-dot-red    { @apply badge-dot bg-red-400; }
+.badge-dot-gray   { @apply badge-dot bg-slate-500; }
+@keyframes badge-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.7); }
+}
+.badge-dot-pulse { animation: badge-pulse 1.8s ease-in-out infinite; }
 
 @keyframes revealFlow {
   0%   { opacity: 0; transform: translateY(34px) scale(0.985); filter: blur(10px); }
