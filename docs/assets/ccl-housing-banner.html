@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CCL Housing · 信源链</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #080c12;
+    color: #f2efe4;
+    font-family: -apple-system, 'PingFang SC', 'Helvetica Neue', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Grid texture ── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(251,246,238,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(251,246,238,0.03) 1px, transparent 1px);
+    background-size: 64px 64px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 72px 32px 80px;
+  }
+
+  /* ── Top strip ── */
+  .strip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 64px;
+    font-size: 11px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    opacity: .45;
+  }
+  .strip-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #a47864;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+
+  /* ── Hero ── */
+  .hero {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 56px;
+    align-items: center;
+    margin-bottom: 80px;
+  }
+  @media (max-width: 720px) { .hero { grid-template-columns: 1fr; gap: 32px; } }
+
+  .hero-title {
+    font-size: clamp(40px, 6vw, 68px);
+    font-weight: 700;
+    line-height: 1.08;
+    letter-spacing: -.02em;
+  }
+  .hero-title em {
+    font-style: normal;
+    background: linear-gradient(135deg, #c9a07e 0%, #a47864 55%, #7c4f38 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .hero-right { display: flex; flex-direction: column; gap: 24px; }
+
+  .hero-desc {
+    font-size: 15px;
+    line-height: 1.7;
+    color: rgba(242,239,228,0.65);
+    max-width: 400px;
+  }
+
+  /* ── Stat chips ── */
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 14px;
+    border-radius: 99px;
+    border: 1px solid rgba(164,120,100,0.3);
+    background: rgba(164,120,100,0.08);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    color: #c9a07e;
+  }
+  .chip-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+  /* ── CTA ── */
+  .cta-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn-primary {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 22px; border-radius: 12px;
+    background: linear-gradient(135deg, #c9a07e, #a47864);
+    color: #fff; font-size: 13px; font-weight: 600;
+    text-decoration: none; letter-spacing: .03em;
+    box-shadow: 0 4px 18px rgba(164,120,100,0.35);
+    transition: opacity .15s;
+  }
+  .btn-primary:hover { opacity: .88; }
+  .btn-outline {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 22px; border-radius: 12px;
+    border: 1px solid rgba(164,120,100,0.4);
+    background: rgba(164,120,100,0.07);
+    color: #c9a07e; font-size: 13px; font-weight: 600;
+    text-decoration: none; letter-spacing: .03em;
+    transition: background .15s;
+  }
+  .btn-outline:hover { background: rgba(164,120,100,0.14); }
+
+  /* ── Divider ── */
+  hr {
+    border: none;
+    border-top: 1px solid rgba(255,255,255,0.07);
+    margin: 0 0 56px;
+  }
+
+  /* ── Screenshots ── */
+  .screens-title {
+    font-size: 11px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: rgba(242,239,228,0.35);
+    margin-bottom: 24px;
+  }
+
+  .screens {
+    display: grid;
+    grid-template-columns: 1.6fr 1fr;
+    gap: 16px;
+    margin-bottom: 80px;
+  }
+  @media (max-width: 720px) { .screens { grid-template-columns: 1fr; } }
+
+  .screen-main {
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+    aspect-ratio: 16/10;
+    background: #0d1117;
+  }
+  .screen-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .screen-small {
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    flex: 1;
+    background: #0d1117;
+  }
+  .screen-main img,
+  .screen-small img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    object-position: top;
+    display: block;
+  }
+
+  /* ── Feature list ── */
+  .features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 20px;
+    margin-bottom: 72px;
+  }
+  .feature {
+    padding: 20px 22px;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.07);
+    background: rgba(255,255,255,0.025);
+  }
+  .feature-label {
+    font-size: 11px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: #a47864;
+    margin-bottom: 8px;
+  }
+  .feature-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .feature-desc {
+    font-size: 13px;
+    color: rgba(242,239,228,0.5);
+    line-height: 1.6;
+  }
+
+  /* ── Footer ── */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: rgba(242,239,228,0.3);
+    letter-spacing: .04em;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .footer a { color: rgba(164,120,100,0.7); text-decoration: none; }
+  .footer a:hover { color: #c9a07e; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Strip -->
+  <div class="strip">
+    <span><span class="strip-dot"></span>CCL Housing · 信源链</span>
+    <span>Sepolia &nbsp;/&nbsp; Local EVM</span>
+  </div>
+
+  <!-- Hero -->
+  <div class="hero">
+    <div>
+      <h1 class="hero-title">每一份合同<br><em>上链留存</em></h1>
+    </div>
+    <div class="hero-right">
+      <p class="hero-desc">
+        采用混合架构的区块链租房演示系统。合同哈希、支付记录、房源快照锚定到链上，任何人可在不登录平台的情况下独立验证。
+      </p>
+      <div class="chips">
+        <span class="chip"><span class="chip-dot"></span>7 步租赁闭环</span>
+        <span class="chip"><span class="chip-dot"></span>链上回写核查</span>
+        <span class="chip"><span class="chip-dot"></span>独立 Verifier</span>
+        <span class="chip"><span class="chip-dot"></span>IPFS 验真材料</span>
+      </div>
+      <div class="cta-row">
+        <a href="../../README.md" class="btn-primary">查看文档 →</a>
+        <a href="https://github.com/Asern-l/house-rent" class="btn-outline">GitHub</a>
+      </div>
+    </div>
+  </div>
+
+  <hr />
+
+  <!-- Screenshots -->
+  <p class="screens-title">// 界面预览</p>
+  <div class="screens">
+    <div class="screen-main">
+      <img src="screenshots/home.png" alt="首页" />
+    </div>
+    <div class="screen-stack">
+      <div class="screen-small">
+        <img src="screenshots/listings.png" alt="房源列表" />
+      </div>
+      <div class="screen-small">
+        <img src="screenshots/detail.png" alt="房源详情" />
+      </div>
+    </div>
+  </div>
+
+  <!-- Features -->
+  <div class="features">
+    <div class="feature">
+      <div class="feature-label">链上存证</div>
+      <div class="feature-title">合同哈希上链</div>
+      <div class="feature-desc">后端不信任前端单方哈希，严格核查 receipt、事件、msg.value 和签名地址。</div>
+    </div>
+    <div class="feature">
+      <div class="feature-label">独立验真</div>
+      <div class="feature-title">无需平台账号</div>
+      <div class="feature-desc">上传本地 PDF 重算哈希，直连链上查询，不依赖平台任何接口。</div>
+    </div>
+    <div class="feature">
+      <div class="feature-label">IPFS</div>
+      <div class="feature-title">公开快照不可篡改</div>
+      <div class="feature-desc">房源快照、图片、评价写入 IPFS，历史版本按时间点追溯。</div>
+    </div>
+    <div class="feature">
+      <div class="feature-label">双环境</div>
+      <div class="feature-title">Sepolia / Local 隔离</div>
+      <div class="feature-desc">数据库、账号会话、ABI、API 入口彼此独立，调试不污染演示数据。</div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <span>CCL Housing · 课程设计 / 技术验证原型 · MIT License</span>
+    <span>
+      <a href="https://github.com/Asern-l/house-rent">github.com/Asern-l/house-rent</a>
+    </span>
+  </div>
+
+</div>
+</body>
+</html>
