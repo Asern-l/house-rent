@@ -1,14 +1,14 @@
-# CCL Housing
+# 链上安居
 
-<p align="center"><sub>信源链：一个围绕房源、合同、支付与独立验真的区块链租房原型——<b>中心化交易层 + 链上可验证真相层 + IPFS 验真材料层</b>。</sub></p>
+<p align="center"><sub>链上安居：一个围绕房源、合同、支付与独立验真的区块链租房原型——<b>中心化交易层 + 链上可验证真相层 + IPFS 验真材料层</b>。</sub></p>
 
 <p align="center">
-  <a href="docs/assets/ccl-housing-banner.html">
-    <img src="docs/assets/ccl-housing-banner-preview.png" alt="CCL Housing — 每一份合同上链留存" width="100%" />
+  <a href="docs/assets/lian-shang-an-ju-banner.html">
+    <img src="docs/assets/lian-shang-an-ju-banner-preview.png" alt="链上安居 — 每一份合同上链留存" width="100%" />
   </a>
 </p>
 
-> **链上可信度不是噱头，是可查证的事实。** CCL Housing 把租房流程中的关键事实——合同哈希、支付记录、房源快照——锚定到 Sepolia 或本地 EVM，任何人可以在不登录平台的情况下独立验证。**7 步完整租赁闭环** · **链上回写严格核查** · **独立 verifier** · **双环境隔离（Sepolia / Local）**
+> **链上可信度不是噱头，是可查证的事实。** 链上安居 把租房流程中的关键事实——合同哈希、支付记录、房源快照——锚定到 Sepolia 或本地 EVM，任何人可以在不登录平台的情况下独立验证。**7 步完整租赁闭环** · **链上回写严格核查** · **独立 verifier** · **双环境隔离（Sepolia / Local）**
 
 <p align="center">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" /></a>
@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/assets/ccl-housing-banner.html">🎨 欢迎页 HTML 源码</a> · <a href="#界面预览">📸 界面截图</a> · <a href="#快速开始">⚡ 快速开始</a>
+  <a href="docs/assets/lian-shang-an-ju-banner.html">🎨 欢迎页 HTML 源码</a> · <a href="#界面预览">📸 界面截图</a> · <a href="#快速开始">⚡ 快速开始</a>
 </p>
 
 ---
@@ -64,7 +64,7 @@
 
 ## Why this exists
 
-| 传统租房平台 | CCL Housing |
+| 传统租房平台 | 链上安居 |
 |---|---|
 | 合同由平台保存，出纠纷只能信平台 | 合同哈希写入链上，本地 PDF 可独立核验签名 |
 | 支付记录平台说了算 | 链上支付事件可追溯，时间线公开 |
@@ -399,3 +399,5 @@ npm run check:abi
 ## License
 
 MIT — 见 [LICENSE](LICENSE)。本项目为课程设计 / 技术验证原型，不构成生产级金融或法律软件。
+
+

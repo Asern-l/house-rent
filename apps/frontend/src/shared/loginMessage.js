@@ -15,7 +15,7 @@ const LOGIN_MESSAGE_VERSION = 2;
 function createLoginMessage(walletAddress, timestamp, nonce = '') {
   const addr = String(walletAddress || '').trim().toLowerCase();
   return [
-    `CCL Housing Login v${LOGIN_MESSAGE_VERSION}`,
+    `链上安居 Login v${LOGIN_MESSAGE_VERSION}`,
     `wallet:0x${addr.replace(/^0x/, '')}`,
     `timestamp:${timestamp}`,
     `nonce:${String(nonce)}`,
@@ -27,3 +27,4 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = { createLoginMessage, LOGIN_MESSAGE_VERSION };
 }
 export { createLoginMessage, LOGIN_MESSAGE_VERSION };
+

@@ -1,4 +1,4 @@
-﻿import React, { Suspense, lazy, useEffect, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './providers/AuthContext';
 import {
@@ -220,7 +220,7 @@ export default function App() {
           </nav>
 
           <Link to="/" className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center">
-            <p className="text-sm font-semibold tracking-[0.16em] text-slate-100">信源链</p>
+            <p className="text-sm font-semibold tracking-[0.16em] text-slate-100">链上安居</p>
             <p className="text-[10px] uppercase tracking-[0.22em] text-slate-400">Blockchain Housing Flow</p>
           </Link>
 
@@ -431,3 +431,4 @@ export default function App() {
     </div>
   );
 }
+

@@ -1,5 +1,5 @@
 {
-  "name": "ccl-housing-blockchain",
+  "name": "lian-shang-an-ju-blockchain",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -18,3 +18,4 @@
     "@openzeppelin/contracts": "^4.9.6"
   }
 }
+

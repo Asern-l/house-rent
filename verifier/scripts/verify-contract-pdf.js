@@ -172,7 +172,7 @@ function makeContractContentHash(content) {
 
 function createSignMessage({ contractId, contentHash, role, signerAddress, timestamp, deadline }) {
   return [
-    'CCL Housing Contract Signature',
+    '链上安居 Contract Signature',
     `contractId:${contractId}`,
     `contentHash:${contentHash}`,
     `role:${role}`,
@@ -541,3 +541,4 @@ module.exports = {
   verifyContractPdfBuffer,
   verifyContractPdfFile,
 };
+

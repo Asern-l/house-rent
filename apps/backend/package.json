@@ -1,5 +1,5 @@
-﻿{
-  "name": "ccl-housing-backend",
+{
+  "name": "lian-shang-an-ju-backend",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -21,3 +21,4 @@
     "sql.js": "^1.14.1"
   }
 }
+

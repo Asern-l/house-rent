@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../app/providers/AuthContext';
 import { apiGet, apiPost } from '../shared/api/api';
@@ -146,7 +146,7 @@ function resolveLandlordNetAmount(content) {
 
 function createSignMessage({ contractId, contentHash, role, signerAddress, timestamp, deadline }) {
   return [
-    'CCL Housing Contract Signature',
+    '链上安居 Contract Signature',
     `contractId:${contractId}`,
     `contentHash:${contentHash}`,
     `role:${role}`,
@@ -1488,3 +1488,4 @@ export default function ContractPage() {
     </div>
   );
 }
+
