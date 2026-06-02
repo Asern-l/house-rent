@@ -1,31 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { HomeIcon, MapPinIcon, SearchIcon, LoaderIcon } from 'lucide-react';
+import { apiGet } from '../shared/api/api';
+import { getListingStatusMeta, getFirstImageUrl, resolveImageUrl } from '../shared/listingUtils';
 
 function openMap(address) {
   const q = encodeURIComponent(address);
   const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
   const url = isMac ? `maps://?q=${q}&address=${q}` : `https://maps.google.com/?q=${q}`;
   window.open(url, '_blank');
-}
-import { apiGet } from '../shared/api/api';
-
-function getFirstImageUrl(item) {
-  try {
-    const raw = item?.image_urls;
-    const arr = Array.isArray(raw) ? raw : JSON.parse(raw || '[]');
-    return Array.isArray(arr) && arr.length > 0 ? String(arr[0] || '') : '';
-  } catch {
-    return '';
-  }
-}
-
-function resolveImageUrl(url) {
-  const network = String(localStorage.getItem('preferredNetwork') || 'sepolia').toLowerCase();
-  if (network === 'local' && String(url).startsWith('/uploads/')) {
-    return String(url).replace('/uploads/', '/uploads-local/');
-  }
-  return String(url || '');
 }
 
 export default function ListingsPage() {
@@ -93,32 +76,41 @@ export default function ListingsPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filteredListings.map((item) => (
-            <Link key={item.id} to={`/listing/${item.id}`} className="card block p-4 transition-all hover:border-gray-700 hover:-translate-y-0.5">
-              {getFirstImageUrl(item) ? (
-                <img
-                  src={resolveImageUrl(getFirstImageUrl(item))}
-                  alt={item.title || 'listing'}
-                  className="mb-3 h-36 w-full rounded-lg object-cover"
-                />
-              ) : (
-                <div className="mb-3 flex h-36 items-center justify-center rounded-lg bg-black/20 border border-white/5">
-                  <HomeIcon className="h-12 w-12 text-primary-600" />
+          {filteredListings.map((item) => {
+            const statusMeta = getListingStatusMeta(item.public_status || item.status);
+            return (
+              <Link key={item.id} to={`/listing/${item.id}`} className="card block p-4 transition-all hover:border-gray-700 hover:-translate-y-0.5">
+                <div className="relative mb-3">
+                  {getFirstImageUrl(item) ? (
+                    <img
+                      src={resolveImageUrl(getFirstImageUrl(item))}
+                      alt={item.title || 'listing'}
+                      className="h-36 w-full rounded-lg object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-36 items-center justify-center rounded-lg bg-black/20 border border-white/5">
+                      <HomeIcon className="h-12 w-12 text-primary-600" />
+                    </div>
+                  )}
+                  <span className={`${statusMeta.badge} absolute bottom-2 left-2`}>
+                    <span className={statusMeta.dot} />
+                    {statusMeta.label}
+                  </span>
                 </div>
-              )}
-              <h3 className="line-clamp-1 text-base font-semibold text-gray-100">{item.title || '未命名房源'}</h3>
-              <button
-                type="button"
-                onClick={(e) => { e.preventDefault(); openMap(item.address); }}
-                className="mt-2 flex items-start text-sm text-gray-400 transition-colors hover:text-primary-400 group"
-                title="在地图中查看"
-              >
-                <MapPinIcon className="mr-1 mt-0.5 h-4 w-4 shrink-0 group-hover:text-primary-400" />
-                <span className="line-clamp-1 text-left underline-offset-2 group-hover:underline">{item.address || '-'}</span>
-              </button>
-              <p className="mt-3 text-lg font-bold text-primary-400">{item.rent_amount} ETH/月</p>
-            </Link>
-          ))}
+                <h3 className="line-clamp-1 text-base font-semibold text-gray-100">{item.title || '未命名房源'}</h3>
+                <button
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); openMap(item.address); }}
+                  className="mt-2 flex items-start text-sm text-gray-400 transition-colors hover:text-primary-400 group"
+                  title="在地图中查看"
+                >
+                  <MapPinIcon className="mr-1 mt-0.5 h-4 w-4 shrink-0 group-hover:text-primary-400" />
+                  <span className="line-clamp-1 text-left underline-offset-2 group-hover:underline">{item.address || '-'}</span>
+                </button>
+                <p className="mt-3 text-lg font-bold text-primary-400">{item.rent_amount} ETH/月</p>
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>

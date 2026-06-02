@@ -2,6 +2,7 @@
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { AlertCircleIcon, ArrowLeftIcon, HomeIcon, LoaderIcon, MapPinIcon } from 'lucide-react';
+import { getListingStatusMeta as getSharedStatusMeta } from '../shared/listingUtils';
 
 function openMap(address) {
   const q = encodeURIComponent(address);
@@ -40,15 +41,74 @@ function resolveImageUrl(url) {
 
 function getListingStatusMeta(listing) {
   const status = String(listing?.public_status || listing?.status || '').trim().toLowerCase();
-  if (status === 'signing') return { key: 'signing', label: '签署中', className: 'badge-yellow' };
-  if (status === 'rented') return { key: 'rented', label: '已租出', className: 'badge-gray' };
-  if (status === 'offline') return { key: 'offline', label: '已下架', className: 'badge-gray' };
-  if (status === 'closed') return { key: 'closed', label: '已关闭', className: 'badge-red' };
-  return { key: 'available', label: '可租', className: 'badge-green' };
+  const meta = getSharedStatusMeta(status);
+  const keyMap = { '可租': 'available', '签约中': 'signing', '已出租': 'rented', '已下架': 'offline', '已关闭': 'closed' };
+  return { key: keyMap[meta.label] || status || 'available', label: meta.label, className: meta.badge, dot: meta.dot };
 }
 
 function renderStars(rating) {
   return '★'.repeat(Math.max(0, Number(rating || 0))) + '☆'.repeat(Math.max(0, 5 - Number(rating || 0)));
+}
+
+function StackedImageCarousel({ imageUrls, alt, className = '' }) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const imageKey = imageUrls.join('|');
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [imageKey]);
+
+  useEffect(() => {
+    if (imageUrls.length < 2) return undefined;
+    const timer = window.setInterval(() => {
+      setActiveIndex((current) => (current + 1) % imageUrls.length);
+    }, 3200);
+    return () => window.clearInterval(timer);
+  }, [imageKey, imageUrls.length]);
+
+  return (
+    <button
+      type="button"
+      onClick={() => setActiveIndex((current) => (current + 1) % imageUrls.length)}
+      className={`relative block w-full overflow-visible bg-transparent ${className}`}
+      aria-label={imageUrls.length > 1 ? '切换到下一张图片' : alt}
+    >
+      {imageUrls.map((url, index) => {
+        const depth = (index - activeIndex + imageUrls.length) % imageUrls.length;
+        const positions = [
+          { x: -24, y: 0, scale: 1, rotate: 0 },
+          { x: -2, y: 13, scale: 0.94, rotate: 3.5 },
+          { x: -40, y: 25, scale: 0.88, rotate: -4.5 },
+        ];
+        const position = positions[depth] || { x: -110, y: -14, scale: 0.76, rotate: -11 };
+        return (
+          <img
+            key={`${url}_${index}`}
+            src={resolveImageUrl(url)}
+            alt={`${alt}_${index + 1}`}
+            className="absolute rounded-xl object-cover transition-all duration-1000"
+            style={{
+              inset: '12px 38px 24px 12px',
+              boxShadow: depth === 0
+                ? '0 22px 36px rgba(2, 6, 23, 0.42)'
+                : '0 14px 26px rgba(2, 6, 23, 0.32)',
+              filter: depth === 0 ? 'brightness(1)' : 'brightness(0.72)',
+              opacity: depth < 3 ? 1 - (depth * 0.18) : 0,
+              transform: `translate3d(${position.x}px, ${position.y}px, 0) scale(${position.scale}) rotate(${position.rotate}deg)`,
+              transformOrigin: 'center bottom',
+              transitionTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1)',
+              zIndex: imageUrls.length - depth,
+            }}
+          />
+        );
+      })}
+      {imageUrls.length > 1 ? (
+        <span className="absolute bottom-8 right-16 z-10 rounded-full bg-black/55 px-2 py-1 text-[10px] text-gray-200">
+          {activeIndex + 1} / {imageUrls.length}
+        </span>
+      ) : null}
+    </button>
+  );
 }
 
 function normalizeDateOnly(value) {
@@ -157,8 +217,8 @@ export default function ListingDetail() {
           const dd = String(today.getDate()).padStart(2, '0');
           setStartDate(`${yyyy}-${mm}-${dd}`);
         }
-      } catch {
-        toast.error('房源不存在或已下架');
+      } catch (error) {
+        toast.error(error?.response?.data?.error || '房源加载失败，请稍后重试');
         navigate('/listings');
       } finally {
         if (mounted) setLoading(false);
@@ -216,7 +276,7 @@ export default function ListingDetail() {
   const expectedEndDate = addMonthsDateOnly(startDate, leaseMonths);
 
   return (
-    <div className="mx-auto max-w-4xl animate-fade-in">
+    <div className="mx-auto max-w-6xl animate-fade-in">
       <button
         type="button"
         onClick={() => navigate(-1)}
@@ -226,21 +286,15 @@ export default function ListingDetail() {
         <span>返回</span>
       </button>
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-        <div className="card">
+      <div className="space-y-10">
+        <div className="grid grid-cols-1 items-stretch gap-6 pb-16 md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] md:pb-20">
+        <div className="flex h-full min-h-72">
           {imageUrls.length > 0 ? (
-            <div className="p-3">
-              <img src={resolveImageUrl(imageUrls[0])} alt={listing.title || 'listing'} className="h-64 w-full rounded-lg object-cover" />
-              {imageUrls.length > 1 && (
-                <div className="mt-3 grid grid-cols-4 gap-2">
-                  {imageUrls.slice(1, 5).map((url, idx) => (
-                    <img key={`${url}_${idx}`} src={resolveImageUrl(url)} alt={`listing_${idx}`} className="h-16 w-full rounded-md object-cover" />
-                  ))}
-                </div>
-              )}
+            <div className="min-h-0 w-full">
+              <StackedImageCarousel imageUrls={imageUrls} alt={listing.title || 'listing'} className="h-full min-h-64" />
             </div>
           ) : (
-            <div className="flex h-64 items-center justify-center bg-gradient-to-br from-primary-900/30 to-blue-900/30">
+            <div className="flex min-h-64 w-full items-center justify-center bg-gradient-to-br from-primary-900/30 to-blue-900/30">
               <HomeIcon className="h-20 w-20 text-primary-600" />
             </div>
           )}
@@ -248,7 +302,8 @@ export default function ListingDetail() {
 
         <div className="space-y-4">
           <div>
-            <span className={`${statusMeta.className} mb-2 inline-block`}>
+            <span className={`${statusMeta.className} mb-2`}>
+              <span className={statusMeta.dot} />
               {statusMeta.label}
             </span>
             <h1 className="mt-2 text-2xl font-bold text-gray-100">{listing.title}</h1>
@@ -297,7 +352,10 @@ export default function ListingDetail() {
               <p className="text-xs text-gray-500">㎡</p>
             </div>
           </div>
+        </div>
+        </div>
 
+        <div className="space-y-4">
           <p className="leading-relaxed text-gray-300">{listing.description || '暂无描述'}</p>
 
           <div className="rounded-lg border border-gray-700 bg-gray-800/40 p-3">
@@ -305,8 +363,8 @@ export default function ListingDetail() {
             {history.length === 0 ? (
               <p className="text-xs text-gray-500">暂无历史记录</p>
             ) : (
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+                <div className="min-w-0 max-h-72 space-y-2 overflow-y-auto pr-1">
                   {history.slice(0, 30).map((item) => (
                     <button
                       key={item.id}
@@ -324,7 +382,7 @@ export default function ListingDetail() {
                   ))}
                 </div>
 
-                <div className="rounded border border-gray-700 bg-gray-900/40 p-3 text-xs text-gray-300">
+                <div className="min-w-0 rounded border border-gray-700 bg-gray-900/40 p-3 text-xs text-gray-300">
                   {!selectedHistory ? (
                     <p className="text-gray-500">请选择一个历史版本</p>
                   ) : (
@@ -339,18 +397,16 @@ export default function ListingDetail() {
                         <div className="mt-3 space-y-2">
                           {selectedImages.length > 0 ? (
                             <div className="rounded bg-gray-950/70 p-2">
-                              <img
-                                src={resolveImageUrl(selectedImages[0])}
-                                alt="version"
-                                className="h-28 w-full rounded object-cover"
-                              />
-                              {selectedImages.length > 1 && (
-                                <div className="mt-2 grid grid-cols-4 gap-1">
-                                  {selectedImages.slice(1, 5).map((url, idx) => (
-                                    <img key={`${url}_${idx}`} src={resolveImageUrl(url)} alt={`v_${idx}`} className="h-10 w-full rounded object-cover" />
-                                  ))}
-                                </div>
-                              )}
+                              <div className="flex snap-x snap-mandatory gap-2 overflow-x-auto pb-1">
+                                {selectedImages.map((url, idx) => (
+                                  <img
+                                    key={`${url}_${idx}`}
+                                    src={resolveImageUrl(url)}
+                                    alt={`version_${idx + 1}`}
+                                    className="h-28 min-w-full snap-center rounded object-cover"
+                                  />
+                                ))}
+                              </div>
                             </div>
                           ) : (
                             <div className="flex h-20 items-center justify-center rounded bg-gray-950/70 text-gray-500">

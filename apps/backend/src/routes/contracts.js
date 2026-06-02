@@ -2785,59 +2785,200 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
       });
     }
   }
-  doc.fontSize(18).text('CCL 房屋租赁合同', { align: 'center' });
-  doc.moveDown();
-  doc.fontSize(10).text(`合同编号：${contract.id}`);
-  doc.text(`合同类型：${contract.parent_contract_id ? '续约合同' : '普通合同'}`);
-  if (contract.parent_contract_id) doc.text(`父合同编号：${contract.parent_contract_id}`);
-  doc.text(`合同状态：${contract.status}`);
-  doc.text(`合同版本：v${contract.version || 1}`);
-  doc.moveDown();
-  doc.fontSize(13).text('合同主体');
-  doc.fontSize(10).text(`租客：${content?.tenant?.walletAddress || '-'}`);
-  doc.text(`房东：${content?.landlord?.walletAddress || '-'}`);
-  doc.moveDown();
-  doc.fontSize(13).text('合同条款');
-  doc.fontSize(10).text(`房源：${content?.title || '-'} / ${content?.address || '-'}`);
-  doc.text(`月租：${content?.rentAmount || '-'} ETH / 月`);
-  doc.text(`首笔支付金额：${content?.oneTimeAmount || '-'} ETH`);
-  doc.text(`平台手续费：${content?.platformFeeAmount || '0'} ETH（${content?.platformFeeBps || 0} bps）`);
-  doc.text(`房东实收：${content?.landlordNetAmount || content?.oneTimeAmount || '-'} ETH`);
-  doc.text(`租期：${content?.terms?.startDate || '-'} 至 ${content?.terms?.endDate || '-'}`);
-  doc.moveDown(0.5);
-  doc.fontSize(11).text('附加条款');
   const clauses = Array.isArray(content?.clauses)
     ? content.clauses.map((item) => String(item || '').trim()).filter(Boolean)
     : [];
-  if (clauses.length === 0) {
-    doc.fontSize(10).text('无');
-  } else {
-    clauses.forEach((clause, index) => {
-      doc.fontSize(10).text(`${index + 1}. ${clause}`);
-    });
-  }
-  doc.moveDown();
-  doc.fontSize(13).text('签署信息');
-  doc.fontSize(10).text(`租客签署时间：${contract.tenant_signed_at || '-'}`);
-  doc.text(`租客签署地址：${contract.tenant_signer_address || '-'}`);
-  doc.text(`租客消息哈希：${tenantMessageHash || '-'}`);
-  doc.text(`房东签署时间：${contract.landlord_signed_at || '-'}`);
-  doc.text(`房东签署地址：${contract.landlord_signer_address || '-'}`);
-  doc.text(`房东消息哈希：${landlordMessageHash || '-'}`);
-  doc.moveDown();
-  doc.fontSize(13).text('支付记录');
-  if (payments.length === 0) {
-    doc.fontSize(10).text('-');
-  } else {
-    payments.forEach((p) => {
-      doc.fontSize(9).text(`${p.pay_type} | ${p.amount} ETH | ${p.period || '-'} | ${p.tx_hash} | ${p.paid_at}`);
-    });
-  }
+  const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const renderRule = () => {
+    doc.x = doc.page.margins.left;
+    doc.moveDown(0.45);
+    doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y)
+      .lineWidth(0.8).strokeColor('#cbd5e1').stroke();
+    doc.moveDown(0.55);
+  };
+  const renderHeader = (subtitle = '') => {
+    doc.x = doc.page.margins.left;
+    doc.fillColor('#0f172a').fontSize(9).text('CCL HOUSING · 电子租赁合同', { align: 'right' });
+    doc.moveDown(0.35);
+    doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y)
+      .lineWidth(1.2).strokeColor('#a47864').stroke();
+    doc.moveDown(0.8);
+    if (subtitle) doc.fillColor('#64748b').fontSize(9).text(subtitle, { align: 'right' });
+  };
+  const renderFooter = (pageNumber, label = '电子租赁合同') => {
+    const previousX = doc.x;
+    const previousY = doc.y;
+    const previousBottomMargin = doc.page.margins.bottom;
+    const y = doc.page.height - 26;
+    doc.page.margins.bottom = 0;
+    doc.moveTo(doc.page.margins.left, y - 8).lineTo(doc.page.width - doc.page.margins.right, y - 8)
+      .lineWidth(0.6).strokeColor('#cbd5e1').stroke();
+    doc.fillColor('#64748b').fontSize(8)
+      .text(`CCL Housing · ${label}`, doc.page.margins.left, y, { width: pageWidth / 2 })
+      .text(`第 ${pageNumber} 页`, doc.page.margins.left + (pageWidth / 2), y, { width: pageWidth / 2, align: 'right' });
+    doc.page.margins.bottom = previousBottomMargin;
+    doc.x = previousX;
+    doc.y = previousY;
+  };
+  const renderSection = (index, title) => {
+    doc.x = doc.page.margins.left;
+    doc.moveDown(0.7);
+    doc.fillColor('#a47864').fontSize(11).text(`${index}  ${title}`);
+    doc.moveDown(0.22);
+  };
+  const renderRow = (label, value) => {
+    doc.x = doc.page.margins.left;
+    doc.fillColor('#475569').fontSize(9).text(`${label}：`, { continued: true });
+    doc.fillColor('#111827').text(String(value || '-'));
+  };
+  const renderClause = (index, title, text) => {
+    doc.x = doc.page.margins.left;
+    doc.fillColor('#111827').fontSize(9.4).text(`第${index}条  ${title}`, { continued: true });
+    doc.fillColor('#334155').text(`  ${text}`, { lineGap: 2 });
+    doc.moveDown(0.32);
+  };
+  const toCnIndex = (value) => {
+    const labels = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二', '十三', '十四', '十五'];
+    return labels[Number(value) - 1] || String(value);
+  };
+  const contractStatusLabel = {
+    pending: '待签署',
+    tenant_signed: '租客已签署',
+    pending_payment: '待支付',
+    active: '已生效',
+    ended: '已结束',
+    cancelled: '已取消',
+    expired: '已过期',
+  }[contract.status] || contract.status || '未知状态';
+  const renderAttachmentTitle = (title, description = '') => {
+    renderHeader(`验真附件 · ${title}`);
+    doc.fillColor('#111827').fontSize(17).text('验真附件');
+    doc.fillColor('#64748b').fontSize(10).text(title);
+    if (description) {
+      doc.moveDown(0.65);
+      doc.roundedRect(doc.page.margins.left, doc.y, pageWidth, 44, 7)
+        .lineWidth(0.8).strokeColor('#bfdbfe').fillColor('#eff6ff').fillAndStroke();
+      const noticeY = doc.y + 10;
+      doc.fillColor('#1e3a8a').fontSize(8.5).text(
+        description,
+        doc.page.margins.left + 12,
+        noticeY,
+        { width: pageWidth - 24, lineGap: 2 }
+      );
+      doc.x = doc.page.margins.left;
+      doc.y = noticeY + 48;
+    } else {
+      doc.moveDown(0.65);
+    }
+  };
+
+  renderHeader();
+  doc.fillColor('#111827').fontSize(22).text('房屋租赁合同', { align: 'center' });
+  doc.fillColor('#64748b').fontSize(10).text('电子签署版', { align: 'center' });
+  doc.moveDown(0.8);
+  doc.roundedRect(doc.page.margins.left, doc.y, pageWidth, 62, 7)
+    .lineWidth(0.8).strokeColor('#cbd5e1').fillColor('#f8fafc').fillAndStroke();
+  const summaryY = doc.y + 12;
+  doc.fillColor('#334155').fontSize(9)
+    .text(`合同编号：${contract.id}`, doc.page.margins.left + 14, summaryY)
+    .text(`合同类型：${contract.parent_contract_id ? '续约合同' : '普通合同'}`, doc.page.margins.left + 14, summaryY + 17)
+    .text(`合同版本：v${contract.version || 1}`, doc.page.margins.left + 14, summaryY + 34)
+    .text(`合同状态：${contractStatusLabel}`, doc.page.margins.left + (pageWidth / 2), summaryY)
+    .text(`签订时间：${contract.created_at || '-'}`, doc.page.margins.left + (pageWidth / 2), summaryY + 17)
+    .text(`链上环境：${CHAIN_ENV}`, doc.page.margins.left + (pageWidth / 2), summaryY + 34);
+  doc.x = doc.page.margins.left;
+  doc.y = summaryY + 62;
+
+  renderSection('特别提示', '签署前请确认');
+  doc.fillColor('#475569').fontSize(9).text(
+    '本合同为平台电子租赁凭证。双方应在签署前核验房屋信息、钱包地址、租赁期限、租金及支付安排；签署后，合同哈希、签名与链上锚点可通过独立验真工具复核。',
+    { lineGap: 3 }
+  );
+  renderRule();
+
+  renderSection('一', '合同当事人');
+  renderRow('出租人（甲方）钱包地址', content?.landlord?.walletAddress || '-');
+  renderRow('承租人（乙方）钱包地址', content?.tenant?.walletAddress || '-');
+  renderRow('电子身份说明', '双方以平台登录钱包地址及电子签名作为身份确认依据');
+
+  renderSection('二', '租赁房屋基本情况');
+  renderRow('房源名称', content?.title || '-');
+  renderRow('房屋地址', content?.address || '-');
+  renderRow('房源编号', contract.listing_id || '-');
+  renderRow('租赁用途', '居住');
+
+  renderSection('三', '租赁期限');
+  renderRow('租赁期限', `${content?.terms?.startDate || '-'} 至 ${content?.terms?.endDate || '-'}`);
+  renderRow('计费租期', `${content?.terms?.leaseMonths || '-'} 个月`);
+  renderRow('最低租期', `${content?.terms?.minLeaseMonths || '-'} 个月`);
+
+  renderSection('四', '租金及支付安排');
+  renderRow('月租金', `${content?.rentAmount || '-'} ETH / 月`);
+  renderRow('首笔支付总额', `${content?.oneTimeAmount || '-'} ETH`);
+  renderRow('平台手续费', `${content?.platformFeeAmount || '0'} ETH（${content?.platformFeeBps || 0} bps）`);
+  renderRow('出租人实收', `${content?.landlordNetAmount || content?.oneTimeAmount || '-'} ETH`);
+  renderRow('支付方式', content?.terms?.paymentMethod === 'one_time' ? '一次性链上支付' : (content?.terms?.paymentMethod || '-'));
+  renderFooter(1);
+
   doc.addPage();
   if (cnFontPath) {
     try { doc.font('cn'); } catch { /* ignore */ }
   }
-  doc.fontSize(13).fillColor('black').text('验真摘要');
+  renderHeader('房屋租赁合同 · 条款与签署确认');
+  renderSection('五', '合同条款');
+  renderClause('一', '房屋交付与使用', '甲方应按约定向乙方交付房屋；乙方应将房屋用于居住，并合理、安全使用房屋及附属设施。');
+  renderClause('二', '维修与维护', '租赁期间，双方应根据实际责任及时处理维修事项。因乙方使用不当造成的损坏，由乙方承担相应责任。');
+  renderClause('三', '转租与变更', '未经甲方书面或平台电子确认，乙方不得擅自转租、转借房屋，也不得擅自改变约定用途。');
+  renderClause('四', '合同解除与返还', '合同到期或依法提前解除时，乙方应返还房屋及附属设施。双方对费用结算、物品状态存在争议的，应留存证据并协商处理。');
+  renderClause('五', '违约与争议解决', '任何一方违反约定，应依法承担相应责任。争议优先协商解决；协商不成的，可依法向有管辖权的人民法院提起诉讼。');
+  renderClause('六', '电子签署与链上验真', '双方确认使用钱包地址完成电子签名。平台保存合同正文哈希、签名信息与链上锚点，供后续独立验真。');
+
+  if (clauses.length > 0) {
+    clauses.forEach((clause, index) => {
+      renderClause(toCnIndex(index + 7), '附加条款', clause);
+    });
+  }
+
+  renderSection(toCnIndex(clauses.length + 7), '电子签署确认');
+  doc.roundedRect(doc.page.margins.left, doc.y, pageWidth, 112, 7)
+    .lineWidth(0.8).strokeColor('#cbd5e1').fillColor('#f8fafc').fillAndStroke();
+  const signY = doc.y + 12;
+  const signColWidth = (pageWidth - 42) / 2;
+  doc.fillColor('#111827').fontSize(10)
+    .text('出租人（甲方）', doc.page.margins.left + 14, signY)
+    .text('承租人（乙方）', doc.page.margins.left + 28 + signColWidth, signY);
+  doc.fillColor('#475569').fontSize(8.2)
+    .text(`签署地址：${contract.landlord_signer_address || '-'}`, doc.page.margins.left + 14, signY + 20, { width: signColWidth })
+    .text(`签署时间：${contract.landlord_signed_at || '-'}`, doc.page.margins.left + 14, signY + 52, { width: signColWidth })
+    .text(`签署地址：${contract.tenant_signer_address || '-'}`, doc.page.margins.left + 28 + signColWidth, signY + 20, { width: signColWidth })
+    .text(`签署时间：${contract.tenant_signed_at || '-'}`, doc.page.margins.left + 28 + signColWidth, signY + 52, { width: signColWidth });
+  doc.moveTo(doc.page.margins.left + 21 + signColWidth, signY + 12)
+    .lineTo(doc.page.margins.left + 21 + signColWidth, signY + 96)
+    .lineWidth(0.7).strokeColor('#cbd5e1').stroke();
+  doc.y = signY + 124;
+
+  renderSection(toCnIndex(clauses.length + 8), '支付记录');
+  if (payments.length === 0) {
+    doc.fillColor('#64748b').fontSize(9).text('暂无支付记录。');
+  } else {
+    payments.forEach((p, index) => {
+      doc.fillColor('#334155').fontSize(8.5).text(
+        `${index + 1}. ${p.pay_type} | ${p.amount} ETH | ${p.period || '-'} | ${p.paid_at || '-'} | ${p.tx_hash || '-'}`,
+        { lineGap: 2 }
+      );
+    });
+  }
+  renderFooter(2);
+
+  doc.addPage();
+  if (cnFontPath) {
+    try { doc.font('cn'); } catch { /* ignore */ }
+  }
+  renderAttachmentTitle(
+    '链上存证与独立验真',
+    '本附件用于保存合同的链上锚点和独立验真配置。普通阅读只需核对本页摘要；后续明文材料与机器标记无需人工逐项阅读。'
+  );
+  doc.fontSize(13).fillColor('#111827').text('一  验真摘要');
   doc.fontSize(10).fillColor('black').text(`合同哈希：${contract.content_hash}`);
   doc.text(`链上交易哈希：${contract.tx_hash || '-'}`);
   doc.text(`房源 ID：${contract.listing_id || '-'}`);
@@ -2887,39 +3028,44 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   doc.restore();
   doc.y = boxY + runtimeBoxHeight + 12;
   doc.fontSize(9).fillColor('gray').text('说明：平台已使用上述锚点完成上链与签名一致性校验。若需进一步独立复核，请下载 PDF 并导入独立验真工具。');
+  renderFooter(3, '验真附件');
 
   doc.addPage();
   if (cnFontPath) {
     try { doc.font('cn'); } catch { /* ignore */ }
   }
-  doc.fontSize(13).fillColor('black').text('验真材料明文区');
-  doc.fontSize(8).fillColor('gray').text('说明：以下内容为独立验真所需的明文材料，供人工审阅。Base64 仅用于机器稳定读取，不是加密。');
+  renderHeader('验真附件 · 验真材料明文区');
+  doc.fontSize(13).fillColor('#111827').text('二  验真材料明文区');
+  doc.fontSize(7.5).fillColor('gray').text('说明：以下内容供独立验真工具读取和必要时人工复核。普通用户无需逐项阅读；Base64 仅用于机器稳定读取，不是加密。');
   doc.moveDown(0.4);
   doc.fontSize(10).fillColor('black').text('content_hash 生成说明');
-  doc.fontSize(8).fillColor('gray').text(`算法：${contentHashSpec.algorithm}`);
-  doc.fontSize(8).fillColor('gray').text(`字段：${JSON.stringify(contentHashSpec.fields)}`, { width: 500 });
-  doc.fontSize(8).fillColor('gray').text(`生成时间：${getCnDateTime(new Date())}`);
+  doc.fontSize(7.5).fillColor('gray').text(`算法：${contentHashSpec.algorithm}`);
+  doc.fontSize(7.5).fillColor('gray').text(`字段：${JSON.stringify(contentHashSpec.fields)}`, { width: 500 });
+  doc.fontSize(7.5).fillColor('gray').text(`生成时间：${getCnDateTime(new Date())}`);
   doc.moveDown(0.5);
   doc.fontSize(10).fillColor('black').text('合同 JSON 明文');
-  doc.fontSize(8).fillColor('black').text(`contract_content_json=${canonicalContentJson}`, { width: 500 });
+  doc.fontSize(7.5).fillColor('black').text(`contract_content_json=${canonicalContentJson}`, { width: 500 });
   doc.moveDown(0.2);
   doc.fontSize(10).fillColor('black').text('租客签名消息原文');
-  doc.fontSize(8).fillColor('black').text(`tenant_signature_message=${contract.tenant_signature_message || '-'}`, { width: 500 });
+  doc.fontSize(7.5).fillColor('black').text(`tenant_signature_message=${contract.tenant_signature_message || '-'}`, { width: 500 });
   doc.moveDown(0.2);
   doc.fontSize(10).fillColor('black').text('租客签名值');
-  doc.fontSize(8).fillColor('black').text(`tenant_signature=${contract.tenant_signature || '-'}`, { width: 500 });
+  doc.fontSize(7.5).fillColor('black').text(`tenant_signature=${contract.tenant_signature || '-'}`, { width: 500 });
   doc.moveDown(0.2);
   doc.fontSize(10).fillColor('black').text('房东签名消息原文');
-  doc.fontSize(8).fillColor('black').text(`landlord_signature_message=${contract.landlord_signature_message || '-'}`, { width: 500 });
+  doc.fontSize(7.5).fillColor('black').text(`landlord_signature_message=${contract.landlord_signature_message || '-'}`, { width: 500 });
   doc.moveDown(0.2);
   doc.fontSize(10).fillColor('black').text('房东签名值');
-  doc.fontSize(8).fillColor('black').text(`landlord_signature=${contract.landlord_signature || '-'}`, { width: 500 });
+  doc.fontSize(7.5).fillColor('black').text(`landlord_signature=${contract.landlord_signature || '-'}`, { width: 500 });
+  renderFooter(4, '验真附件');
+
   doc.addPage();
   if (cnFontPath) {
     try { doc.font('cn'); } catch { /* ignore */ }
   }
-  doc.fontSize(9).fillColor('gray').text('附录：机器验真标记');
-  doc.fontSize(7).fillColor('gray').text('说明：以下 VERIFY_* 与 Base64 分块供独立验真工具稳定读取，不面向人工比对。');
+  renderHeader('验真附件 · 机器验真标记');
+  doc.fontSize(13).fillColor('#111827').text('三  机器验真标记');
+  doc.fontSize(7).fillColor('gray').text('说明：以下 VERIFY_* 与 Base64 分块仅供独立验真工具稳定读取，普通用户无需人工阅读或比对。');
   doc.fontSize(7).fillColor('gray').text(`VERIFY_CONTRACT_ID=${contract.id}`);
   doc.fontSize(7).fillColor('gray').text(`VERIFY_CHAIN_ENV=${CHAIN_ENV}`);
   doc.fontSize(7).fillColor('gray').text(`VERIFY_CHAIN_ID=${chainRuntime.chainId}`);
@@ -2951,6 +3097,7 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   chunkMarkerLines('VERIFY_LANDLORD_SIGNATURE_B64', landlordSignatureB64).forEach((line) => {
     doc.fontSize(7).fillColor('gray').text(line);
   });
+  renderFooter(5, '验真附件');
   doc.info.Title = `CCL Contract ${contract.id}`;
   doc.info.Subject = `VERIFY_CONTRACT_ID=${contract.id};VERIFY_CHAIN_ENV=${CHAIN_ENV};VERIFY_CHAIN_ID=${chainRuntime.chainId};VERIFY_RENTAL_CHAIN_RPC_URL=${chainRuntime.rpcUrl || ''};VERIFY_RENTAL_CHAIN_ADDRESS=${chainRuntime.contractAddress || ''};VERIFY_RENTAL_CHAIN_DEPLOYED_AT=${chainRuntime.deployedAt || ''};VERIFY_CONTRACT_CREATED_AT=${contract.created_at || ''};VERIFY_CONTENT_HASH=${contract.content_hash};VERIFY_TX_HASH=${contract.tx_hash || ''};VERIFY_TENANT_SIGNER=${contract.tenant_signer_address || ''};VERIFY_LANDLORD_SIGNER=${contract.landlord_signer_address || ''};VERIFY_TENANT_MESSAGE_HASH=${tenantMessageHash || ''};VERIFY_LANDLORD_MESSAGE_HASH=${landlordMessageHash || ''};VERIFY_LISTING_ID=${contract.listing_id || ''};VERIFY_LISTING_SNAPSHOT_CID=${listingMeta.public_snapshot_cid || ''};VERIFY_LISTING_SNAPSHOT_HASH=${listingMeta.public_snapshot_hash || ''}`;
   doc.info.Keywords = `contract,verify,${contract.id},${contract.content_hash}`;

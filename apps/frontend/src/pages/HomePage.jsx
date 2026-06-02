@@ -1,13 +1,14 @@
 import React, { useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../app/providers/AuthContext';
 
 const BG_IMAGE =
   'https://hoirqrkdgbmvpwutwuwj.supabase.co/storage/v1/object/public/assets/assets/b88b71ee-6e8c-4230-b004-094bc0a9f86f_3840w.jpg';
-const CREAM = '#f5f0e8';
+const CREAM = '#F2EFE4';
 
 export default function HomePage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const bgRef = useRef(null);
 
   // ── Parallax scroll (same ratio as RelayEstate: 0.25) ──
@@ -34,7 +35,7 @@ export default function HomePage() {
 
   return (
     <div
-      className="-mx-6 -mt-6 relative overflow-hidden"
+      className="relative overflow-hidden"
       style={{ minHeight: 'calc(100vh - 56px)' }}
     >
       {/* ── Background layer: absolutely positioned, 116% tall for parallax room ── */}
@@ -130,17 +131,22 @@ export default function HomePage() {
             </p>
 
             <div className="flex flex-wrap gap-3">
-              <Link to="/listings" className="btn-primary flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => navigate('/listings')}
+                className="btn-primary flex items-center gap-2"
+              >
                 浏览房源
-              </Link>
+              </button>
               {user ? (
-                <Link
-                  to="/contracts"
-                  className="flex items-center gap-2 border border-white/30 text-sm font-medium px-6 py-2.5 rounded-lg backdrop-blur-sm hover:bg-white/10 transition-colors"
-                  style={{ color: CREAM }}
+                <button
+                  type="button"
+                  onClick={() => navigate('/contracts')}
+                  className="flex items-center gap-2 rounded-xl border px-6 py-2.5 text-sm font-medium backdrop-blur-sm"
+                  style={{ color: '#A47864', borderColor: 'rgba(164,120,100,0.55)', background: 'rgba(164,120,100,0.08)' }}
                 >
                   我的合同
-                </Link>
+                </button>
               ) : null}
             </div>
 
@@ -148,7 +154,7 @@ export default function HomePage() {
             <div className="mt-6 flex flex-wrap gap-6 text-xs" style={{ color: CREAM, opacity: 0.6 }}>
               {['哈希上链', '合同存证', '支付核验'].map((tag) => (
                 <span key={tag} className="flex items-center gap-2">
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary-600" />
+                  <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: '#A47864' }} />
                   {tag}
                 </span>
               ))}

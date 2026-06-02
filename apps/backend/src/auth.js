@@ -5,7 +5,10 @@
 const jwt = require('jsonwebtoken');
 const { maybeTopupLocalWallet } = require('./local-topup');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'dev_secret_change_me') {
+  throw new Error('[FATAL] JWT_SECRET 未配置或使用了默认值，请在 .env 中设置强随机密钥后再启动服务。');
+}
+const JWT_SECRET = process.env.JWT_SECRET;
 
 function resolveChainEnv() {
   return String(process.env.CHAIN_ENV || 'sepolia').trim().toLowerCase() === 'local' ? 'local' : 'sepolia';

@@ -4,7 +4,9 @@
  * 不再支持邮箱/密码、头像。
  */
 const express = require('express');
+const fs = require('fs');
 const jwt = require('jsonwebtoken');
+const path = require('path');
 const { ethers } = require('ethers');
 const { getUserDb, saveUserDb, parseResult, resolveUserNetwork } = require('../user-db');
 const { JWT_SECRET, authMiddleware } = require('../auth');
@@ -18,6 +20,7 @@ const router = express.Router();
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const SIGN_TIME_SKEW_MS = 10 * 60 * 1000;
 const NONCE_TTL_MS = 5 * 60 * 1000;
+const AVATAR_UPLOAD_ROOT = path.join(__dirname, '..', '..', 'data', 'uploads', 'avatars');
 // 内存 nonce 存储（一次有效，定时清理过期）
 const nonceStore = new Map();
 setInterval(() => {
@@ -26,6 +29,13 @@ setInterval(() => {
     if (now - createdAt > NONCE_TTL_MS) nonceStore.delete(key);
   }
 }, 60_000);
+
+function parseAvatarDataUrl(input) {
+  const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(input || ''));
+  if (!match) return null;
+  const ext = match[1].replace('image/', '').replace('jpeg', 'jpg');
+  return { mime: match[1], ext, buffer: Buffer.from(match[2], 'base64') };
+}
 
 // 函数 1: 校验钱包地址格式。
 function isValidWalletAddress(walletAddress) {
@@ -91,7 +101,7 @@ router.post('/login', asyncHandler(async (req, res) => {
 
     const db = await getUserDb(targetNetwork);
     const users = parseResult(db.exec(
-      'SELECT id, wallet_address, role, nickname, phone FROM users WHERE LOWER(wallet_address) = ?',
+      'SELECT id, wallet_address, role, nickname, phone, avatar FROM users WHERE LOWER(wallet_address) = ?',
       [normalizedWallet.toLowerCase()]
     ));
 
@@ -139,6 +149,7 @@ router.post('/login', asyncHandler(async (req, res) => {
           role: user.role,
           nickname: user.nickname || '',
           phone: user.phone || '',
+          avatar: user.avatar || '',
         },
       },
     });
@@ -152,7 +163,7 @@ router.post('/login', asyncHandler(async (req, res) => {
 router.get('/me', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getUserDb(req.user.preferredNetwork);
   const users = parseResult(db.exec(
-    'SELECT id, wallet_address, role, nickname, phone, created_at FROM users WHERE id = ?',
+    'SELECT id, wallet_address, role, nickname, phone, avatar, created_at FROM users WHERE id = ?',
     [req.user.id]
   ));
   if (!users.length) {
@@ -180,7 +191,7 @@ router.put('/me', authMiddleware, asyncHandler(async (req, res) => {
 
   saveUserDb(req.user.preferredNetwork);
   const users = parseResult(db.exec(
-    'SELECT id, wallet_address, role, nickname, phone FROM users WHERE id = ?',
+    'SELECT id, wallet_address, role, nickname, phone, avatar FROM users WHERE id = ?',
     [req.user.id]
   ));
   const nextUser = users[0] || {};
@@ -195,9 +206,43 @@ router.put('/me', authMiddleware, asyncHandler(async (req, res) => {
         role: nextUser.role,
         nickname: nextUser.nickname || '',
         phone: nextUser.phone || '',
+        avatar: nextUser.avatar || '',
       },
     },
   });
+}));
+
+router.post('/me/avatar', authMiddleware, asyncHandler(async (req, res) => {
+  const { dataUrl } = req.body || {};
+  if (!dataUrl) {
+    return sendError(res, 400, 'AVATAR_MISSING', '请提供头像图片');
+  }
+  const parsed = parseAvatarDataUrl(dataUrl);
+  if (!parsed) {
+    return sendError(res, 400, 'AVATAR_INVALID', '图片格式不支持，仅支持 jpeg/png/webp');
+  }
+  if (parsed.buffer.length > 2 * 1024 * 1024) {
+    return sendError(res, 400, 'AVATAR_TOO_LARGE', '头像图片不能超过 2MB');
+  }
+  if (!fs.existsSync(AVATAR_UPLOAD_ROOT)) {
+    fs.mkdirSync(AVATAR_UPLOAD_ROOT, { recursive: true });
+  }
+  const fileName = `${req.user.id}.${parsed.ext}`;
+  const savePath = path.join(AVATAR_UPLOAD_ROOT, fileName);
+  fs.writeFileSync(savePath, parsed.buffer);
+  const avatarUrl = `/uploads/avatars/${fileName}`;
+
+  const db = await getUserDb(req.user.preferredNetwork);
+  db.run('UPDATE users SET avatar = ? WHERE id = ?', [avatarUrl, req.user.id]);
+  saveUserDb(req.user.preferredNetwork);
+  logUserEvent('auth.avatar.update.success', {
+    requestId: req.requestId || '',
+    userId: req.user.id,
+    walletAddress: req.user.walletAddress || '',
+    role: req.user.role || '',
+    avatarUrl,
+  });
+  res.json({ success: true, data: { avatarUrl } });
 }));
 
 module.exports = router;

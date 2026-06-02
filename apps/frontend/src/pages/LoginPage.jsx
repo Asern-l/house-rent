@@ -7,15 +7,17 @@ import { createLoginMessage } from '../shared/loginMessage';
 const AUTH_API_BASE = import.meta.env.VITE_API_BASE_AUTH || '/api-auth';
 import {
   ArrowRightToLineIcon,
+  EyeIcon,
+  EyeOffIcon,
   LoaderIcon,
-  WalletIcon,
-  UserIcon,
-  XIcon,
   PhoneIcon,
+  UserIcon,
+  WalletIcon,
+  XIcon,
 } from 'lucide-react';
 import { useAuth } from '../app/providers/AuthContext';
 
-const CREAM = '#f5f0e8';
+const CREAM = '#F2EFE4';
 
 export default function LoginPage({ onClose }) {
   const { walletLogin } = useAuth();
@@ -27,6 +29,7 @@ export default function LoginPage({ onClose }) {
     role: 'tenant',
   });
   const [walletAddress, setWalletAddress] = useState('');
+  const [showWallet, setShowWallet] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const updateForm = (key, value) => {
@@ -85,35 +88,33 @@ export default function LoginPage({ onClose }) {
     }
   };
 
+
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 px-4 py-6 backdrop-blur-sm">
       <div
-        className="relative w-full max-w-[385px] rounded-[1.5rem] border border-white/10 p-8 shadow-[0_22px_55px_rgba(2,6,23,0.34)] backdrop-blur-xl"
-        style={{
-          background:
-            'linear-gradient(180deg, rgba(15,23,42,0.78) 0%, rgba(10,15,28,0.82) 100%)',
-        }}
+        className="relative w-full max-w-[385px] rounded-[1.5rem] border border-stone-200 p-8 shadow-[0_22px_55px_rgba(0,0,0,0.3)]"
+        style={{ background: '#F2EFE4' }}
       >
         {onClose && (
           <button
             type="button"
             onClick={onClose}
-            className="absolute right-4 top-4 rounded-full p-1.5 text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-100"
+            className="absolute right-4 top-4 rounded-full p-1.5 text-stone-400 transition-colors hover:bg-stone-200 hover:text-stone-800"
             aria-label="关闭"
           >
             <XIcon className="h-4 w-4" />
           </button>
         )}
 
-        <div className="mx-auto mb-7 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/8 text-amber-200 shadow-[0_12px_30px_rgba(2,6,23,0.24)]">
+        <div className="mx-auto mb-7 flex h-14 w-14 items-center justify-center rounded-2xl border border-stone-300 bg-[#E8E4D8] text-stone-700 shadow-[0_4px_14px_rgba(0,0,0,0.08)]">
           <ArrowRightToLineIcon className="h-7 w-7" />
         </div>
 
         <div className="mb-7 text-center">
-          <h1 className="text-2xl font-bold text-white">
+          <h1 className="text-2xl font-bold text-slate-900">
             {step === 'connect' ? '钱包登录' : '完善信息'}
           </h1>
-          <p className="mx-auto mt-3 max-w-[280px] text-sm leading-6 text-slate-300/72">
+          <p className="mx-auto mt-3 max-w-[280px] text-sm leading-6 text-stone-500">
             {step === 'connect'
               ? '连接 MetaMask 钱包即可登录，新用户将自动注册。'
               : '设置昵称和联系方式（可选），完成后签署消息即登录。'}
@@ -126,7 +127,7 @@ export default function LoginPage({ onClose }) {
               type="button"
               onClick={handleConnectWallet}
               disabled={loading}
-              className="flex h-12 w-full items-center justify-center gap-3 rounded-2xl bg-gradient-to-b from-slate-800 to-slate-950 text-base font-semibold text-[#f5f0e8] shadow-[0_6px_12px_rgba(15,23,42,0.32)] transition-transform hover:scale-[1.02] disabled:opacity-60"
+              className="flex h-12 w-full items-center justify-center gap-3 rounded-2xl bg-slate-900 text-base font-semibold text-[#F2EFE4] shadow-[0_4px_14px_rgba(0,0,0,0.18)] transition-transform hover:scale-[1.02] disabled:opacity-60"
             >
               {loading ? (
                 <LoaderIcon className="h-5 w-5 animate-spin" />
@@ -135,17 +136,34 @@ export default function LoginPage({ onClose }) {
               )}
               连接 MetaMask
             </button>
-            <p className="text-center text-xs text-slate-400">
+            <p className="text-center text-xs text-stone-400">
               首次连接即自动创建账号
             </p>
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="rounded-2xl border border-white/10 bg-white/6 px-4 py-3 backdrop-blur-sm">
-              <p className="text-xs text-slate-400">已连接钱包</p>
-              <p className="mt-1 break-all font-mono text-xs text-slate-200">
-                {walletAddress}
-              </p>
+            <div className="rounded-2xl border border-stone-300 bg-[#E8E4D8] px-4 py-3">
+              <p className="text-xs text-stone-500">已连接钱包</p>
+              <div className="mt-1 flex items-center gap-2">
+                <p
+                  className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-xs text-slate-700"
+                  style={{ scrollbarWidth: 'none' }}
+                >
+                  {showWallet
+                    ? walletAddress
+                    : '0x' + '●'.repeat(Math.max(0, walletAddress.length - 2))}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowWallet((v) => !v)}
+                  className="flex-shrink-0 text-stone-400"
+                  aria-label={showWallet ? '隐藏钱包地址' : '显示钱包地址'}
+                >
+                  {showWallet
+                    ? <EyeOffIcon className="h-3.5 w-3.5" />
+                    : <EyeIcon className="h-3.5 w-3.5" />}
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -159,8 +177,8 @@ export default function LoginPage({ onClose }) {
                   onClick={() => updateForm('role', r)}
                   className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition-all ${
                     form.role === r
-                      ? 'border-primary-600 bg-primary-600/25 text-white shadow-[0_10px_24px_rgba(231,167,121,0.20)]'
-                      : 'border-white/10 bg-white/6 text-slate-300 hover:border-primary-600/60'
+                      ? 'border-stone-800 bg-slate-900 text-[#F2EFE4] shadow-[0_4px_14px_rgba(0,0,0,0.15)]'
+                      : 'border-stone-300 bg-[#F2EFE4] text-stone-600 hover:border-stone-500'
                   }`}
                 >
                   {label}
@@ -171,7 +189,7 @@ export default function LoginPage({ onClose }) {
             <Field icon={UserIcon}>
               <input
                 type="text"
-                className="auth-input"
+                className="min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-stone-400"
                 placeholder="昵称（选填）"
                 value={form.nickname}
                 onChange={(e) => updateForm('nickname', e.target.value)}
@@ -182,7 +200,7 @@ export default function LoginPage({ onClose }) {
             <Field icon={PhoneIcon}>
               <input
                 type="tel"
-                className="auth-input"
+                className="min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-stone-400"
                 placeholder="手机号（选填）"
                 value={form.phone}
                 onChange={(e) => updateForm('phone', e.target.value)}
@@ -194,7 +212,7 @@ export default function LoginPage({ onClose }) {
               <button
                 type="button"
                 onClick={() => setStep('connect')}
-                className="flex h-11 flex-1 items-center justify-center rounded-2xl border border-white/10 bg-white/6 text-sm font-semibold text-slate-300 transition-colors hover:bg-white/10"
+                className="flex h-11 flex-1 items-center justify-center rounded-2xl border border-stone-300 bg-[#F2EFE4] text-sm font-semibold text-stone-700 transition-colors hover:bg-[#E8E4D8]"
               >
                 返回
               </button>
@@ -202,7 +220,7 @@ export default function LoginPage({ onClose }) {
                 type="button"
                 onClick={handleLogin}
                 disabled={loading}
-                className="flex h-11 flex-1 items-center justify-center gap-2 rounded-2xl bg-gradient-to-b from-slate-800 to-slate-950 text-sm font-semibold text-[#f5f0e8] shadow-[0_6px_12px_rgba(15,23,42,0.32)] transition-transform hover:scale-[1.02] disabled:opacity-60"
+                className="flex h-11 flex-1 items-center justify-center gap-2 rounded-2xl bg-slate-900 text-sm font-semibold text-[#F2EFE4] shadow-[0_4px_14px_rgba(0,0,0,0.18)] transition-transform hover:scale-[1.02] disabled:opacity-60"
               >
                 {loading && <LoaderIcon className="h-4 w-4 animate-spin" />}
                 签名登录
@@ -218,9 +236,9 @@ export default function LoginPage({ onClose }) {
 function Field({ icon: IconComp, children }) {
   return (
     <div
-      className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/6 px-4 py-2 transition-all focus-within:border-primary-600/60 focus-within:shadow-[0_0_0_3px_rgba(231,167,121,0.15)]"
+      className="flex items-center gap-3 rounded-2xl border border-stone-300 bg-[#F2EFE4] px-4 py-2 transition-all focus-within:border-stone-500 focus-within:shadow-[0_0_0_3px_rgba(120,113,108,0.12)]"
     >
-      <IconComp className="h-4 w-4 flex-shrink-0 text-slate-400" />
+      <IconComp className="h-4 w-4 flex-shrink-0 text-stone-400" />
       {children}
     </div>
   );
