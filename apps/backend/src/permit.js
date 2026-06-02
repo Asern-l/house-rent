@@ -4,6 +4,7 @@ const path = require('path');
 const dotenv = require('dotenv');
 const { ethers } = require('ethers');
 const { CHAIN_ENV } = require('./db');
+const { getConfigValue } = require('./runtime-config');
 
 const DEPLOY_FILE_LOCAL = path.join(__dirname, '..', '..', '..', 'blockchain', 'deployments-rental-localhost.json');
 const DEPLOY_FILE_SEPOLIA = path.join(__dirname, '..', '..', '..', 'blockchain', 'deployments-rental-sepolia.json');
@@ -65,7 +66,8 @@ function readFallbackPrivateKeyFromBlockchainEnv() {
 
 function getTrustedSignerPrivateKey() {
   const key = normalizePrivateKey(
-    process.env.TRUSTED_SIGNER_PRIVATE_KEY
+    getConfigValue('trustedSignerPrivateKey')
+    || process.env.TRUSTED_SIGNER_PRIVATE_KEY
     || process.env.PRIVATE_KEY
     || readFallbackPrivateKeyFromBlockchainEnv()
   );

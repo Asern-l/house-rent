@@ -9,6 +9,8 @@
   --panel-bg: rgba(15, 23, 42, 0.62);
   --panel-border: rgba(104, 122, 148, 0.32);
   --panel-shadow: 0 24px 60px rgba(2, 6, 23, 0.34);
+  --cloud-dancer: #F2EFE4;
+  --mocha-mousse: #A47864;
   --global-bg-image: url("https://hoirqrkdgbmvpwutwuwj.supabase.co/storage/v1/object/public/assets/assets/b88b71ee-6e8c-4230-b004-094bc0a9f86f_3840w.jpg");
 }
 
@@ -19,10 +21,10 @@ html, body, #root {
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
   background:
-    linear-gradient(180deg, rgba(6, 10, 18, 0.74), rgba(6, 10, 18, 0.86)),
+    linear-gradient(180deg, rgba(6, 10, 18, 0.44), rgba(6, 10, 18, 0.58)),
     var(--global-bg-image);
   background-size: cover;
-  background-position: center;
+  background-position: center 30%;
   background-attachment: fixed;
   color: var(--page-fg);
 }
@@ -42,13 +44,13 @@ body::before {
 }
 
 .btn-primary {
-  @apply rounded-xl px-6 py-2.5 font-medium text-stone-950 transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50;
-  background: linear-gradient(135deg, #f4c06b 0%, #e7a779 100%);
-  box-shadow: 0 14px 28px rgba(231, 167, 121, 0.22);
+  @apply rounded-xl px-6 py-2.5 font-medium text-white disabled:cursor-not-allowed disabled:opacity-50;
+  background: #A47864;
+  box-shadow: 0 4px 14px rgba(164, 120, 100, 0.32);
 }
 .btn-primary:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 18px 32px rgba(231, 167, 121, 0.28);
+  background: #A47864;
+  box-shadow: 0 4px 14px rgba(164, 120, 100, 0.32);
 }
 
 .btn-secondary {
@@ -80,8 +82,20 @@ body::before {
   @apply min-w-0 flex-1 bg-transparent text-sm text-gray-100 outline-none placeholder:text-gray-500;
 }
 
+.publish-input {
+  @apply min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-stone-400;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 .profile-secondary-button {
-  @apply flex h-10 w-full items-center justify-center gap-2 rounded-2xl px-4 text-sm font-semibold text-[#f5f0e8] transition-colors disabled:opacity-60;
+  @apply flex h-10 w-full items-center justify-center gap-2 rounded-2xl px-4 text-sm font-semibold text-[#F2EFE4] transition-colors disabled:opacity-60;
   background: linear-gradient(180deg, #1f2937 0%, #111827 100%);
 }
 .profile-secondary-button:hover {

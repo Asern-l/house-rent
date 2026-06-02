@@ -107,25 +107,25 @@ export default function VerifyPage({ onClose }) {
   const comparisons = result?.comparisons || null;
 
   return (
-    <div className={isModal ? 'fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-slate-950/55 px-4 py-6 backdrop-blur-sm' : 'mx-auto w-full max-w-[760px] animate-fade-in'}>
+    <div className={isModal ? 'fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-slate-950/60 px-4 py-8 backdrop-blur-sm' : 'mx-auto w-full max-w-[760px] animate-fade-in'}>
       <div
-        className="relative w-full max-w-[760px] rounded-[1.5rem] border border-white/10 p-8 shadow-[0_22px_55px_rgba(2,6,23,0.34)] backdrop-blur-xl animate-fade-in"
-        style={{ background: 'linear-gradient(180deg, rgba(15,23,42,0.82) 0%, rgba(10,15,28,0.86) 100%)' }}
+        className={`relative w-full max-w-[760px] rounded-[1.5rem] border p-8 shadow-[0_22px_55px_rgba(0,0,0,0.3)] animate-fade-in ${isModal ? 'border-stone-200' : 'border-white/10 backdrop-blur-xl'}`}
+        style={{ background: isModal ? '#F2EFE4' : 'linear-gradient(180deg, rgba(15,23,42,0.82) 0%, rgba(10,15,28,0.86) 100%)' }}
       >
         {isModal && onClose && <CloseButton onClose={onClose} />}
 
         <div className="mb-7 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/8 text-amber-200 shadow-[0_12px_30px_rgba(2,6,23,0.24)]">
+          <div className={`mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border shadow-[0_4px_14px_rgba(0,0,0,0.1)] ${isModal ? 'border-stone-300 bg-stone-100 text-stone-700' : 'border-white/10 bg-[#F2EFE4]/8 text-amber-200'}`}>
             <ShieldCheckIcon className="h-7 w-7" />
           </div>
-          <h1 className="text-2xl font-bold text-white">链上验真</h1>
-          <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-300/72">
+          <h1 className={`text-2xl font-bold ${isModal ? 'text-slate-900' : 'text-white'}`}>链上验真</h1>
+          <p className={`mx-auto mt-3 max-w-xl text-sm leading-6 ${isModal ? 'text-stone-500' : 'text-slate-300/72'}`}>
             支持按房源或合同查询当前网络的验真结果，展示关键 ID、哈希、版本号、操作序号与上链状态。
           </p>
         </div>
 
-        <form onSubmit={handleVerify} className="rounded-2xl border border-white/10 bg-white/6 p-4">
-          <label className="mb-2 block text-xs font-semibold text-slate-300/72">验真类型</label>
+        <form onSubmit={handleVerify} className={`rounded-2xl border p-4 ${isModal ? 'border-stone-300 bg-[#F2EFE4]/60' : 'border-white/10 bg-[#F2EFE4]/6'}`}>
+          <label className={`mb-2 block text-xs font-semibold ${isModal ? 'text-stone-500' : 'text-slate-300/72'}`}>验真类型</label>
           <div className="mb-3 flex gap-2">
             {VERIFY_TYPES.map((item) => (
               <button
@@ -138,7 +138,9 @@ export default function VerifyPage({ onClose }) {
                   setError('');
                 }}
                 className={`rounded-xl px-3 py-1.5 text-sm font-semibold transition-colors ${
-                  verifyType === item.key ? 'bg-stone-900 text-slate-100' : 'bg-white/10 text-slate-200 hover:bg-white/15'
+                  verifyType === item.key
+                    ? isModal ? 'bg-slate-900 text-[#F2EFE4]' : 'bg-stone-900 text-slate-100'
+                    : isModal ? 'bg-stone-200 text-stone-600 hover:bg-stone-300' : 'bg-[#F2EFE4]/10 text-slate-200 hover:bg-[#F2EFE4]/15'
                 }`}
               >
                 {item.label}
@@ -146,17 +148,17 @@ export default function VerifyPage({ onClose }) {
             ))}
           </div>
 
-          <label className="mb-2 block text-xs font-semibold text-slate-300/72">{typeMeta.label} ID</label>
+          <label className={`mb-2 block text-xs font-semibold ${isModal ? 'text-stone-500' : 'text-slate-300/72'}`}>{typeMeta.label} ID</label>
           <div className="flex flex-col gap-2 sm:flex-row">
             <input
               value={entityId}
               onChange={(e) => setEntityId(e.target.value)}
-              className="min-h-[42px] min-w-0 flex-1 rounded-2xl border border-white/10 bg-white/6 px-4 text-sm text-slate-100 outline-none placeholder:text-slate-400 focus:border-primary-600/80"
+              className={`min-h-[42px] min-w-0 flex-1 rounded-2xl border px-4 text-sm outline-none ${isModal ? 'border-stone-300 bg-[#F2EFE4] text-slate-900 placeholder:text-stone-400 focus:border-stone-500' : 'border-white/10 bg-[#F2EFE4]/6 text-slate-100 placeholder:text-slate-400 focus:border-primary-600/80'}`}
               placeholder={typeMeta.placeholder}
             />
             <button
               type="submit"
-              className="inline-flex h-[42px] items-center justify-center gap-2 rounded-2xl bg-stone-950 px-5 text-sm font-semibold text-slate-100 transition-colors hover:bg-stone-800 disabled:opacity-60"
+              className={`inline-flex h-[42px] items-center justify-center gap-2 rounded-2xl px-5 text-sm font-semibold transition-colors disabled:opacity-60 ${isModal ? 'bg-slate-900 text-[#F2EFE4] hover:bg-slate-700' : 'bg-stone-950 text-slate-100 hover:bg-stone-800'}`}
               disabled={loading}
             >
               <SearchIcon className="h-4 w-4" />
@@ -399,7 +401,7 @@ function ExplorerLink({ href, text }) {
 
 function InfoPanel({ title, children }) {
   return (
-    <section className="rounded-2xl border border-white/10 bg-white/6 p-4 text-sm leading-6 text-slate-200">
+    <section className="rounded-2xl border border-white/10 bg-[#F2EFE4]/6 p-4 text-sm leading-6 text-slate-200">
       <h2 className="mb-2 text-sm font-semibold text-white">{title}</h2>
       {children}
     </section>
@@ -411,7 +413,7 @@ function CloseButton({ onClose }) {
     <button
       type="button"
       onClick={onClose}
-      className="absolute right-4 top-4 rounded-full p-1.5 text-slate-400 transition-colors hover:bg-stone-900/5 hover:text-slate-200"
+      className="absolute right-4 top-4 rounded-full p-1.5 text-stone-400 transition-colors hover:bg-stone-200 hover:text-stone-800"
       aria-label="关闭"
     >
       <XIcon className="h-4 w-4" />

@@ -139,6 +139,14 @@ function addMonthsDateOnly(startDateOnly, months) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function calculateLeaseMonths(startDateOnly, endDateOnly) {
+  if (!startDateOnly || !endDateOnly || endDateOnly <= startDateOnly) return 0;
+  for (let months = 1; months <= 12; months += 1) {
+    if (endDateOnly <= addMonthsDateOnly(startDateOnly, months)) return months;
+  }
+  return 0;
+}
+
 // 函数 6: 生成北京时间日期（YYYY-MM-DD）。
 function getCnDateOnly(date = new Date()) {
   const yyyy = date.getFullYear();
@@ -702,7 +710,7 @@ function resolvePdfChineseFontPath() {
 
 // 函数 3: 创建合同接口（租客发起）。
 router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req, res) => {
-  const { listingId, startDate, leaseMonths } = req.body || {};
+  const { listingId, startDate, endDate, leaseMonths } = req.body || {};
   if (!listingId) {
     return sendError(res, 400, 'LISTING_ID_REQUIRED', 'listingId 不能为空');
   }
@@ -737,18 +745,25 @@ router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req,
   }
 
   const minLeaseMonths = Number(listing.min_lease_months || 1);
-  const leaseMonthsNum = Number(leaseMonths ?? minLeaseMonths);
-  if (!Number.isInteger(leaseMonthsNum) || leaseMonthsNum < minLeaseMonths || leaseMonthsNum > 12) {
-    return sendError(res, 400, 'LEASE_MONTHS_INVALID', `租期必须为 ${minLeaseMonths}-12 月的整数`);
-  }
   const today = new Date();
   const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const maxDate = new Date(todayDate);
-  maxDate.setDate(maxDate.getDate() + 3);
   const startDateOnly = normalizeDateOnly(startDate) || getCnDateOnly(todayDate);
   const startAt = new Date(`${startDateOnly}T00:00:00`);
-  if (startAt < todayDate || startAt > maxDate) {
-    return sendError(res, 400, 'EFFECTIVE_DATE_INVALID', '生效日期仅支持今天至未来3天');
+  if (startAt < todayDate) {
+    return sendError(res, 400, 'EFFECTIVE_DATE_INVALID', '生效日期不能早于今天');
+  }
+  const submittedEndDateOnly = normalizeDateOnly(endDate);
+  const minEndDateOnly = addMonthsDateOnly(startDateOnly, minLeaseMonths);
+  const derivedLeaseMonths = submittedEndDateOnly ? calculateLeaseMonths(startDateOnly, submittedEndDateOnly) : 0;
+  const leaseMonthsNum = submittedEndDateOnly ? derivedLeaseMonths : Number(leaseMonths ?? minLeaseMonths);
+  if (submittedEndDateOnly && submittedEndDateOnly < minEndDateOnly) {
+    return sendError(res, 400, 'LEASE_MONTHS_TOO_SHORT', `退租日期不能早于 ${minEndDateOnly}，该房源最少租期为 ${minLeaseMonths} 个月`);
+  }
+  if (!Number.isInteger(leaseMonthsNum) || leaseMonthsNum < minLeaseMonths || leaseMonthsNum > 12) {
+    return sendError(res, 400, 'LEASE_MONTHS_INVALID', `租期必须为 ${minLeaseMonths}-12 月`);
+  }
+  if (submittedEndDateOnly && !derivedLeaseMonths) {
+    return sendError(res, 400, 'END_DATE_INVALID', '退租日期必须晚于入住日期，且最长租期为12个月');
   }
 
   const [tenant] = parseUserResult(userDb.exec('SELECT * FROM users WHERE id = ?', [req.user.id]));
@@ -847,7 +862,7 @@ router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req,
     terms: {
       paymentMethod: 'one_time',
       startDate: startDateOnly,
-      endDate: addMonthsDateOnly(startDateOnly, leaseMonthsNum),
+      endDate: submittedEndDateOnly || addMonthsDateOnly(startDateOnly, leaseMonthsNum),
       leaseMonths: leaseMonthsNum,
       minLeaseMonths,
     },
@@ -3144,4 +3159,3 @@ router.get('/:id', authMiddleware, asyncHandler(async (req, res) => {
 }));
 
 module.exports = router;
-

@@ -6,6 +6,7 @@ import { apiPost } from '../shared/api/api';
 import RentalChainABI from '../shared/blockchain/RentalChainABI.json';
 import toast from 'react-hot-toast';
 import { AlertCircleIcon, HomeIcon, LoaderIcon, PlusCircleIcon, XIcon } from 'lucide-react';
+import LocationPicker from '../shared/LocationPicker';
 
 const MAX_IMAGE_COUNT = 12;
 
@@ -72,6 +73,7 @@ export default function PublishListing({ onClose }) {
   const [imageFiles, setImageFiles] = useState([]);
   const [imagePreviews, setImagePreviews] = useState([]);
   const imagePreviewsRef = React.useRef([]);
+  const fileInputRef = React.useRef(null);
 
   const close = () => {
     if (isModal) onClose?.();
@@ -209,7 +211,7 @@ export default function PublishListing({ onClose }) {
       return (
         <div className="mx-auto max-w-xl">
           <div className="card p-8 text-center">
-            <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/8 text-amber-200 shadow-[0_12px_30px_rgba(2,6,23,0.24)]">
+            <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-[#F2EFE4]/8 text-amber-200 shadow-[0_12px_30px_rgba(2,6,23,0.24)]">
               <AlertCircleIcon className="h-7 w-7 text-primary-700" />
             </div>
             <h1 className="text-2xl font-bold text-white">无法发布房源</h1>
@@ -225,7 +227,7 @@ export default function PublishListing({ onClose }) {
       <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
         <div className="relative w-full max-w-[385px] rounded-[1.5rem] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.78)_0%,rgba(10,15,28,0.82)_100%)] p-8 text-center shadow-[0_22px_55px_rgba(27,23,18,0.28)]">
           <CloseButton onClose={close} />
-          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/8 text-amber-200 shadow-[0_12px_30px_rgba(2,6,23,0.24)]">
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-[#F2EFE4]/8 text-amber-200 shadow-[0_12px_30px_rgba(2,6,23,0.24)]">
             <AlertCircleIcon className="h-7 w-7 text-primary-700" />
           </div>
           <h1 className="text-2xl font-bold text-white">无法发布房源</h1>
@@ -239,57 +241,90 @@ export default function PublishListing({ onClose }) {
   }
 
   return (
-    <div className={isModal ? 'fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-slate-950/55 px-4 py-6 backdrop-blur-sm' : 'mx-auto w-full max-w-[720px] animate-fade-in'}>
-      <div className="relative w-full max-w-[720px] rounded-[1.5rem] border border-white/10 p-6 shadow-[0_22px_55px_rgba(2,6,23,0.34)] backdrop-blur-xl animate-fade-in md:p-8" style={{ background: 'linear-gradient(180deg, rgba(15,23,42,0.82) 0%, rgba(10,15,28,0.86) 100%)' }}>
+    <div className={isModal ? 'fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-slate-950/60 px-4 py-8 backdrop-blur-sm' : 'mx-auto w-full max-w-[720px] animate-fade-in'}>
+      <div
+        className="relative w-full max-w-[720px] rounded-[1.5rem] border border-stone-200 p-6 shadow-[0_22px_55px_rgba(0,0,0,0.25)] animate-fade-in md:p-8"
+        style={{ background: '#F2EFE4' }}
+      >
         {isModal && <CloseButton onClose={close} />}
 
         <div className="mb-6 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/8 text-amber-200 shadow-[0_12px_30px_rgba(2,6,23,0.24)]">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-stone-300 bg-[#E8E4D8] text-stone-700 shadow-[0_4px_14px_rgba(0,0,0,0.08)]">
             <HomeIcon className="h-7 w-7" />
           </div>
-          <h1 className="text-2xl font-bold text-white">发布房源</h1>
-          <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-slate-300/72">发布流程：先通过钱包完成链上存证，再写入平台数据库。</p>
+          <h1 className="text-2xl font-bold text-slate-900">发布房源</h1>
+          <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-stone-500">发布流程：先通过钱包完成链上存证，再写入平台数据库。</p>
         </div>
 
-        <form onSubmit={handleSubmit} className={isModal ? 'max-h-[68vh] space-y-4 overflow-y-auto pr-1' : 'space-y-4'}>
+        <form onSubmit={handleSubmit} className={isModal ? 'no-scrollbar max-h-[68vh] space-y-4 overflow-y-auto pr-1' : 'space-y-4'}>
           <Panel>
-            <Field label="标题 *"><input type="text" className="auth-input" value={form.title} onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))} required /></Field>
-            <Field label="描述 *"><textarea className="auth-input min-h-[84px] resize-none py-2" value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} required /></Field>
+            <Field label="标题 *"><input type="text" className="publish-input" value={form.title} onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))} required /></Field>
+            <Field label="描述 *"><textarea className="publish-input min-h-[84px] resize-none py-2" value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} required /></Field>
+            <LocationPicker
+              onSelect={({ address, district }) =>
+                setForm((p) => ({ ...p, address, district }))
+              }
+            />
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <Field label="地址 *"><input type="text" className="auth-input" value={form.address} onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))} required /></Field>
-              <Field label="区域"><input type="text" className="auth-input" value={form.district} onChange={(e) => setForm((p) => ({ ...p, district: e.target.value }))} /></Field>
+              <Field label="地址 *"><input type="text" className="publish-input" value={form.address} onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))} required /></Field>
+              <Field label="区域"><input type="text" className="publish-input" value={form.district} onChange={(e) => setForm((p) => ({ ...p, district: e.target.value }))} /></Field>
             </div>
           </Panel>
 
           <Panel>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <Field label="月租金(ETH) *"><input type="number" step="0.01" min="0" className="auth-input" value={form.rentAmount} onChange={(e) => setForm((p) => ({ ...p, rentAmount: e.target.value }))} required /></Field>
-              <Field label="面积(㎡)"><input type="number" min="0" className="auth-input" value={form.area} onChange={(e) => setForm((p) => ({ ...p, area: e.target.value }))} /></Field>
+              <Field label="月租金(ETH) *"><input type="number" step="0.01" min="0" className="publish-input" value={form.rentAmount} onChange={(e) => setForm((p) => ({ ...p, rentAmount: e.target.value }))} required /></Field>
+              <Field label="面积(㎡)"><input type="number" min="0" className="publish-input" value={form.area} onChange={(e) => setForm((p) => ({ ...p, area: e.target.value }))} /></Field>
             </div>
 
             <Field label="最少租期(月)">
-              <select className="auth-input" value={form.minLeaseMonths} onChange={(e) => setForm((p) => ({ ...p, minLeaseMonths: parseInt(e.target.value, 10) }))}>
+              <select className="publish-input" value={form.minLeaseMonths} onChange={(e) => setForm((p) => ({ ...p, minLeaseMonths: parseInt(e.target.value, 10) }))}>
                 {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (<option key={m} value={m}>{m}个月</option>))}
               </select>
             </Field>
 
             <div className="grid grid-cols-3 gap-3">
               {[{ label: '卧室', key: 'bedrooms', min: 1 }, { label: '客厅', key: 'livingrooms', min: 0 }, { label: '卫生间', key: 'bathrooms', min: 1 }].map(({ label, key, min }) => (
-                <Field key={key} label={label}><input type="number" min={min} className="auth-input" value={form[key]} onChange={(e) => setForm((p) => ({ ...p, [key]: parseInt(e.target.value, 10) }))} /></Field>
+                <Field key={key} label={label}><input type="number" min={min} className="publish-input" value={form[key]} onChange={(e) => setForm((p) => ({ ...p, [key]: parseInt(e.target.value, 10) }))} /></Field>
               ))}
             </div>
           </Panel>
 
           <Panel>
-            <label className="block text-sm font-semibold text-slate-100">房源图片</label>
-            <p className="mt-1 text-xs text-slate-300/72">可选，最多 {MAX_IMAGE_COUNT} 张，仅支持 jpeg/png/webp。</p>
-            <input type="file" className="mt-3 block w-full rounded-2xl border border-white/10 bg-white/6 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-xl file:border-0 file:bg-stone-950 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-slate-100" accept="image/jpeg,image/png,image/webp" multiple onChange={handleImageChange} />
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-800">房源图片</p>
+              <p className="text-xs text-stone-400">最多 {MAX_IMAGE_COUNT} 张 · jpeg/png/webp</p>
+            </div>
+
+            {/* 隐藏原生 input，用自定义按钮触发 */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              accept="image/jpeg,image/png,image/webp"
+              multiple
+              onChange={handleImageChange}
+            />
+
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="mt-2 flex w-full items-center gap-3 rounded-2xl border border-stone-300 bg-[#F2EFE4] px-4 py-2.5 text-sm text-slate-700"
+            >
+              <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-[#A47864] text-xs font-semibold text-white flex-shrink-0">
+                +
+              </span>
+              {imageFiles.length === 0
+                ? '点击选择图片'
+                : `已选择 ${imageFiles.length} 张${imageFiles.length < MAX_IMAGE_COUNT ? `，还可添加 ${MAX_IMAGE_COUNT - imageFiles.length} 张` : '，已达上限'}`}
+            </button>
+
             {imagePreviews.length > 0 && (
               <div className="mt-3 grid grid-cols-3 gap-3 md:grid-cols-4">
                 {imagePreviews.map((url, index) => (
-                  <div key={`${url}_${index}`} className="group relative overflow-hidden rounded-2xl border border-white/10">
+                  <div key={`${url}_${index}`} className="group relative overflow-hidden rounded-2xl border border-stone-200">
                     <img src={url} alt={`preview_${index}`} className="h-24 w-full object-cover" />
-                    <button type="button" onClick={() => removeImage(index)} className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-slate-950/85 text-slate-100 shadow-sm transition-colors hover:bg-red-600" aria-label={`删除第${index + 1}张图片`}>
+                    <button type="button" onClick={() => removeImage(index)} className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-[#F2EFE4]/90 text-stone-700 shadow-sm" aria-label={`删除第${index + 1}张图片`}>
                       <XIcon className="h-4 w-4" />
                     </button>
                   </div>
@@ -298,7 +333,7 @@ export default function PublishListing({ onClose }) {
             )}
           </Panel>
 
-          <button type="submit" disabled={submitting} className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-b from-slate-800 to-slate-950 text-base font-semibold text-slate-100 shadow-[0_6px_12px_rgba(15,23,42,0.32)] transition-transform hover:-translate-y-0.5 disabled:opacity-60">
+          <button type="submit" disabled={submitting} className="btn-primary flex h-11 w-full items-center justify-center gap-2 text-base disabled:opacity-60">
             {submitting ? <LoaderIcon className="h-5 w-5 animate-spin" /> : <PlusCircleIcon className="h-5 w-5" />}
             <span>{submitting ? '提交中...' : '发布房源（钱包确认）'}</span>
           </button>
@@ -309,21 +344,21 @@ export default function PublishListing({ onClose }) {
 }
 
 function Panel({ children }) {
-  return <section className="space-y-3 rounded-2xl border border-white/10 bg-white/6 p-4">{children}</section>;
+  return <section className="space-y-3 rounded-2xl border border-stone-200 bg-[#F2EFE4]/60 p-4">{children}</section>;
 }
 
 function Field({ label, children }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs font-semibold text-slate-300/72">{label}</span>
-      <span className="flex min-h-[40px] items-center rounded-2xl border border-white/10 bg-white/6 px-3 focus-within:border-primary-600/80">{children}</span>
+      <span className="mb-1.5 block text-xs font-semibold text-stone-500">{label}</span>
+      <span className="flex min-h-[40px] items-center rounded-2xl border border-stone-300 bg-[#F2EFE4] px-3 focus-within:border-stone-500">{children}</span>
     </label>
   );
 }
 
 function CloseButton({ onClose }) {
   return (
-    <button type="button" onClick={onClose} className="absolute right-4 top-4 rounded-full p-1.5 text-slate-400 transition-colors hover:bg-stone-900/5 hover:text-slate-200" aria-label="关闭">
+    <button type="button" onClick={onClose} className="absolute right-4 top-4 rounded-full p-1.5 text-stone-400 hover:bg-stone-200 hover:text-stone-800" aria-label="关闭">
       <XIcon className="h-4 w-4" />
     </button>
   );

@@ -240,6 +240,19 @@ export function AuthProvider({ children }) {
     return nextUser;
   };
 
+  const updateAvatar = async (dataUrl) => {
+    const keys = storageKeys(preferredNetwork);
+    const token = localStorage.getItem(keys.token) || '';
+    const res = await axios.post(`${AUTH_API_BASE}/auth/me/avatar`, { dataUrl }, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const avatarUrl = res.data?.data?.avatarUrl || '';
+    const nextUser = { ...user, avatar: avatarUrl };
+    setUser(nextUser);
+    localStorage.setItem(keys.user, JSON.stringify(nextUser));
+    return avatarUrl;
+  };
+
     // 函数 8: 退出登录并清理当前网络会话。
   const logout = () => {
     const keys = storageKeys(preferredNetwork);
@@ -355,6 +368,7 @@ export function AuthProvider({ children }) {
       walletLogin,
       demoLogin,
       updateProfile,
+      updateAvatar,
       logout,
       connectWallet,
       disconnectWallet,

@@ -4,11 +4,14 @@ import { useAuth } from '../app/providers/AuthContext';
 import toast from 'react-hot-toast';
 import {
   ArrowRightIcon,
+  EyeIcon,
+  EyeOffIcon,
   FileTextIcon,
   HomeIcon,
   LoaderIcon,
   LogOutIcon,
   PhoneIcon,
+  SettingsIcon,
   ShieldCheckIcon,
   UserIcon,
   WalletIcon,
@@ -16,17 +19,40 @@ import {
 } from 'lucide-react';
 
 export default function ProfilePage({ onClose }) {
-  const { user, logout, connectWallet, updateProfile } = useAuth();
+  const { user, logout, connectWallet, updateProfile, updateAvatar } = useAuth();
   const navigate = useNavigate();
   const [nickname, setNickname] = useState('');
   const [phone, setPhone] = useState('');
   const [saving, setSaving] = useState(false);
+  const [showWallet, setShowWallet] = useState(false);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const avatarInputRef = React.useRef(null);
 
   useEffect(() => {
     if (!user) return;
     setNickname(user.nickname || '');
     setPhone(user.phone || '');
   }, [user]);
+
+  const handleAvatarChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { toast.error('头像不能超过 2MB'); return; }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      setAvatarUploading(true);
+      try {
+        await updateAvatar(reader.result);
+        toast.success('头像已更新');
+      } catch {
+        toast.error('头像上传失败');
+      } finally {
+        setAvatarUploading(false);
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
 
   const handleLogout = () => {
     logout();
@@ -37,15 +63,18 @@ export default function ProfilePage({ onClose }) {
 
   if (!user) {
     return (
-      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
-        <div className="relative w-full max-w-[385px] rounded-[1.5rem] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.78)_0%,rgba(10,15,28,0.82)_100%)] p-8 text-center shadow-[0_22px_55px_rgba(27,23,18,0.28)]">
+      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 px-4 py-6 backdrop-blur-sm">
+        <div
+          className="relative w-full max-w-[385px] rounded-[1.5rem] border border-stone-200 p-8 text-center shadow-[0_22px_55px_rgba(0,0,0,0.25)]"
+          style={{ background: '#F2EFE4' }}
+        >
           {onClose && <CloseButton onClose={onClose} />}
-          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/8 text-amber-200 shadow-[0_12px_30px_rgba(2,6,23,0.24)]">
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-stone-300 bg-[#E8E4D8] text-stone-700 shadow-[0_4px_14px_rgba(0,0,0,0.08)]">
             <UserIcon className="h-7 w-7" />
           </div>
-          <h1 className="text-2xl font-bold text-white">请先登录</h1>
-          <p className="mt-3 text-sm text-slate-300/72">连接钱包登录后可以查看个人资料和快捷操作。</p>
-          <Link to="/login" onClick={onClose} className="mt-7 flex h-11 w-full items-center justify-center rounded-2xl bg-gradient-to-b from-slate-800 to-slate-950 text-base font-semibold text-slate-100 shadow-[0_6px_12px_rgba(15,23,42,0.32)]">
+          <h1 className="text-2xl font-bold text-slate-900">请先登录</h1>
+          <p className="mt-3 text-sm text-stone-500">连接钱包登录后可以查看个人资料和快捷操作。</p>
+          <Link to="/login" onClick={onClose} className="btn-primary mt-7 flex h-11 w-full items-center justify-center text-base">
             去登录
           </Link>
         </div>
@@ -53,9 +82,14 @@ export default function ProfilePage({ onClose }) {
     );
   }
 
-  const displayName = nickname || user.nickname || `${(user.walletAddress || '').slice(0, 6)}...${(user.walletAddress || '').slice(-4)}`;
-  const shortAddr = user.walletAddress ? `${user.walletAddress.slice(0, 6)}...${user.walletAddress.slice(-4)}` : '';
+  const shortAddr = user.walletAddress
+    ? `${user.walletAddress.slice(0, 6)}...${user.walletAddress.slice(-4)}`
+    : '';
+  const maskedAddr = user.walletAddress
+    ? '0x' + '●'.repeat(Math.max(0, user.walletAddress.length - 2))
+    : '';
   const roleLabel = user.role === 'landlord' ? '房东' : '租客';
+
   const quickActions = [
     ...(user.role === 'landlord'
       ? [
@@ -66,6 +100,7 @@ export default function ProfilePage({ onClose }) {
     { to: '/contracts', label: '我的合同', icon: FileTextIcon },
     { to: '/listings', label: '浏览房源', icon: HomeIcon },
     { to: '/verify', label: '链上验真', icon: ShieldCheckIcon },
+    { to: '/admin', label: '系统设置', icon: SettingsIcon },
   ];
 
   const handleQuickAction = (event, item) => {
@@ -81,10 +116,7 @@ export default function ProfilePage({ onClose }) {
   const handleSaveProfile = async () => {
     setSaving(true);
     try {
-      await updateProfile({
-        nickname: nickname.trim(),
-        phone: phone.trim(),
-      });
+      await updateProfile({ nickname: nickname.trim(), phone: phone.trim() });
       toast.success('个人资料已更新');
     } catch (error) {
       toast.error(error.response?.data?.error || '保存失败');
@@ -94,102 +126,151 @@ export default function ProfilePage({ onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 px-4 backdrop-blur-sm">
       <div
-        className="relative w-full max-w-[460px] rounded-[1.5rem] border border-white/10 p-8 shadow-[0_22px_55px_rgba(2,6,23,0.34)] backdrop-blur-xl animate-fade-in"
-        style={{
-          background:
-            'linear-gradient(180deg, rgba(15,23,42,0.82) 0%, rgba(10,15,28,0.86) 100%)',
-        }}
+        className="relative flex w-full max-w-[420px] flex-col rounded-[1.5rem] border border-stone-200 shadow-[0_22px_55px_rgba(0,0,0,0.28)] animate-fade-in"
+        style={{ background: '#F2EFE4', maxHeight: 'calc(100vh - 96px)' }}
       >
-        {onClose && <CloseButton onClose={onClose} />}
-
-        <div className="mb-7 text-center">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-600 text-xl font-bold text-white shadow-[0_12px_30px_rgba(231,167,121,0.35)]">
-            <WalletIcon className="h-8 w-8" />
+        {/* Fixed header */}
+        <div className="flex-shrink-0 px-6 pt-6 pb-4 text-center border-b border-stone-200">
+          {onClose && <CloseButton onClose={onClose} />}
+          {/* 可更换头像 */}
+          <div className="relative mx-auto mb-3 h-16 w-16">
+            <button
+              type="button"
+              onClick={() => avatarInputRef.current?.click()}
+              className="relative h-16 w-16 overflow-hidden rounded-2xl border border-stone-300 bg-[#E8E4D8] shadow-[0_4px_14px_rgba(0,0,0,0.08)] block"
+              title="点击更换头像"
+            >
+              {user.avatar ? (
+                <img src={user.avatar} alt="avatar" className="h-full w-full object-cover" />
+              ) : (
+                <span className="flex h-full w-full items-center justify-center text-stone-700">
+                  <WalletIcon className="h-7 w-7" />
+                </span>
+              )}
+              {/* hover 蒙层 */}
+              <span className="absolute inset-0 flex items-center justify-center rounded-2xl bg-black/30 opacity-0 hover:opacity-100 transition-opacity">
+                {avatarUploading
+                  ? <LoaderIcon className="h-5 w-5 text-white animate-spin" />
+                  : <span className="text-[10px] text-white font-semibold">更换</span>}
+              </span>
+            </button>
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={handleAvatarChange}
+            />
           </div>
           <input
-            className="mx-auto block w-full max-w-[260px] rounded-2xl border border-white/10 bg-white/6 px-4 py-2 text-center text-xl font-bold text-white outline-none transition-colors focus:border-primary-600/80"
+            className="mx-auto block w-full max-w-[220px] rounded-xl border border-stone-300 bg-[#F2EFE4] px-3 py-1.5 text-center text-lg font-bold text-slate-900 outline-none focus:border-stone-500"
             value={nickname}
-            onChange={(event) => setNickname(event.target.value)}
+            onChange={(e) => setNickname(e.target.value)}
             placeholder="昵称"
             maxLength={32}
           />
-          <p className="mt-2 font-mono text-xs text-slate-400">{shortAddr}</p>
-          <span className="mt-3 inline-flex rounded-full border border-primary-600/40 bg-primary-600/20 px-3 py-1 text-xs font-semibold text-amber-100">
+          <span className="mt-2 inline-flex rounded-full border border-[#A47864]/30 bg-[#F2EFE4] px-3 py-0.5 text-xs font-semibold text-[#A47864]">
             {roleLabel}
           </span>
         </div>
 
-        {/* 手机号 */}
-        <section className="mb-4 rounded-2xl border border-white/10 bg-white/6 p-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-100">
-            <PhoneIcon className="h-4 w-4 text-primary-700" />
-            联系方式
-          </div>
-          <input
-            type="tel"
-            className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-2 text-sm text-slate-200 outline-none transition-colors focus:border-primary-600/80"
-            value={phone}
-            onChange={(event) => setPhone(event.target.value)}
-            placeholder="手机号（选填）"
-            maxLength={20}
-          />
-        </section>
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3" style={{ scrollbarWidth: 'none' }}>
 
-        <button
-          type="button"
-          onClick={handleSaveProfile}
-          disabled={saving}
-          className="mx-auto mb-4 flex h-10 min-w-[160px] items-center justify-center gap-2 rounded-2xl bg-stone-950 px-4 text-sm font-semibold text-slate-100 transition-colors hover:bg-stone-800 disabled:opacity-60"
-        >
-          {saving && <LoaderIcon className="h-4 w-4 animate-spin" />}
-          保存资料
-        </button>
-
-        <section className="rounded-2xl border border-white/10 bg-white/6 p-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-100">
-            <WalletIcon className="h-4 w-4 text-primary-700" />
-            钱包
-          </div>
-          <div className="space-y-3">
-            <div className="rounded-2xl border border-white/10 bg-white/6 px-3 py-3">
-              <p className="text-xs text-slate-300/72">已绑定钱包地址</p>
-              <p className="mt-1 break-all font-mono text-xs text-slate-200">{user.walletAddress}</p>
+          {/* 联系方式 */}
+          <section className="rounded-2xl border border-stone-200 bg-[#F2EFE4]/60 p-4">
+            <div className="mb-2.5 flex items-center gap-2 text-sm font-semibold text-slate-800">
+              <PhoneIcon className="h-4 w-4 text-stone-400" />
+              联系方式
             </div>
-            <button onClick={connectWallet} className="profile-secondary-button">
-              连接钱包
-            </button>
-          </div>
-        </section>
+            <input
+              type="tel"
+              className="w-full rounded-xl border border-stone-300 bg-[#F2EFE4] px-3 py-2 text-sm text-slate-900 outline-none focus:border-stone-500 placeholder:text-stone-400"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="手机号（选填）"
+              maxLength={20}
+            />
+          </section>
 
-        <section className="mt-4 rounded-2xl border border-white/10 bg-white/6 p-4">
-          <div className="mb-3 text-sm font-semibold text-slate-100">快捷操作</div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {quickActions.map((item) => (
-              <Link
-                key={item.to}
-                to={item.to}
-                onClick={(event) => handleQuickAction(event, item)}
-                className="group flex items-center justify-between rounded-2xl border border-transparent px-3 py-3 text-sm font-semibold text-slate-200 transition-all hover:border-primary-600/40 hover:bg-primary-600/15"
+          <button
+            type="button"
+            onClick={handleSaveProfile}
+            disabled={saving}
+            className="btn-primary flex h-10 w-full items-center justify-center gap-2 text-sm disabled:opacity-60"
+          >
+            {saving && <LoaderIcon className="h-4 w-4 animate-spin" />}
+            保存资料
+          </button>
+
+          {/* 钱包 */}
+          <section className="rounded-2xl border border-stone-200 bg-[#F2EFE4]/60 p-4">
+            <div className="mb-2.5 flex items-center gap-2 text-sm font-semibold text-slate-800">
+              <WalletIcon className="h-4 w-4 text-stone-400" />
+              钱包
+            </div>
+            <div className="space-y-2.5">
+              <div className="rounded-xl border border-stone-300 bg-[#F2EFE4] px-3 py-2.5">
+                <div className="flex items-center gap-2">
+                  <p
+                    className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-xs text-slate-700"
+                    style={{ scrollbarWidth: 'none' }}
+                  >
+                    {showWallet ? user.walletAddress : maskedAddr}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowWallet((v) => !v)}
+                    className="flex-shrink-0 text-stone-400"
+                    aria-label={showWallet ? '隐藏钱包地址' : '显示钱包地址'}
+                  >
+                    {showWallet
+                      ? <EyeOffIcon className="h-3.5 w-3.5" />
+                      : <EyeIcon className="h-3.5 w-3.5" />}
+                  </button>
+                </div>
+              </div>
+              <button
+                onClick={connectWallet}
+                className="flex h-9 w-full items-center justify-center rounded-xl border border-stone-300 bg-[#F2EFE4] text-sm font-semibold text-slate-700"
               >
-                <span className="flex items-center gap-3">
-                  <item.icon className="h-4 w-4 text-primary-700" />
-                  {item.label}
-                </span>
-                <ArrowRightIcon className="h-3.5 w-3.5 text-stone-300 transition-colors group-hover:text-primary-700" />
-              </Link>
-            ))}
-          </div>
-        </section>
+                连接钱包
+              </button>
+            </div>
+          </section>
 
-        <button
-          onClick={handleLogout}
-          className="mt-5 flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 text-sm font-semibold text-red-200 transition-colors hover:bg-red-500/15"
-        >
-          <LogOutIcon className="h-4 w-4" />
-          退出登录
-        </button>
+          {/* 快捷操作 */}
+          <section className="rounded-2xl border border-stone-200 bg-[#F2EFE4]/60 p-4">
+            <div className="mb-2.5 text-sm font-semibold text-slate-800">快捷操作</div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {quickActions.map((item) => (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  onClick={(e) => handleQuickAction(e, item)}
+                  className="flex items-center justify-between rounded-xl border border-stone-200 bg-[#F2EFE4] px-3 py-2.5 text-sm font-medium text-slate-700"
+                >
+                  <span className="flex items-center gap-2">
+                    <item.icon className="h-3.5 w-3.5 text-stone-400" />
+                    {item.label}
+                  </span>
+                  <ArrowRightIcon className="h-3 w-3 text-stone-400" />
+                </Link>
+              ))}
+            </div>
+          </section>
+
+          {/* 退出登录 */}
+          <button
+            onClick={handleLogout}
+            className="flex h-10 w-full items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50 text-sm font-semibold text-red-600"
+          >
+            <LogOutIcon className="h-4 w-4" />
+            退出登录
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -200,7 +281,7 @@ function CloseButton({ onClose }) {
     <button
       type="button"
       onClick={onClose}
-      className="absolute right-4 top-4 rounded-full p-1.5 text-slate-400 transition-colors hover:bg-stone-900/5 hover:text-slate-200"
+      className="absolute right-4 top-4 rounded-full p-1.5 text-stone-400 hover:bg-stone-200 hover:text-stone-800"
       aria-label="关闭"
     >
       <XIcon className="h-4 w-4" />

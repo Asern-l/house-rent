@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { getConfigValue, readConfig } = require('./runtime-config');
 
 function trimTrailingSlash(value) {
   return String(value || '').replace(/\/+$/g, '');
@@ -12,7 +13,18 @@ function getIpfsGatewayUrl() {
   return trimTrailingSlash(process.env.IPFS_GATEWAY_URL || 'http://127.0.0.1:8080/ipfs');
 }
 
+function isPinataMode() {
+  const cfg = readConfig();
+  return !!(cfg.pinataJwt && String(cfg.pinataJwt).trim());
+}
+
+function getPinataJwt() {
+  return String(readConfig().pinataJwt || '').trim();
+}
+
 function isIpfsEnabled() {
+  // Enabled if Pinata is configured OR local IPFS is not explicitly disabled
+  if (isPinataMode()) return true;
   return String(process.env.IPFS_ENABLED || '1').trim() !== '0';
 }
 
@@ -23,6 +35,9 @@ function sha256Hex(value) {
 function buildGatewayUrl(cid) {
   const normalizedCid = String(cid || '').trim();
   if (!normalizedCid) return '';
+  if (isPinataMode()) {
+    return `https://gateway.pinata.cloud/ipfs/${normalizedCid}`;
+  }
   return `${getIpfsGatewayUrl()}/${normalizedCid}`;
 }
 
@@ -31,6 +46,33 @@ async function addBufferToIpfs(buffer, { fileName = 'blob.bin', contentType = 'a
     throw new Error('IPFS disabled');
   }
   const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || '');
+
+  if (isPinataMode()) {
+    const jwt = getPinataJwt();
+    const form = new FormData();
+    form.append('file', new Blob([bytes], { type: contentType }), fileName);
+    const response = await fetch('https://api.pinata.cloud/pinning/pinFileToIPFS', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${jwt}` },
+      body: form,
+    });
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`Pinata pinFileToIPFS failed: ${response.status} ${response.statusText} ${errText}`);
+    }
+    const result = await response.json();
+    const cid = String(result.IpfsHash || '').trim();
+    if (!cid) throw new Error('Pinata returned no IpfsHash');
+    const contentHash = sha256Hex(bytes);
+    return {
+      cid,
+      size: Number(result.PinSize || bytes.length || 0),
+      gatewayUrl: `https://gateway.pinata.cloud/ipfs/${cid}`,
+      contentHash,
+    };
+  }
+
+  // Local IPFS node
   const form = new FormData();
   form.append('file', new Blob([bytes], { type: contentType }), fileName);
   const params = new URLSearchParams({
@@ -68,6 +110,42 @@ async function addBufferToIpfs(buffer, { fileName = 'blob.bin', contentType = 'a
 }
 
 async function addJsonToIpfs(value, { fileName = 'data.json', pin = true } = {}) {
+  if (!isIpfsEnabled()) {
+    throw new Error('IPFS disabled');
+  }
+
+  if (isPinataMode()) {
+    const jwt = getPinataJwt();
+    const json = JSON.stringify(value);
+    const response = await fetch('https://api.pinata.cloud/pinning/pinJSONToIPFS', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        pinataContent: value,
+        pinataMetadata: { name: fileName },
+      }),
+    });
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`Pinata pinJSONToIPFS failed: ${response.status} ${response.statusText} ${errText}`);
+    }
+    const result = await response.json();
+    const cid = String(result.IpfsHash || '').trim();
+    if (!cid) throw new Error('Pinata returned no IpfsHash');
+    const contentHash = sha256Hex(json);
+    return {
+      cid,
+      size: Number(result.PinSize || 0),
+      gatewayUrl: `https://gateway.pinata.cloud/ipfs/${cid}`,
+      contentHash,
+      text: json,
+    };
+  }
+
+  // Local IPFS node
   const json = JSON.stringify(value);
   const added = await addBufferToIpfs(Buffer.from(json, 'utf8'), {
     fileName,
@@ -95,6 +173,7 @@ async function readIpfsText(cid) {
 
 module.exports = {
   isIpfsEnabled,
+  isPinataMode,
   getIpfsApiUrl,
   getIpfsGatewayUrl,
   buildGatewayUrl,

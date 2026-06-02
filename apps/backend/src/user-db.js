@@ -59,6 +59,10 @@ function ensureStrictSchema(db, dbPath) {
   if (!columns.includes('wallet_address') || columns.includes('email') || columns.includes('password_hash')) {
     throw new Error(`${path.basename(dbPath)} 仍是旧结构。请删除 ${dbPath} 后重启服务。`);
   }
+  // 迁移：添加 avatar 字段
+  if (!columns.includes('avatar')) {
+    db.run("ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT ''");
+  }
 }
 
 async function getUserDb(network = '') {

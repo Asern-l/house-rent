@@ -6,10 +6,21 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const { ethers } = require('ethers');
+const fs = require('fs');
+const path = require('path');
 const { getUserDb, saveUserDb, parseResult, resolveUserNetwork } = require('../user-db');
 const { JWT_SECRET, authMiddleware } = require('../auth');
 const { logApiError, logUserEvent } = require('../logger');
 const { sendError } = require('../app-error');
+
+const AVATAR_UPLOAD_ROOT = path.join(__dirname, '..', '..', 'data', 'uploads', 'avatars');
+
+function parseAvatarDataUrl(s) {
+  const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(s || ''));
+  if (!m) return null;
+  const ext = m[1].replace('image/', '').replace('jpeg', 'jpg');
+  return { mime: m[1], ext, buffer: Buffer.from(m[2], 'base64') };
+}
 
 const { createLoginMessage } = require('../../../frontend/src/shared/loginMessage');
 
@@ -289,7 +300,7 @@ router.post('/demo-login', asyncHandler(async (req, res) => {
 router.get('/me', authMiddleware, asyncHandler(async (req, res) => {
   const db = await getUserDb(req.user.preferredNetwork);
   const users = parseResult(db.exec(
-    'SELECT id, wallet_address, role, nickname, phone, created_at FROM users WHERE id = ?',
+    'SELECT id, wallet_address, role, nickname, phone, avatar, created_at FROM users WHERE id = ?',
     [req.user.id]
   ));
   if (!users.length) {
@@ -317,7 +328,7 @@ router.put('/me', authMiddleware, asyncHandler(async (req, res) => {
 
   saveUserDb(req.user.preferredNetwork);
   const users = parseResult(db.exec(
-    'SELECT id, wallet_address, role, nickname, phone FROM users WHERE id = ?',
+    'SELECT id, wallet_address, role, nickname, phone, avatar FROM users WHERE id = ?',
     [req.user.id]
   ));
   const nextUser = users[0] || {};
@@ -332,9 +343,33 @@ router.put('/me', authMiddleware, asyncHandler(async (req, res) => {
         role: nextUser.role,
         nickname: nextUser.nickname || '',
         phone: nextUser.phone || '',
+        avatar: nextUser.avatar || '',
       },
     },
   });
+}));
+
+// 函数 6: 上传/更新头像（base64 图片）。
+router.post('/me/avatar', authMiddleware, asyncHandler(async (req, res) => {
+  const { dataUrl } = req.body;
+  if (!dataUrl) return sendError(res, 400, 'AVATAR_MISSING', '请提供头像图片');
+
+  const parsed = parseAvatarDataUrl(dataUrl);
+  if (!parsed) return sendError(res, 400, 'AVATAR_INVALID', '图片格式不支持，仅支持 jpeg/png/webp');
+  if (parsed.buffer.length > 2 * 1024 * 1024) return sendError(res, 400, 'AVATAR_TOO_LARGE', '头像图片不能超过 2MB');
+
+  if (!fs.existsSync(AVATAR_UPLOAD_ROOT)) fs.mkdirSync(AVATAR_UPLOAD_ROOT, { recursive: true });
+
+  const filename = `${req.user.id}.${parsed.ext}`;
+  const savePath = path.join(AVATAR_UPLOAD_ROOT, filename);
+  fs.writeFileSync(savePath, parsed.buffer);
+  const avatarUrl = `/uploads/avatars/${filename}`;
+
+  const db = await getUserDb(req.user.preferredNetwork);
+  db.run('UPDATE users SET avatar = ? WHERE id = ?', [avatarUrl, req.user.id]);
+  saveUserDb(req.user.preferredNetwork);
+
+  res.json({ success: true, data: { avatarUrl } });
 }));
 
 module.exports = router;

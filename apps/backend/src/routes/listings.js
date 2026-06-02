@@ -573,10 +573,10 @@ router.post('/upload-images', authMiddleware, requireRole('landlord'), asyncHand
        FROM listing_operation_logs
        WHERE operator_id = ?
          AND action = 'upload_images'
-         AND datetime(created_at) >= datetime('now', '+8 hours', '-10 minutes')`,
+         AND datetime(created_at) >= datetime('now', '+8 hours', '-60 minutes')`,
       [req.user.id]
     ))[0]?.count || 0;
-    if (Number(recentUploads) >= 10) {
+    if (Number(recentUploads) >= 100) {
       return sendError(res, 429, 'IMAGE_UPLOAD_RATE_LIMITED', '图片上传过于频繁，请稍后重试');
     }
 
@@ -726,7 +726,7 @@ router.post('/prepare-create', authMiddleware, requireRole('landlord'), asyncHan
     txHash: '',
   });
   const storedSnapshot = await storeListingPublicSnapshot(publicSnapshot);
-  if (!String(storedSnapshot.cid || '').trim()) {
+  if (isIpfsEnabled() && !String(storedSnapshot.cid || '').trim()) {
     return sendError(res, 503, 'IPFS_SNAPSHOT_UNAVAILABLE', 'IPFS 快照写入失败，当前不能创建链上房源');
   }
   res.json({
@@ -1600,7 +1600,7 @@ router.post('/:id/terms/prepare', authMiddleware, requireRole('landlord'), async
     txHash: '',
   });
   const storedSnapshot = await storeListingPublicSnapshot(publicSnapshot);
-  if (!String(storedSnapshot.cid || '').trim()) {
+  if (isIpfsEnabled() && !String(storedSnapshot.cid || '').trim()) {
     return sendError(res, 503, 'IPFS_SNAPSHOT_UNAVAILABLE', 'IPFS 快照写入失败，当前不能更新链上房源');
   }
   const userDb = await getUserDb();

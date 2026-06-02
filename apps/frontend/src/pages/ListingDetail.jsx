@@ -1,7 +1,7 @@
-﻿import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { AlertCircleIcon, ArrowLeftIcon, HomeIcon, LoaderIcon, MapPinIcon } from 'lucide-react';
+import { AlertCircleIcon, ArrowLeftIcon, CalendarDaysIcon, ChevronLeftIcon, ChevronRightIcon, HomeIcon, LoaderIcon, MapPinIcon } from 'lucide-react';
 
 function openMap(address) {
   const q = encodeURIComponent(address);
@@ -38,6 +38,225 @@ function resolveImageUrl(url) {
   return String(url || '');
 }
 
+function formatLocalDate(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function parseLocalDate(value) {
+  return value ? new Date(`${value}T00:00:00`) : null;
+}
+
+function addMonthsLocalDate(value, months) {
+  const date = parseLocalDate(value);
+  if (!date) return '';
+  date.setMonth(date.getMonth() + Number(months));
+  return formatLocalDate(date);
+}
+
+function calculateLeaseMonths(startDate, endDate) {
+  if (!startDate || !endDate || endDate <= startDate) return 0;
+  for (let months = 1; months <= 12; months += 1) {
+    if (endDate <= addMonthsLocalDate(startDate, months)) return months;
+  }
+  return 0;
+}
+
+function buildCalendarDays(monthDate) {
+  const firstDay = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+  const mondayOffset = (firstDay.getDay() + 6) % 7;
+  const start = new Date(firstDay);
+  start.setDate(start.getDate() - mondayOffset);
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return date;
+  });
+}
+
+function BookingDateRangePicker({ startDate, endDate, minLeaseMonths, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [leftMonth, setLeftMonth] = useState(() => {
+    const initial = parseLocalDate(startDate) || new Date();
+    return new Date(initial.getFullYear(), initial.getMonth(), 1);
+  });
+  const [rightMonth, setRightMonth] = useState(() => {
+    const initial = parseLocalDate(endDate) || parseLocalDate(startDate) || new Date();
+    return new Date(initial.getFullYear(), initial.getMonth() + (endDate ? 0 : 1), 1);
+  });
+  const pickerRef = useRef(null);
+  const today = new Date();
+  const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const minEndDate = startDate ? addMonthsLocalDate(startDate, minLeaseMonths) : '';
+  const maxEndDate = startDate ? addMonthsLocalDate(startDate, 12) : '';
+  const leaseMonths = calculateLeaseMonths(startDate, endDate);
+
+  useEffect(() => {
+    const closePicker = (event) => {
+      if (!pickerRef.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', closePicker);
+    return () => document.removeEventListener('mousedown', closePicker);
+  }, []);
+
+  const selectDate = (dateValue) => {
+    if (!startDate || endDate || dateValue <= startDate) {
+      onChange({ startDate: dateValue, endDate: '' });
+      return;
+    }
+    if (dateValue < minEndDate || dateValue > maxEndDate) return;
+    onChange({ startDate, endDate: dateValue });
+    setOpen(false);
+  };
+
+  const renderMonth = (monthDate, setMonth) => (
+    <div className="rounded-xl border border-slate-800/80 bg-slate-900/35 p-3">
+      <div className="mb-3 flex items-center justify-between">
+        <button type="button" onClick={() => setMonth(new Date(monthDate.getFullYear(), monthDate.getMonth() - 1, 1))} className="rounded-full p-1 text-gray-400 transition hover:bg-slate-800 hover:text-primary-200" aria-label="上一个月">
+          <ChevronLeftIcon className="h-4 w-4" />
+        </button>
+        <p className="text-center text-sm font-semibold text-gray-100">
+          {monthDate.getFullYear()} 年 {monthDate.getMonth() + 1} 月
+        </p>
+        <button type="button" onClick={() => setMonth(new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 1))} className="rounded-full p-1 text-gray-400 transition hover:bg-slate-800 hover:text-primary-200" aria-label="下一个月">
+          <ChevronRightIcon className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="grid grid-cols-7 gap-1 text-center text-[11px] text-gray-500">
+        {['一', '二', '三', '四', '五', '六', '日'].map((day) => <span key={day}>{day}</span>)}
+      </div>
+      <div className="mt-1 grid grid-cols-7 gap-1">
+        {buildCalendarDays(monthDate).map((date) => {
+          const dateValue = formatLocalDate(date);
+          const outsideMonth = date.getMonth() !== monthDate.getMonth();
+          const isPast = date < todayDate;
+          const invalidEnd = startDate && !endDate && dateValue > startDate && (dateValue < minEndDate || dateValue > maxEndDate);
+          const disabled = outsideMonth || isPast || invalidEnd;
+          const selectedStart = dateValue === startDate;
+          const selectedEnd = dateValue === endDate;
+          const inRange = startDate && endDate && dateValue > startDate && dateValue < endDate;
+          return (
+            <button
+              key={dateValue}
+              type="button"
+              disabled={disabled}
+              onClick={() => selectDate(dateValue)}
+              className={`h-8 rounded-lg text-xs transition ${
+                selectedStart || selectedEnd
+                  ? 'bg-primary-500 font-semibold text-white shadow-md shadow-primary-950/40'
+                  : inRange
+                    ? 'bg-primary-900/55 text-primary-100'
+                    : disabled
+                      ? 'cursor-not-allowed text-gray-700'
+                      : 'text-gray-300 hover:bg-slate-800 hover:text-primary-200'
+              }`}
+            >
+              {date.getDate()}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  return (
+    <div ref={pickerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="flex w-full items-center justify-between rounded-xl border border-slate-600/50 bg-slate-950/55 px-4 py-2.5 text-left text-gray-100 shadow-inner shadow-black/20 transition hover:border-primary-400/70 hover:bg-slate-900/70 focus:outline-none focus:ring-2 focus:ring-primary-500/50"
+        aria-expanded={open}
+        aria-haspopup="dialog"
+      >
+        <span>
+          {startDate
+            ? `${startDate.replaceAll('-', '/')} - ${endDate ? endDate.replaceAll('-', '/') : '请选择退租日'}`
+            : '请选择租赁日期区间'}
+        </span>
+        <CalendarDaysIcon className="h-5 w-5 text-primary-300" />
+      </button>
+
+      {open ? (
+        <div role="dialog" aria-label="选择租赁日期区间" className="absolute bottom-full left-0 z-30 mb-2 w-full min-w-[38rem] rounded-2xl border border-slate-600/45 bg-slate-950/95 p-4 shadow-2xl shadow-black/45 backdrop-blur-xl">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-gray-100">选择租赁日期区间</p>
+              <p className="mt-1 text-xs text-gray-500">
+                先选择入住日，再选择退租日。最少 {minLeaseMonths} 个月，最长 12 个月。
+              </p>
+            </div>
+            {leaseMonths ? <span className="badge-yellow">{leaseMonths} 个月</span> : null}
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            {renderMonth(leftMonth, setLeftMonth)}
+            {renderMonth(rightMonth, setRightMonth)}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function StackedImageCarousel({ imageUrls, alt, className = '' }) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const imageKey = imageUrls.join('|');
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [imageKey]);
+
+  useEffect(() => {
+    if (imageUrls.length < 2) return undefined;
+    const timer = window.setInterval(() => {
+      setActiveIndex((current) => (current + 1) % imageUrls.length);
+    }, 3200);
+    return () => window.clearInterval(timer);
+  }, [imageKey, imageUrls.length]);
+
+  return (
+    <button
+      type="button"
+      onClick={() => setActiveIndex((current) => (current + 1) % imageUrls.length)}
+      className={`relative block w-full overflow-visible bg-transparent ${className}`}
+      aria-label={imageUrls.length > 1 ? '切换到下一张图片' : alt}
+    >
+      {imageUrls.map((url, index) => {
+        const depth = (index - activeIndex + imageUrls.length) % imageUrls.length;
+        const positions = [
+          { x: -24, y: 0, scale: 1, rotate: 0 },
+          { x: -2, y: 13, scale: 0.94, rotate: 3.5 },
+          { x: -40, y: 25, scale: 0.88, rotate: -4.5 },
+        ];
+        const position = positions[depth] || { x: -110, y: -14, scale: 0.76, rotate: -11 };
+        return (
+          <img
+            key={`${url}_${index}`}
+            src={resolveImageUrl(url)}
+            alt={`${alt}_${index + 1}`}
+            className="absolute rounded-xl object-cover transition-all duration-1000"
+            style={{
+              inset: '12px 38px 24px 12px',
+              boxShadow: depth === 0
+                ? '0 22px 36px rgba(2, 6, 23, 0.42)'
+                : '0 14px 26px rgba(2, 6, 23, 0.32)',
+              filter: depth === 0 ? 'brightness(1)' : 'brightness(0.72)',
+              opacity: depth < 3 ? 1 - (depth * 0.18) : 0,
+              transform: `translate3d(${position.x}px, ${position.y}px, 0) scale(${position.scale}) rotate(${position.rotate}deg)`,
+              transformOrigin: 'center bottom',
+              transitionTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1)',
+              zIndex: imageUrls.length - depth,
+            }}
+          />
+        );
+      })}
+      {imageUrls.length > 1 ? (
+        <span className="absolute bottom-8 right-16 z-10 rounded-full bg-black/55 px-2 py-1 text-[10px] text-gray-200">
+          {activeIndex + 1} / {imageUrls.length}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
 function getListingStatusMeta(listing) {
   const status = String(listing?.public_status || listing?.status || '').trim().toLowerCase();
   if (status === 'signing') return { key: 'signing', label: '签署中', className: 'badge-yellow' };
@@ -49,40 +268,6 @@ function getListingStatusMeta(listing) {
 
 function renderStars(rating) {
   return '★'.repeat(Math.max(0, Number(rating || 0))) + '☆'.repeat(Math.max(0, 5 - Number(rating || 0)));
-}
-
-function normalizeDateOnly(value) {
-  const s = String(value || '').trim();
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
-  if (!m) return null;
-  const year = Number(m[1]);
-  const month = Number(m[2]);
-  const day = Number(m[3]);
-  const d = new Date(year, month - 1, day);
-  if (
-    Number.isNaN(d.getTime()) ||
-    d.getFullYear() !== year ||
-    d.getMonth() !== month - 1 ||
-    d.getDate() !== day
-  ) return null;
-  return s;
-}
-
-function addMonthsDateOnly(startDateOnly, months) {
-  const normalized = normalizeDateOnly(startDateOnly);
-  if (!normalized) return '';
-  const [year, month, day] = normalized.split('-').map(Number);
-  const monthOffset = Number(months);
-  const targetMonthStart = new Date(year, (month - 1) + monthOffset, 1);
-  const targetYear = targetMonthStart.getFullYear();
-  const targetMonth = targetMonthStart.getMonth();
-  const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
-  const safeDay = Math.min(day, lastDayOfTargetMonth);
-  const d = new Date(targetYear, targetMonth, safeDay);
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
 }
 
 function normalizeHistorySnapshot(item) {
@@ -133,7 +318,7 @@ export default function ListingDetail() {
   const [loading, setLoading] = useState(true);
   const [applying, setApplying] = useState(false);
   const [startDate, setStartDate] = useState('');
-  const [leaseMonths, setLeaseMonths] = useState(1);
+  const [endDate, setEndDate] = useState('');
   const [history, setHistory] = useState([]);
   const [selectedHistoryId, setSelectedHistoryId] = useState('');
 
@@ -150,15 +335,16 @@ export default function ListingDetail() {
           const firstHistory = Array.isArray(historyRes?.data?.history) ? historyRes.data.history[0] : null;
           setSelectedHistoryId(firstHistory?.id || '');
           const minLease = Number(res?.data?.min_lease_months || 1);
-          setLeaseMonths(minLease >= 1 && minLease <= 12 ? minLease : 1);
           const today = new Date();
           const yyyy = today.getFullYear();
           const mm = String(today.getMonth() + 1).padStart(2, '0');
           const dd = String(today.getDate()).padStart(2, '0');
-          setStartDate(`${yyyy}-${mm}-${dd}`);
+          const initialStartDate = `${yyyy}-${mm}-${dd}`;
+          setStartDate(initialStartDate);
+          setEndDate(addMonthsLocalDate(initialStartDate, minLease));
         }
-      } catch {
-        toast.error('房源不存在或已下架');
+      } catch (error) {
+        toast.error(error?.response?.data?.error || '房源加载失败，请稍后重试');
         navigate('/listings');
       } finally {
         if (mounted) setLoading(false);
@@ -171,9 +357,11 @@ export default function ListingDetail() {
   const handleApply = async () => {
     if (!user) { toast.error('请先登录'); return; }
     if (user.role !== 'tenant') { toast.error('仅租客可以申请签约'); return; }
+    const leaseMonths = calculateLeaseMonths(startDate, endDate);
+    if (!leaseMonths) { toast.error('请选择完整的租赁日期区间'); return; }
     setApplying(true);
     try {
-      const res = await apiPost('/contracts', { listingId: id, startDate, leaseMonths });
+      const res = await apiPost('/contracts', { listingId: id, startDate, endDate });
       const contractId = res?.data?.contractId;
       toast.success('申请成功，请等待房东确认');
       navigate(contractId ? `/contract/${contractId}` : '/contracts');
@@ -199,12 +387,7 @@ export default function ListingDetail() {
   const isOwner = user && listing.landlord_id === user.id;
   const minLeaseMonths = Number(listing.min_lease_months || 1);
   const imageUrls = parseImageUrls(listing.image_urls);
-  const maxLeaseMonths = 12;
-  const today = new Date();
-  const minDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  const maxDateObj = new Date(today);
-  maxDateObj.setDate(maxDateObj.getDate() + 3);
-  const maxDate = `${maxDateObj.getFullYear()}-${String(maxDateObj.getMonth() + 1).padStart(2, '0')}-${String(maxDateObj.getDate()).padStart(2, '0')}`;
+  const selectedLeaseMonths = calculateLeaseMonths(startDate, endDate);
   const selectedHistory = history.find((item) => item.id === selectedHistoryId) || null;
   const selectedSnapshot = normalizeHistorySnapshot(selectedHistory);
   const selectedBinding = normalizeHistoryBinding(selectedHistory);
@@ -213,10 +396,9 @@ export default function ListingDetail() {
   const feedbacks = Array.isArray(listing.feedbacks) ? listing.feedbacks : [];
   const tenantReviews = Array.isArray(listing.tenant_reviews) ? listing.tenant_reviews : [];
   const reviewSummary = listing.review_summary || {};
-  const expectedEndDate = addMonthsDateOnly(startDate, leaseMonths);
 
   return (
-    <div className="mx-auto max-w-4xl animate-fade-in">
+    <div className="mx-auto max-w-6xl animate-fade-in">
       <button
         type="button"
         onClick={() => navigate(-1)}
@@ -226,21 +408,15 @@ export default function ListingDetail() {
         <span>返回</span>
       </button>
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-        <div className="card">
+      <div className="space-y-10">
+        <div className="grid grid-cols-1 items-stretch gap-6 pb-16 md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] md:pb-20">
+        <div className="flex h-full min-h-72">
           {imageUrls.length > 0 ? (
-            <div className="p-3">
-              <img src={resolveImageUrl(imageUrls[0])} alt={listing.title || 'listing'} className="h-64 w-full rounded-lg object-cover" />
-              {imageUrls.length > 1 && (
-                <div className="mt-3 grid grid-cols-4 gap-2">
-                  {imageUrls.slice(1, 5).map((url, idx) => (
-                    <img key={`${url}_${idx}`} src={resolveImageUrl(url)} alt={`listing_${idx}`} className="h-16 w-full rounded-md object-cover" />
-                  ))}
-                </div>
-              )}
+            <div className="min-h-0 w-full">
+              <StackedImageCarousel imageUrls={imageUrls} alt={listing.title || 'listing'} className="h-full min-h-64" />
             </div>
           ) : (
-            <div className="flex h-64 items-center justify-center bg-gradient-to-br from-primary-900/30 to-blue-900/30">
+            <div className="flex min-h-64 w-full items-center justify-center bg-gradient-to-br from-primary-900/30 to-blue-900/30">
               <HomeIcon className="h-20 w-20 text-primary-600" />
             </div>
           )}
@@ -297,7 +473,10 @@ export default function ListingDetail() {
               <p className="text-xs text-gray-500">㎡</p>
             </div>
           </div>
+        </div>
+        </div>
 
+        <div className="space-y-4">
           <p className="leading-relaxed text-gray-300">{listing.description || '暂无描述'}</p>
 
           <div className="rounded-lg border border-gray-700 bg-gray-800/40 p-3">
@@ -305,8 +484,8 @@ export default function ListingDetail() {
             {history.length === 0 ? (
               <p className="text-xs text-gray-500">暂无历史记录</p>
             ) : (
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+                <div className="min-w-0 max-h-72 space-y-2 overflow-y-auto pr-1">
                   {history.slice(0, 30).map((item) => (
                     <button
                       key={item.id}
@@ -324,7 +503,7 @@ export default function ListingDetail() {
                   ))}
                 </div>
 
-                <div className="rounded border border-gray-700 bg-gray-900/40 p-3 text-xs text-gray-300">
+                <div className="min-w-0 rounded border border-gray-700 bg-gray-900/40 p-3 text-xs text-gray-300">
                   {!selectedHistory ? (
                     <p className="text-gray-500">请选择一个历史版本</p>
                   ) : (
@@ -339,18 +518,16 @@ export default function ListingDetail() {
                         <div className="mt-3 space-y-2">
                           {selectedImages.length > 0 ? (
                             <div className="rounded bg-gray-950/70 p-2">
-                              <img
-                                src={resolveImageUrl(selectedImages[0])}
-                                alt="version"
-                                className="h-28 w-full rounded object-cover"
-                              />
-                              {selectedImages.length > 1 && (
-                                <div className="mt-2 grid grid-cols-4 gap-1">
-                                  {selectedImages.slice(1, 5).map((url, idx) => (
-                                    <img key={`${url}_${idx}`} src={resolveImageUrl(url)} alt={`v_${idx}`} className="h-10 w-full rounded object-cover" />
-                                  ))}
-                                </div>
-                              )}
+                              <div className="flex snap-x snap-mandatory gap-2 overflow-x-auto pb-1">
+                                {selectedImages.map((url, idx) => (
+                                  <img
+                                    key={`${url}_${idx}`}
+                                    src={resolveImageUrl(url)}
+                                    alt={`version_${idx + 1}`}
+                                    className="h-28 min-w-full snap-center rounded object-cover"
+                                  />
+                                ))}
+                              </div>
                             </div>
                           ) : (
                             <div className="flex h-20 items-center justify-center rounded bg-gray-950/70 text-gray-500">
@@ -476,25 +653,22 @@ export default function ListingDetail() {
               <p className="text-xs text-gray-400">
                 当前租客钱包（提交申请后会展示给房东）：{user?.walletAddress ? `${user.walletAddress.slice(0, 6)}...${user.walletAddress.slice(-4)}` : '未连接'}
               </p>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-sm text-gray-400">生效日期（今天至未来3天）</label>
-                  <input type="date" min={minDate} max={maxDate} className="input-field" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm text-gray-400">租期（月）</label>
-                  <select className="input-field" value={leaseMonths} onChange={(e) => setLeaseMonths(parseInt(e.target.value, 10))}>
-                    {Array.from({ length: maxLeaseMonths - minLeaseMonths + 1 }, (_, i) => minLeaseMonths + i).map((m) => (
-                      <option key={m} value={m}>{m}个月</option>
-                    ))}
-                  </select>
-                </div>
+              <div>
+                <label className="mb-1 block text-sm text-gray-400">租赁日期区间</label>
+                <BookingDateRangePicker
+                  startDate={startDate}
+                  endDate={endDate}
+                  minLeaseMonths={minLeaseMonths}
+                  onChange={({ startDate: nextStartDate, endDate: nextEndDate }) => {
+                    setStartDate(nextStartDate);
+                    setEndDate(nextEndDate);
+                  }}
+                />
               </div>
-              <div className="space-y-1 text-xs text-gray-500">
-                <p>该房源最少租期：{minLeaseMonths}个月，最长12个月。</p>
-                {expectedEndDate ? <p>预计结束日期：{expectedEndDate}</p> : null}
-                <p>租期按自然月计算；如到期月无对应日期，则取该月最后一日。</p>
-              </div>
+              <p className="text-xs text-gray-500">
+                该房源最少租期：{minLeaseMonths}个月，最长12个月。
+                {selectedLeaseMonths ? ` 当前区间按 ${selectedLeaseMonths} 个月计费。` : ' 请依次选择入住日和退租日。'}
+              </p>
               <button type="button" onClick={handleApply} disabled={applying} className="btn-primary flex w-full items-center justify-center space-x-2 py-3">
                 {applying ? <LoaderIcon className="h-5 w-5 animate-spin" /> : null}
                 <span>{applying ? '申请中...' : '申请签约'}</span>
@@ -528,8 +702,8 @@ export default function ListingDetail() {
               </p>
             </div>
           )}
-        </div>
       </div>
+    </div>
     </div>
   );
 }

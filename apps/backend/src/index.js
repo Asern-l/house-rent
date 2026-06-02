@@ -114,6 +114,7 @@ function setupRoutes() {
   app.use('/api/contracts', contractRoutes);
   app.use('/api/notifications', notificationRoutes);
   app.use('/api/verify', require('./routes/verify'));
+  app.use('/api/admin', require('./routes/admin'));
 
   app.get('/api/health', (req, res) => {
     const now = new Date();
