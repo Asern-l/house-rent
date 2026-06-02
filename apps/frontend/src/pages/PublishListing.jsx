@@ -311,7 +311,7 @@ export default function PublishListing({ onClose }) {
               onClick={() => fileInputRef.current?.click()}
               className="mt-2 flex w-full items-center gap-3 rounded-2xl border border-stone-300 bg-[#F2EFE4] px-4 py-2.5 text-sm text-slate-700"
             >
-              <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-[#A47864] text-xs font-semibold text-white flex-shrink-0">
+              <span className="flex h-7 w-7 items-center justify-center rounded-2xl bg-[#A47864] text-xs font-semibold text-white flex-shrink-0">
                 +
               </span>
               {imageFiles.length === 0

@@ -101,7 +101,7 @@ function RenewalDialog({ contract, onClose, onSuccess }) {
           <h2 className="text-lg font-semibold text-gray-100">申请续租</h2>
         </div>
 
-        <div className="mb-5 space-y-2 rounded-lg bg-black/30 p-3 text-sm">
+        <div className="mb-5 space-y-2 rounded-2xl bg-black/30 p-3 text-sm">
           <p className="text-gray-400">房源：<span className="text-gray-100">{contract.listing_title || '-'}</span></p>
           <p className="text-gray-400">原合同到期：<span className="text-gray-100">{endDate}</span></p>
           <p className="text-gray-400">月租金：<span className="text-primary-400 font-semibold">{rentAmount} ETH</span></p>
@@ -114,7 +114,7 @@ function RenewalDialog({ contract, onClose, onSuccess }) {
             <select
               value={leaseMonths}
               onChange={(e) => setLeaseMonths(Number(e.target.value))}
-              className="w-full rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-gray-100 outline-none"
+              className="w-full rounded-2xl border border-white/15 bg-black/40 px-3 py-2 text-gray-100 outline-none"
             >
               {[1,2,3,4,5,6,7,8,9,10,11,12].map((m) => (
                 <option key={m} value={m}>{m} 个月</option>
@@ -122,7 +122,7 @@ function RenewalDialog({ contract, onClose, onSuccess }) {
             </select>
           </div>
 
-          <div className="rounded-lg border border-primary-800/30 bg-primary-900/20 p-3 text-sm">
+          <div className="rounded-2xl border border-primary-800/30 bg-primary-900/20 p-3 text-sm">
             <p className="text-gray-300">续租总额：
               <span className="ml-1 font-semibold text-primary-300">
                 {rentAmount !== '-' ? (parseFloat(rentAmount) * leaseMonths).toFixed(4) : '-'} ETH
@@ -131,7 +131,7 @@ function RenewalDialog({ contract, onClose, onSuccess }) {
           </div>
 
           <div className="flex gap-3">
-            <button type="button" onClick={onClose} className="flex-1 rounded-xl border border-white/15 py-2 text-sm text-gray-400 hover:text-gray-200">
+            <button type="button" onClick={onClose} className="flex-1 rounded-2xl border border-white/15 py-2 text-sm text-gray-400 hover:text-gray-200">
               取消
             </button>
             <button type="submit" disabled={submitting} className="btn-primary flex-1 flex items-center justify-center gap-2">
@@ -264,7 +264,7 @@ function ReviewDialog({ contract, preferredNetwork, onClose, onSuccess }) {
               value={commentText}
               onChange={(e) => setCommentText(e.target.value.slice(0, 500))}
               rows={4}
-              className="w-full resize-none rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-gray-100 outline-none placeholder:text-gray-500 focus:border-primary-700"
+              className="w-full resize-none rounded-2xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-gray-100 outline-none placeholder:text-gray-500 focus:border-primary-700"
               placeholder="描述你的真实租房体验..."
             />
             <p className="mt-1 text-right text-xs text-gray-500">{commentText.length} / 500</p>
@@ -275,7 +275,7 @@ function ReviewDialog({ contract, preferredNetwork, onClose, onSuccess }) {
           </p>
 
           <div className="flex gap-3">
-            <button type="button" onClick={onClose} className="flex-1 rounded-xl border border-white/15 py-2 text-sm text-gray-400 hover:text-gray-200">
+            <button type="button" onClick={onClose} className="flex-1 rounded-2xl border border-white/15 py-2 text-sm text-gray-400 hover:text-gray-200">
               取消
             </button>
             <button type="submit" disabled={submitting || !commentText.trim()} className="btn-primary flex-1 flex items-center justify-center gap-2 disabled:opacity-40">
@@ -400,7 +400,7 @@ export default function MyContracts() {
                       <button
                         type="button"
                         onClick={() => setRenewalTarget(contract)}
-                        className="flex items-center gap-1.5 rounded-lg border border-primary-700/40 bg-primary-900/30 px-3 py-1.5 text-sm font-medium text-primary-300 transition-colors hover:bg-primary-900/50"
+                        className="flex items-center gap-1.5 rounded-2xl border border-primary-700/40 bg-primary-900/30 px-3 py-1.5 text-sm font-medium text-primary-300 transition-colors hover:bg-primary-900/50"
                       >
                         <RefreshCwIcon className="h-3.5 w-3.5" />
                         申请续租
@@ -410,7 +410,7 @@ export default function MyContracts() {
                       <button
                         type="button"
                         onClick={() => setReviewTarget(contract)}
-                        className="flex items-center gap-1.5 rounded-lg border border-amber-700/40 bg-amber-900/20 px-3 py-1.5 text-sm font-medium text-amber-300 transition-colors hover:bg-amber-900/30"
+                        className="flex items-center gap-1.5 rounded-2xl border border-amber-700/40 bg-amber-900/20 px-3 py-1.5 text-sm font-medium text-amber-300 transition-colors hover:bg-amber-900/30"
                       >
                         <StarIcon className="h-3.5 w-3.5" />
                         提交评价

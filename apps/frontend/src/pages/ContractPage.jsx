@@ -1119,48 +1119,48 @@ export default function ContractPage() {
         </div>
 
         {shouldWarnListingChainBlocked && (
-          <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-3 text-sm text-amber-100">
+          <div className="mb-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-3 py-3 text-sm text-amber-100">
             当前房源{listingChainState.label}，这份合同目前不可上链。你仍可保留合同文本，但房东签署并上链会被拒绝。
           </div>
         )}
 
-        <div className="mb-4 rounded-lg border border-gray-700 bg-gray-800/50 px-3 py-2 text-sm">
+        <div className="mb-4 rounded-2xl border border-gray-700 bg-gray-800/50 px-3 py-2 text-sm">
           <span className="text-gray-500">合同ID：</span>
           <span className="font-mono text-gray-200 break-all">{contract.id}</span>
         </div>
-        <div className="mb-4 rounded-lg border border-gray-700 bg-gray-800/50 px-3 py-2 text-sm">
+        <div className="mb-4 rounded-2xl border border-gray-700 bg-gray-800/50 px-3 py-2 text-sm">
           <span className="text-gray-500">房源ID：</span>
           <span className="font-mono text-gray-200 break-all">{contract.listing_id || content?.listingId || '-'}</span>
         </div>
         {contract.parent_contract_id && (
-          <div className="mb-4 rounded-lg border border-gray-700 bg-gray-800/50 px-3 py-2 text-sm">
+          <div className="mb-4 rounded-2xl border border-gray-700 bg-gray-800/50 px-3 py-2 text-sm">
             <span className="text-gray-500">父合同ID：</span>
             <span className="font-mono text-gray-200 break-all">{contract.parent_contract_id}</span>
           </div>
         )}
 
         <div className="mb-4 grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
-          <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-3">
+          <div className="rounded-2xl border border-gray-700 bg-gray-800/50 p-3">
             <p className="text-gray-500">协商状态</p>
             <p className={`font-medium ${negotiationDisplay.tone}`}>{negotiationDisplay.label}</p>
             <p className="mt-1 text-xs text-gray-500">{negotiationDisplay.note}</p>
           </div>
-          <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-3">
+          <div className="rounded-2xl border border-gray-700 bg-gray-800/50 p-3">
             <p className="text-gray-500">合同版本</p>
             <p className="font-medium text-gray-200">v{contract.version || 1}</p>
           </div>
-          <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-3">
+          <div className="rounded-2xl border border-gray-700 bg-gray-800/50 p-3">
             <p className="text-gray-500">上链状态</p>
             <p className="font-medium text-gray-200">{contract.onchain_state === 'confirmed' ? '已确认' : contract.onchain_state === 'failed' ? '待重试' : contract.onchain_state === 'pending' ? '处理中' : '未开始'}</p>
           </div>
         </div>
 
         {content && (
-          <div className="space-y-4 mb-6 border border-gray-700 rounded-lg p-4">
+          <div className="space-y-4 mb-6 border border-gray-700 rounded-2xl p-4">
             <h2 className="font-bold text-lg text-gray-100 border-b border-gray-700 pb-2">合同详情</h2>
 
             {contract.tx_hash && (
-              <div className="bg-green-900/20 border border-green-800/50 rounded-lg p-3 text-sm text-green-400 flex items-start space-x-2">
+              <div className="bg-green-900/20 border border-green-800/50 rounded-2xl p-3 text-sm text-green-400 flex items-start space-x-2">
                 <CheckCircleIcon className="w-5 h-5 mt-0.5 flex-shrink-0" />
                 <div>
                   <p className="font-medium">合同哈希已上链</p>
@@ -1175,7 +1175,7 @@ export default function ContractPage() {
             )}
 
             {lastTxHash && (
-              <div className="bg-blue-900/20 border border-blue-800/50 rounded-lg p-3 text-sm text-blue-400 flex items-start space-x-2">
+              <div className="bg-blue-900/20 border border-blue-800/50 rounded-2xl p-3 text-sm text-blue-400 flex items-start space-x-2">
                 <CheckCircleIcon className="w-5 h-5 mt-0.5 flex-shrink-0" />
                 <div>
                   <p className="font-medium">最新交易</p>
@@ -1202,7 +1202,7 @@ export default function ContractPage() {
             </div>
 
             {payments.length > 0 && (
-              <div className="rounded-lg border border-gray-700 p-3">
+              <div className="rounded-2xl border border-gray-700 p-3">
                 <p className="text-sm font-medium text-gray-200 mb-2">支付记录</p>
                 <div className="space-y-2">
                   {payments.map((item) => (
@@ -1214,20 +1214,20 @@ export default function ContractPage() {
                 </div>
               </div>
             )}
-            <div className="rounded-lg border border-gray-700 bg-gray-900/40 p-3 text-xs text-gray-400">
+            <div className="rounded-2xl border border-gray-700 bg-gray-900/40 p-3 text-xs text-gray-400">
               <p>哈希算法：SHA-256（用于计算合同 content_hash）</p>
             </div>
           </div>
         )}
 
         {canNegotiate && (
-          <div className="mb-6 rounded-lg border border-gray-700 p-4">
+          <div className="mb-6 rounded-2xl border border-gray-700 p-4">
             <div className="mb-3">
               <p className="font-medium text-gray-200">条款协商（仅 clauses）</p>
               <p className="mt-1 text-xs text-gray-500">流程：租客可反复提议；房东仅在存在租客提议时处理，可修改后确认或退回；任一方开始签署后立即冻结。</p>
             </div>
 
-            <div className="mb-3 rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+            <div className="mb-3 rounded-2xl border border-gray-700 bg-gray-900/40 p-3">
               <p className="mb-2 text-xs text-gray-500">当前条款预览</p>
               {clausesPreview.length > 0 ? (
                 <ol className="list-decimal space-y-1 pl-5 text-sm text-gray-200">
@@ -1240,7 +1240,7 @@ export default function ContractPage() {
               )}
             </div>
 
-            <div className="mb-3 rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+            <div className="mb-3 rounded-2xl border border-gray-700 bg-gray-900/40 p-3">
               <p className="mb-2 text-xs text-gray-500">最新协商结果</p>
               {(() => {
                 const latestRejected = versions.find((item) => item.status === 'rejected');
@@ -1318,10 +1318,10 @@ export default function ContractPage() {
             )}
 
             {isLandlord && openProposal && (
-              <div className="mt-4 rounded-lg border border-yellow-800/50 bg-yellow-900/20 p-3 text-sm text-yellow-100">
+              <div className="mt-4 rounded-2xl border border-yellow-800/50 bg-yellow-900/20 p-3 text-sm text-yellow-100">
                 <p className="font-medium">v{openProposal.version} 条款待审核</p>
                 <p className="mt-1 text-yellow-100/80">{openProposal.change_note || '无备注'}</p>
-                <div className="mt-3 rounded-lg border border-yellow-700/40 bg-yellow-950/30 p-3">
+                <div className="mt-3 rounded-2xl border border-yellow-700/40 bg-yellow-950/30 p-3">
                   <p className="mb-2 text-xs text-yellow-100/80">租客提交条款</p>
                   {(() => {
                     try {
@@ -1390,7 +1390,7 @@ export default function ContractPage() {
             )}
             {contract.status === 'pending_payment' && isTenant && (
               <>
-                <div className="rounded-lg border border-emerald-800/50 bg-emerald-900/20 p-3 text-sm text-emerald-200">
+                <div className="rounded-2xl border border-emerald-800/50 bg-emerald-900/20 p-3 text-sm text-emerald-200">
                   <p className="font-medium text-emerald-100">平台验真提示</p>
                   <p className="mt-1 leading-6">
                     平台已完成合同上链状态、合同哈希与签名一致性校验，当前未发现篡改异常。
@@ -1418,7 +1418,7 @@ export default function ContractPage() {
           )}
         </div>
 
-        <div className="mt-6 rounded-lg border border-gray-700 bg-gray-900/40 p-4">
+        <div className="mt-6 rounded-2xl border border-gray-700 bg-gray-900/40 p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-lg font-semibold text-gray-100">租后评价</p>
@@ -1428,14 +1428,14 @@ export default function ContractPage() {
           </div>
 
           {rentalReview ? (
-            <div className="mt-4 rounded-lg border border-gray-800 bg-black/20 p-4">
+            <div className="mt-4 rounded-2xl border border-gray-800 bg-black/20 p-4">
               <p className="text-lg font-medium text-primary-300">{renderStars(rentalReview.rating)} <span className="ml-2 text-sm text-gray-400">权重 {rentalReview.weight}</span></p>
               <p className="mt-2 break-all font-mono text-xs text-gray-500">地址：{rentalReview.tenant_wallet || '未知地址'}</p>
               <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-gray-200">{rentalReview.comment_text}</p>
               <p className="mt-3 text-xs text-gray-500">提交时间：{rentalReview.created_at || '-'}</p>
             </div>
           ) : (
-            <div className="mt-4 rounded-lg border border-gray-800 bg-black/20 p-4">
+            <div className="mt-4 rounded-2xl border border-gray-800 bg-black/20 p-4">
               <p className="text-sm text-gray-400">
                 {canSubmitRentalReview
                   ? `当前可评价窗口截止到：${reviewState.review_window_end_at || '-'}`

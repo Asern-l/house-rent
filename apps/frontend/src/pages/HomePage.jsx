@@ -142,7 +142,7 @@ export default function HomePage() {
                 <button
                   type="button"
                   onClick={() => navigate('/contracts')}
-                  className="flex items-center gap-2 rounded-xl border px-6 py-2.5 text-sm font-medium backdrop-blur-sm"
+                  className="flex items-center gap-2 rounded-2xl border px-6 py-2.5 text-sm font-medium backdrop-blur-sm"
                   style={{ color: '#A47864', borderColor: 'rgba(164,120,100,0.55)', background: 'rgba(164,120,100,0.08)' }}
                 >
                   我的合同

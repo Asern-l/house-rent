@@ -137,7 +137,7 @@ export default function VerifyPage({ onClose }) {
                   setResult(null);
                   setError('');
                 }}
-                className={`rounded-xl px-3 py-1.5 text-sm font-semibold transition-colors ${
+                className={`rounded-2xl px-3 py-1.5 text-sm font-semibold transition-colors ${
                   verifyType === item.key
                     ? isModal ? 'bg-slate-900 text-[#F2EFE4]' : 'bg-stone-900 text-slate-100'
                     : isModal ? 'bg-stone-200 text-stone-600 hover:bg-stone-300' : 'bg-[#F2EFE4]/10 text-slate-200 hover:bg-[#F2EFE4]/15'
@@ -367,7 +367,7 @@ function ComparisonGrid({ labels, comparisons }) {
       {Object.entries(comparisons).map(([key, value]) => (
         <div
           key={key}
-          className={`rounded-xl border px-3 py-2 text-sm ${
+          className={`rounded-2xl border px-3 py-2 text-sm ${
             value ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200' : 'border-red-500/30 bg-red-500/10 text-red-200'
           }`}
         >

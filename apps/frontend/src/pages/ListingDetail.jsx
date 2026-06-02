@@ -86,7 +86,7 @@ function StackedImageCarousel({ imageUrls, alt, className = '' }) {
             key={`${url}_${index}`}
             src={resolveImageUrl(url)}
             alt={`${alt}_${index + 1}`}
-            className="absolute rounded-xl object-cover transition-all duration-1000"
+            className="absolute rounded-2xl object-cover transition-all duration-1000"
             style={{
               inset: '12px 38px 24px 12px',
               boxShadow: depth === 0
@@ -325,12 +325,12 @@ export default function ListingDetail() {
             </span>
           </button>
 
-          <div className="rounded-lg border border-gray-700 bg-gray-800/40 px-3 py-2 text-sm text-gray-300">
+          <div className="rounded-2xl border border-gray-700 bg-gray-800/40 px-3 py-2 text-sm text-gray-300">
             <span className="text-gray-500">房源ID：</span>
             <span className="font-mono break-all">{listing.id || id}</span>
           </div>
 
-          <div className="rounded-lg border border-gray-700 bg-gray-800/40 px-3 py-2 text-sm text-gray-300">
+          <div className="rounded-2xl border border-gray-700 bg-gray-800/40 px-3 py-2 text-sm text-gray-300">
             <span className="text-gray-500">房东：</span>
             <span>{listing.landlord_name || '未提供'}</span>
             {listing.landlord_phone && (
@@ -339,15 +339,15 @@ export default function ListingDetail() {
           </div>
 
           <div className="grid grid-cols-3 gap-3 text-center">
-            <div className="rounded-lg bg-gray-800 p-3">
+            <div className="rounded-2xl bg-gray-800 p-3">
               <p className="text-lg font-bold text-gray-200">{listing.bedrooms || '-'}</p>
               <p className="text-xs text-gray-500">室</p>
             </div>
-            <div className="rounded-lg bg-gray-800 p-3">
+            <div className="rounded-2xl bg-gray-800 p-3">
               <p className="text-lg font-bold text-gray-200">{listing.livingrooms || '-'}</p>
               <p className="text-xs text-gray-500">厅</p>
             </div>
-            <div className="rounded-lg bg-gray-800 p-3">
+            <div className="rounded-2xl bg-gray-800 p-3">
               <p className="text-lg font-bold text-gray-200">{listing.area || '-'}</p>
               <p className="text-xs text-gray-500">㎡</p>
             </div>
@@ -358,7 +358,7 @@ export default function ListingDetail() {
         <div className="space-y-4">
           <p className="leading-relaxed text-gray-300">{listing.description || '暂无描述'}</p>
 
-          <div className="rounded-lg border border-gray-700 bg-gray-800/40 p-3">
+          <div className="rounded-2xl border border-gray-700 bg-gray-800/40 p-3">
             <p className="mb-2 text-sm font-medium text-gray-200">历史版本</p>
             {history.length === 0 ? (
               <p className="text-xs text-gray-500">暂无历史记录</p>
@@ -455,12 +455,12 @@ export default function ListingDetail() {
             )}
           </div>
 
-          <div className="rounded-lg border border-blue-800/50 bg-blue-900/20 p-3 text-sm text-blue-300">
+          <div className="rounded-2xl border border-blue-800/50 bg-blue-900/20 p-3 text-sm text-blue-300">
             <p className="mb-1 font-medium">法律提示</p>
             <p>合同哈希可上链存证，链上记录一经确认不可篡改，请在签署前核对条款。</p>
           </div>
 
-          <div className="rounded-lg border border-gray-700 bg-gray-900/40 p-4">
+          <div className="rounded-2xl border border-gray-700 bg-gray-900/40 p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-base font-semibold text-gray-100">真实租客评价</p>
@@ -484,7 +484,7 @@ export default function ListingDetail() {
               {tenantReviews.length === 0 ? (
                 <p className="text-sm text-gray-500">暂无真实租客评价</p>
               ) : tenantReviews.slice(0, 3).map((item) => (
-                <div key={item.id} className="rounded-lg border border-gray-800 bg-black/20 p-3">
+                <div key={item.id} className="rounded-2xl border border-gray-800 bg-black/20 p-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-sm font-medium text-primary-300">{renderStars(item.rating)} <span className="ml-2 text-gray-400">权重 {item.weight}</span></p>
@@ -501,7 +501,7 @@ export default function ListingDetail() {
             </div>
           </div>
 
-          <div className="rounded-lg border border-gray-700 bg-gray-900/40 p-4">
+          <div className="rounded-2xl border border-gray-700 bg-gray-900/40 p-4">
             <p className="text-base font-semibold text-gray-100">房源反馈</p>
             <p className="mt-1 text-xs text-gray-500">公开展示最近 3 条看房或意向阶段反馈，不计入正式星级。</p>
 
@@ -509,7 +509,7 @@ export default function ListingDetail() {
               {feedbacks.length === 0 ? (
                 <p className="text-sm text-gray-500">暂无房源反馈</p>
               ) : feedbacks.slice(0, 3).map((item) => (
-                <div key={item.id} className="rounded-lg border border-gray-800 bg-black/20 p-3">
+                <div key={item.id} className="rounded-2xl border border-gray-800 bg-black/20 p-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <span className="badge-gray">{FEEDBACK_TYPE_OPTIONS.find((opt) => opt.value === item.feedback_type)?.label || item.feedback_type}</span>
@@ -527,7 +527,7 @@ export default function ListingDetail() {
           </div>
 
           {isAvailable && user?.role === 'tenant' && (
-            <div className="space-y-3 rounded-lg border border-gray-700 p-4">
+            <div className="space-y-3 rounded-2xl border border-gray-700 p-4">
               <p className="text-sm font-medium text-gray-200">签约前设置</p>
               <p className="text-xs text-gray-400">
                 当前租客钱包（提交申请后会展示给房东）：{user?.walletAddress ? `${user.walletAddress.slice(0, 6)}...${user.walletAddress.slice(-4)}` : '未连接'}
@@ -559,23 +559,23 @@ export default function ListingDetail() {
           )}
 
           {statusMeta.key === 'signing' && (
-            <p className="rounded-lg border border-yellow-800/50 bg-yellow-900/20 p-3 text-sm text-yellow-300">
+            <p className="rounded-2xl border border-yellow-800/50 bg-yellow-900/20 p-3 text-sm text-yellow-300">
               该房源已有合同在签署流程中，暂不能发起新的签约申请。
             </p>
           )}
 
           {statusMeta.key === 'rented' && (
-            <p className="rounded-lg border border-gray-700 bg-gray-800/70 p-3 text-sm text-gray-300">
+            <p className="rounded-2xl border border-gray-700 bg-gray-800/70 p-3 text-sm text-gray-300">
               该房源已租出，可查看房源信息和链上存证，暂不能发起新的普通签约申请。
             </p>
           )}
 
           {isOwner && (
-            <p className="rounded-lg bg-yellow-900/20 border border-yellow-800/50 p-3 text-sm text-yellow-400">这是您的房源。</p>
+            <p className="rounded-2xl bg-yellow-900/20 border border-yellow-800/50 p-3 text-sm text-yellow-400">这是您的房源。</p>
           )}
 
           {!user && isAvailable && (
-            <div className="flex items-start rounded-lg bg-gray-800 p-3 text-sm text-gray-300">
+            <div className="flex items-start rounded-2xl bg-gray-800 p-3 text-sm text-gray-300">
               <AlertCircleIcon className="mr-2 mt-0.5 h-4 w-4 flex-shrink-0" />
               <p>
                 请先

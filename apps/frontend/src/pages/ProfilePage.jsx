@@ -171,7 +171,7 @@ export default function ProfilePage({ onClose }) {
             />
           </div>
           <input
-            className="mx-auto block w-full max-w-[220px] rounded-xl border border-stone-300 bg-[#F2EFE4] px-3 py-1.5 text-center text-lg font-bold text-slate-900 outline-none focus:border-stone-500"
+            className="mx-auto block w-full max-w-[220px] rounded-2xl border border-stone-300 bg-[#F2EFE4] px-3 py-1.5 text-center text-lg font-bold text-slate-900 outline-none focus:border-stone-500"
             value={nickname}
             onChange={(event) => setNickname(event.target.value)}
             placeholder="昵称"
@@ -190,7 +190,7 @@ export default function ProfilePage({ onClose }) {
             </div>
             <input
               type="tel"
-              className="w-full rounded-xl border border-stone-300 bg-[#F2EFE4] px-3 py-2 text-sm text-slate-900 outline-none focus:border-stone-500 placeholder:text-stone-400"
+              className="w-full rounded-2xl border border-stone-300 bg-[#F2EFE4] px-3 py-2 text-sm text-slate-900 outline-none focus:border-stone-500 placeholder:text-stone-400"
               value={phone}
               onChange={(event) => setPhone(event.target.value)}
               placeholder="手机号（选填）"
@@ -214,7 +214,7 @@ export default function ProfilePage({ onClose }) {
               钱包
             </div>
             <div className="space-y-2.5">
-              <div className="rounded-xl border border-stone-300 bg-[#F2EFE4] px-3 py-2.5">
+              <div className="rounded-2xl border border-stone-300 bg-[#F2EFE4] px-3 py-2.5">
                 <div className="flex items-center gap-2">
                   <p
                     className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-xs text-slate-700"
@@ -234,7 +234,7 @@ export default function ProfilePage({ onClose }) {
               </div>
               <button
                 onClick={connectWallet}
-                className="flex h-9 w-full items-center justify-center rounded-xl border border-stone-300 bg-[#F2EFE4] text-sm font-semibold text-slate-700"
+                className="flex h-9 w-full items-center justify-center rounded-2xl border border-stone-300 bg-[#F2EFE4] text-sm font-semibold text-slate-700"
               >
                 连接钱包
               </button>
@@ -249,7 +249,7 @@ export default function ProfilePage({ onClose }) {
                   key={item.to}
                   to={item.to}
                   onClick={(event) => handleQuickAction(event, item)}
-                  className="flex items-center justify-between rounded-xl border border-stone-200 bg-[#F2EFE4] px-3 py-2.5 text-sm font-medium text-slate-700"
+                  className="flex items-center justify-between rounded-2xl border border-stone-200 bg-[#F2EFE4] px-3 py-2.5 text-sm font-medium text-slate-700"
                 >
                   <span className="flex items-center gap-2">
                     <item.icon className="h-3.5 w-3.5 text-stone-400" />

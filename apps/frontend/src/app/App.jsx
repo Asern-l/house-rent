@@ -199,7 +199,7 @@ export default function App() {
                   key={item.label}
                   type="button"
                   onClick={item.onClick}
-                  className="rounded-xl px-3 py-2 text-sm font-medium text-slate-300"
+                  className="rounded-2xl px-3 py-2 text-sm font-medium text-slate-300"
                 >
                   {item.label}
                 </button>
@@ -207,7 +207,7 @@ export default function App() {
                 <Link
                   key={item.path}
                   to={item.path}
-                  className={`rounded-xl px-3 py-2 text-sm font-medium ${
+                  className={`rounded-2xl px-3 py-2 text-sm font-medium ${
                     isActive(item.path)
                       ? 'bg-white/10 text-white'
                       : 'text-slate-300'
@@ -317,7 +317,7 @@ export default function App() {
                     key={item.label}
                     type="button"
                     onClick={() => { item.onClick(); setMobileOpen(false); }}
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-300 hover:bg-white/5"
+                    className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-medium text-slate-300 hover:bg-white/5"
                   >
                     <item.icon className="h-4 w-4" />
                     {item.label}
@@ -327,7 +327,7 @@ export default function App() {
                     key={item.path}
                     to={item.path}
                     onClick={() => setMobileOpen(false)}
-                    className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${
+                    className={`flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-medium ${
                       isActive(item.path)
                         ? 'bg-white/10 text-white'
                         : 'text-slate-300 hover:bg-white/5'
@@ -347,7 +347,7 @@ export default function App() {
 
             {user ? (
               <div className="mt-3 space-y-2 border-t border-white/10 pt-3">
-                <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-300">
+                <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-300">
                   <span className={`h-1.5 w-1.5 rounded-full ${selectedBackendOk === false ? 'bg-red-400' : 'bg-emerald-400'}`} />
                   <select
                     className="flex-1 bg-transparent outline-none"
@@ -360,14 +360,14 @@ export default function App() {
                 </div>
                 <button
                   onClick={openProfileModal}
-                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-slate-200 hover:bg-white/5"
+                  className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-sm text-slate-200 hover:bg-white/5"
                 >
                   <WalletIcon className="h-4 w-4" />
                   个人面板
                 </button>
                 <button
                   onClick={() => { logout(); setMobileOpen(false); }}
-                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-red-300 hover:bg-red-500/10"
+                  className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-sm text-red-300 hover:bg-red-500/10"
                 >
                   <LogOutIcon className="h-4 w-4" />
                   退出登录
@@ -377,7 +377,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => openAuthModal('login')}
-                className="mt-3 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-slate-200 hover:bg-white/5"
+                className="mt-3 flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-sm text-slate-200 hover:bg-white/5"
               >
                 <WalletIcon className="h-4 w-4" />
                 登录 / 注册

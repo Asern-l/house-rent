@@ -141,13 +141,13 @@ export default function ListingsPage() {
           智能搜索
         </p>
         <form onSubmit={handleAiSearch} className="flex gap-2">
-          <div className="flex flex-1 items-center gap-2 rounded-lg border border-primary-800/40 bg-black/30 px-3 py-2">
+          <div className="flex flex-1 items-center gap-2 rounded-2xl border border-primary-800/40 bg-black/30 px-3 py-2">
             <SparklesIcon className="h-4 w-4 shrink-0 text-primary-500/50" />
             <input
               value={aiQuery}
               onChange={(e) => setAiQuery(e.target.value)}
               className="w-full bg-transparent text-sm text-gray-100 outline-none placeholder:text-gray-500"
-              placeholder="例如"西城区月租0.3以内一室一厅""
+              placeholder={'例如"西城区月租0.3以内一室一厅"'}
             />
           </div>
           <button
@@ -196,7 +196,7 @@ export default function ListingsPage() {
       {/* ── 普通搜索 + 筛选行 ── */}
       <div className="card mb-4 p-3">
         <div className="flex flex-wrap gap-2">
-          <div className="flex min-w-[160px] flex-1 items-center gap-2 rounded-lg border border-white/15 bg-black/30 px-3 py-2">
+          <div className="flex min-w-[160px] flex-1 items-center gap-2 rounded-2xl border border-white/15 bg-black/30 px-3 py-2">
             <SearchIcon className="h-4 w-4 shrink-0 text-gray-500" />
             <input
               value={keyword}
@@ -209,7 +209,7 @@ export default function ListingsPage() {
           <select
             value={filters.district}
             onChange={(e) => setFilters((f) => ({ ...f, district: e.target.value }))}
-            className="rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-gray-200 outline-none"
+            className="rounded-2xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-gray-200 outline-none"
           >
             <option value="">全部地区</option>
             {allDistricts.map((d) => <option key={d} value={d}>{d}</option>)}
@@ -218,7 +218,7 @@ export default function ListingsPage() {
           <select
             value={filters.bedrooms}
             onChange={(e) => setFilters((f) => ({ ...f, bedrooms: Number(e.target.value) }))}
-            className="rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-gray-200 outline-none"
+            className="rounded-2xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-gray-200 outline-none"
           >
             {BEDROOM_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
@@ -228,7 +228,7 @@ export default function ListingsPage() {
               type="number" min="0" step="0.01"
               value={filters.minRent || ''}
               onChange={(e) => setFilters((f) => ({ ...f, minRent: parseFloat(e.target.value) || 0 }))}
-              className="w-20 rounded-lg border border-white/15 bg-black/40 px-2 py-2 text-sm text-gray-200 outline-none placeholder:text-gray-500"
+              className="w-20 rounded-2xl border border-white/15 bg-black/40 px-2 py-2 text-sm text-gray-200 outline-none placeholder:text-gray-500"
               placeholder="最低"
             />
             <span className="text-xs text-gray-500">–</span>
@@ -236,7 +236,7 @@ export default function ListingsPage() {
               type="number" min="0" step="0.01"
               value={filters.maxRent || ''}
               onChange={(e) => setFilters((f) => ({ ...f, maxRent: parseFloat(e.target.value) || 0 }))}
-              className="w-20 rounded-lg border border-white/15 bg-black/40 px-2 py-2 text-sm text-gray-200 outline-none placeholder:text-gray-500"
+              className="w-20 rounded-2xl border border-white/15 bg-black/40 px-2 py-2 text-sm text-gray-200 outline-none placeholder:text-gray-500"
               placeholder="最高"
             />
             <span className="text-xs text-gray-500">ETH</span>
@@ -245,7 +245,7 @@ export default function ListingsPage() {
           {hasActiveFilters && (
             <button
               type="button" onClick={clearAll}
-              className="flex items-center gap-1 rounded-lg px-3 py-2 text-sm text-gray-400 hover:text-gray-200"
+              className="flex items-center gap-1 rounded-2xl px-3 py-2 text-sm text-gray-400 hover:text-gray-200"
             >
               <XIcon className="h-3.5 w-3.5" />清除
             </button>
@@ -281,10 +281,10 @@ export default function ListingsPage() {
                     <img
                       src={resolveImageUrl(getFirstImageUrl(item))}
                       alt={item.title || 'listing'}
-                      className="h-36 w-full rounded-lg object-cover"
+                      className="h-36 w-full rounded-2xl object-cover"
                     />
                   ) : (
-                    <div className="flex h-36 items-center justify-center rounded-lg border border-white/5 bg-black/20">
+                    <div className="flex h-36 items-center justify-center rounded-2xl border border-white/5 bg-black/20">
                       <HomeIcon className="h-12 w-12 text-primary-600" />
                     </div>
                   )}

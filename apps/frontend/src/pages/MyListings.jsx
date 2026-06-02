@@ -557,9 +557,9 @@ export default function MyListings() {
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="flex min-w-0 items-start gap-3">
                     {getFirstImageUrl(item) ? (
-                      <img src={resolveImageUrl(getFirstImageUrl(item))} alt={item.title || 'listing'} className="h-20 w-28 flex-shrink-0 rounded-xl object-cover" />
+                      <img src={resolveImageUrl(getFirstImageUrl(item))} alt={item.title || 'listing'} className="h-20 w-28 flex-shrink-0 rounded-2xl object-cover" />
                     ) : (
-                      <div className="flex h-20 w-28 flex-shrink-0 items-center justify-center rounded-xl bg-white/6">
+                      <div className="flex h-20 w-28 flex-shrink-0 items-center justify-center rounded-2xl bg-white/6">
                         <HomeIcon className="h-6 w-6 text-slate-500" />
                       </div>
                     )}
@@ -599,7 +599,7 @@ export default function MyListings() {
                           <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => startEdit(item, 'clauses')}>{'附加条款编辑'}</button>
                           <button
                             disabled={submittingId === item.id}
-                            className="rounded-xl border border-red-500/25 bg-red-500/12 px-3 py-1.5 text-sm font-medium text-red-200 transition hover:bg-red-500/18 disabled:opacity-60"
+                            className="rounded-2xl border border-red-500/25 bg-red-500/12 px-3 py-1.5 text-sm font-medium text-red-200 transition hover:bg-red-500/18 disabled:opacity-60"
                             onClick={() => {
                               if (confirm('确认销毁该房源吗？销毁后不可恢复。')) {
                                 updateStatusOnchain(item.id, 'closed');
@@ -617,7 +617,7 @@ export default function MyListings() {
                           <button disabled={submittingId === item.id} className="btn-secondary px-3 py-1.5 text-sm" onClick={() => startEdit(item, 'clauses')}>{'附加条款编辑'}</button>
                           <button
                             disabled={submittingId === item.id}
-                            className="rounded-xl border border-red-500/25 bg-red-500/12 px-3 py-1.5 text-sm font-medium text-red-200 transition hover:bg-red-500/18 disabled:opacity-60"
+                            className="rounded-2xl border border-red-500/25 bg-red-500/12 px-3 py-1.5 text-sm font-medium text-red-200 transition hover:bg-red-500/18 disabled:opacity-60"
                             onClick={() => {
                               if (confirm('确认销毁该房源吗？销毁后不可恢复。')) {
                                 updateStatusOnchain(item.id, 'closed');
@@ -678,7 +678,7 @@ export default function MyListings() {
                           </label>
                         </div>
 
-                        <div className="mt-3 rounded-xl border border-white/8 bg-white/6 p-4 backdrop-blur-sm">
+                        <div className="mt-3 rounded-2xl border border-white/8 bg-white/6 p-4 backdrop-blur-sm">
                           <p className="text-xs text-slate-500">{'以下字段仅展示，不支持编辑'}</p>
                           <p className="mt-2 text-sm text-slate-300">{'标题：'}{item.title || '-'}</p>
                           <div className="flex items-center justify-between gap-3">
@@ -727,7 +727,7 @@ export default function MyListings() {
                           </div>
                           <input
                             type="file"
-                            className="mt-2 block w-full text-xs text-slate-300 file:mr-3 file:rounded-xl file:border-0 file:bg-white/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-slate-100"
+                            className="mt-2 block w-full text-xs text-slate-300 file:mr-3 file:rounded-2xl file:border-0 file:bg-white/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-slate-100"
                             accept="image/jpeg,image/png,image/webp"
                             multiple
                             disabled={isSubmissionLocked}
