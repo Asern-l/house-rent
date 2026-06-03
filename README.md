@@ -252,7 +252,9 @@ CHAIN_ENV=sepolia
 JSON_BODY_LIMIT=100mb
 PAYMENT_WINDOW_HOURS=2
 
-# AI 智能搜索，可不配置
+# AI 智能搜索（DeepSeek API）
+# 填入后，/listings 智能搜索将调用 DeepSeek 解析自然语言，否则降级为本地正则解析
+# 申请地址：https://platform.deepseek.com
 # DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 
 # RPC
@@ -386,6 +388,7 @@ powershell -ExecutionPolicy Bypass -File <script-path>
 | 链上操作台账与通知 | 已实现 |
 | 独立 verifier 合约配置管理、PDF 验真、房源验真、房源详情和应急操作 | 已实现 |
 | 服务端房源筛选、智能搜索解析引擎标识和 Local 演示数据注入 | 已实现 |
+| AI 智能搜索 sortBy 支持（价格、面积、最新）与客户端即时排序 | 已实现 |
 
 ---
 
