@@ -18,6 +18,7 @@
       <button class="tab is-active" data-tab="contract">合同 PDF 验真</button>
       <button class="tab" data-tab="listing">房源验真</button>
       <button class="tab" data-tab="listing-detail">房源详情</button>
+      <button class="tab" data-tab="emergency">应急操作</button>
     </section>
 
     <section class="panel" data-panel="config">
@@ -182,6 +183,29 @@
         <div id="status-listing-detail" class="status">等待开始</div>
         <div id="result-listing-detail" class="result-body">
           <p class="muted">尚未执行房源详情查询。</p>
+        </div>
+      </section>
+    </section>
+
+    <section class="panel" data-panel="emergency">
+      <form id="emergency-form" class="card">
+        <label class="field">
+          <span>合约配置</span>
+          <select name="configName" class="config-select"></select>
+        </label>
+        <label class="field">
+          <span>合同 ID</span>
+          <input type="text" name="contractId" placeholder="cnt_xxx" required>
+        </label>
+        <div class="actions">
+          <button type="submit">读取应急释放状态</button>
+        </div>
+        <p class="hint">应急操作只使用已保存的合约配置和合同 ID。触发释放时由房东钱包签名，工具不接触私钥。</p>
+      </form>
+      <section class="result card">
+        <div id="status-emergency" class="status">等待开始</div>
+        <div id="result-emergency" class="result-body">
+          <p class="muted">尚未读取应急释放状态。</p>
         </div>
       </section>
     </section>

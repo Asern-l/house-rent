@@ -1,15 +1,18 @@
 const path = require('path');
 const express = require('express');
 const multer = require('multer');
+const { ethers } = require('./lib/deps');
 const {
   listContractConfigs,
   upsertContractConfig,
   activateContractConfig,
   parseContractConfigText,
   getDefaultRpcUrl,
+  resolveRuntime,
+  ensureProviderReady,
 } = require('./lib/runtime');
 const { fetchListingDetail, verifyListingLocally } = require('./scripts/verify-listing');
-const { verifyContractPdfBuffer } = require('./scripts/verify-contract-pdf');
+const { deriveEmergencyRelease, verifyContractPdfBuffer } = require('./scripts/verify-contract-pdf');
 
 const app = express();
 const upload = multer({
@@ -125,6 +128,44 @@ app.post('/api/listing-detail', async (req, res) => {
   }
 });
 
+app.post('/api/emergency-release-state', async (req, res) => {
+  try {
+    const configName = String(req.body?.configName || '').trim();
+    const contractId = String(req.body?.contractId || '').trim();
+    if (!configName) {
+      return res.status(400).json({ ok: false, error: '缺少合约配置' });
+    }
+    if (!contractId) {
+      return res.status(400).json({ ok: false, error: '缺少合同 ID' });
+    }
+    const runtime = resolveRuntime('', { 'config-name': configName });
+    const provider = new ethers.JsonRpcProvider(runtime.rpcUrl);
+    await ensureProviderReady(provider, runtime.rpcUrl);
+    const contract = new ethers.Contract(runtime.contractAddress, runtime.abi, provider);
+    const rawRecord = await contract.getContractRecord(contractId);
+    const record = typeof rawRecord.toObject === 'function' ? rawRecord.toObject() : rawRecord;
+    if (!record.exists) {
+      return res.status(404).json({ ok: false, error: `链上未找到合同：${contractId}` });
+    }
+    return res.json({
+      ok: true,
+      result: {
+        selectedConfigName: runtime.selectedConfigName || configName,
+        chainId: runtime.deploymentMeta?.chainId || 0,
+        rpcUrl: runtime.rpcUrl,
+        contractAddress: runtime.contractAddress,
+        contractId,
+        emergencyRelease: deriveEmergencyRelease(record, runtime, contractId),
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error.message || '读取应急释放状态失败',
+    });
+  }
+});
+
 app.post('/api/verify/contract-pdf', upload.single('pdf'), async (req, res) => {
   try {
     if (!req.file?.buffer) {
@@ -134,6 +175,7 @@ app.post('/api/verify/contract-pdf', upload.single('pdf'), async (req, res) => {
       pdfBuffer: req.file.buffer,
       pdfPath: req.file.originalname || '',
       network: String(req.body?.network || '').trim(),
+      configName: String(req.body?.configName || '').trim(),
       rpcUrl: String(req.body?.rpcUrl || '').trim(),
       contractAddress: String(req.body?.contractAddress || '').trim(),
       verifyListing: toBooleanFlag(req.body?.verifyListing),

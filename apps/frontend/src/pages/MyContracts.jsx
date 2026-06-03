@@ -13,7 +13,8 @@ const STATUS_MAP = {
   pending_payment: { label: '待支付', color: 'badge-yellow' },
   active: { label: '已生效', color: 'badge-green' },
   ended: { label: '已结束', color: 'badge-gray' },
-  cancelled: { label: '已取消', color: 'badge-red' },
+  cancelled_before_payment: { label: '已取消', color: 'badge-red' },
+  terminated_early: { label: '提前解约', color: 'badge-red' },
   expired: { label: '已过期', color: 'badge-gray' },
 };
 

@@ -34,6 +34,8 @@ function kindLabel(kind) {
     'contract.payment_confirmed': '支付确认',
     'contract.gas_refund_ready': 'Gas 预付取回',
     'contract.cancelled_by_party': '合同取消',
+    'contract.terminated_early': '提前解约',
+    'contract.rent_released': '托管月租释放',
     'contract.payment_timeout_cancelled': '支付超时取消',
     'contract.sign_timeout_expired': '签约超时关闭',
     'contract.ended_by_time': '合同结束',

@@ -21,6 +21,466 @@
     "type": "constructor"
   },
   {
+    "inputs": [],
+    "name": "AuthorizationAlreadyExists",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "AuthorizationContentHashMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "AuthorizationExpired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "AuthorizationLandlordMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "AuthorizationNotFound",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "AuthorizationTenantMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "CapWeiMustBePositive",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "CommentCidRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "CommentHashRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ContentHashRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ContractAlreadyExists",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ContractIdRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ContractNotActive",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ContractNotExpired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ContractNotFound",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ContractNotPayable",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ContractNotReleasable",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ContractNotReviewable",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ContractNotTerminable",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "EscrowAlreadyReleased",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "EscrowValueMustEqualCapWei",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "FeedbackTypeOutOfRange",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InitialAmountWeiRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidAuthorizationSignature",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidAuthorizationStatus",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidContractRange",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidLandlord",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidPaymentAmount",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidPermitSigner",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidTenant",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "LandlordMessageHashRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "LandlordMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "LandlordReimbursementTransferFailed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "LandlordSignedAtRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "LeaseMonthsRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ListingAlreadyClosed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ListingAlreadyExists",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ListingBlockedByExistingContractChain",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ListingHasNoContractChain",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ListingIdRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ListingNotActive",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ListingNotFound",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "MinLeaseMonthsMustBePositive",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NewContentHashRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NewMinLeaseMonthsMustBePositive",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NewRentAmountWeiMustBePositive",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NewSnapshotCidRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NewSnapshotHashRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NoReleasableRent",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NonceMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyActiveAuthorizationCanRevoke",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyContractParties",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyLandlord",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyReleaseManager",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyTenantCanLockEscrow",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyTenantCanPay",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyTenantCanReview",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyTenantCanRevoke",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyTenantCanTerminate",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ParentContractAlreadyExpired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ParentContractClosed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ParentContractNotFound",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ParentContractUnavailable",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ParentLandlordMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ParentListingMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ParentTenantMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PaymentDeadlineExpired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PaymentWindowRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PermitAlreadyUsed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PermitExpired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PermitSignatureRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PlatformFeeRecipientRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "RatingOutOfRange",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "RefundFailed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ReleaseAmountZero",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ReleaseTransferFailed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "RenewalChildAlreadyExists",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "RenewalStartMustEqualParentEndAtMs",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "RentAmountWeiMustBePositive",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ReviewAlreadySubmitted",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ReviewNotOpen",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ReviewWindowClosed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "SnapshotCidRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "SnapshotHashRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "StatusUnchanged",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TenantMessageHashRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TenantRefundTransferFailed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TenantSignedAtRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TransferFeeFailed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TransferGuaranteeFailed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TrustedSignerRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "VersionMismatch",
+    "type": "error"
+  },
+  {
     "anonymous": false,
     "inputs": [
       {
@@ -61,6 +521,49 @@
       }
     ],
     "name": "ContractCreated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "string",
+        "name": "contractId",
+        "type": "string"
+      },
+      {
+        "indexed": true,
+        "internalType": "string",
+        "name": "listingId",
+        "type": "string"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "tenant",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "landlordSettledWei",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "refundedWei",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "terminatedAtMs",
+        "type": "uint256"
+      }
+    ],
+    "name": "ContractEarlyTerminated",
     "type": "event"
   },
   {
@@ -578,7 +1081,13 @@
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "landlordNetWei",
+        "name": "performanceGuaranteeWei",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "escrowWei",
         "type": "uint256"
       },
       {
@@ -601,6 +1110,55 @@
       }
     ],
     "name": "RentPaymentRecorded",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "string",
+        "name": "contractId",
+        "type": "string"
+      },
+      {
+        "indexed": true,
+        "internalType": "string",
+        "name": "listingId",
+        "type": "string"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "landlord",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint16",
+        "name": "releasedPeriods",
+        "type": "uint16"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amountWei",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "releasedWei",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "releasedAt",
+        "type": "uint256"
+      }
+    ],
+    "name": "RentReleased",
     "type": "event"
   },
   {
@@ -681,6 +1239,19 @@
   {
     "inputs": [],
     "name": "GAS_REIMBURSE_MULTIPLIER",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "PERFORMANCE_GUARANTEE_BPS",
     "outputs": [
       {
         "internalType": "uint256",
@@ -806,6 +1377,11 @@
             "internalType": "uint256",
             "name": "endAtMs",
             "type": "uint256"
+          },
+          {
+            "internalType": "uint16",
+            "name": "leaseMonths",
+            "type": "uint16"
           },
           {
             "internalType": "bytes32",
@@ -1044,6 +1620,46 @@
           {
             "internalType": "uint256",
             "name": "landlordSignedAt",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint16",
+            "name": "leaseMonths",
+            "type": "uint16"
+          },
+          {
+            "internalType": "uint256",
+            "name": "escrowTotalWei",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "performanceGuaranteeWei",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "monthlyReleaseWei",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "releasedWei",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "refundedWei",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint16",
+            "name": "releasedPeriods",
+            "type": "uint16"
+          },
+          {
+            "internalType": "uint256",
+            "name": "terminatedAtMs",
             "type": "uint256"
           },
           {
@@ -1401,6 +2017,19 @@
         "internalType": "string",
         "name": "contractId",
         "type": "string"
+      }
+    ],
+    "name": "releaseDueRent",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "contractId",
+        "type": "string"
       },
       {
         "internalType": "address",
@@ -1543,6 +2172,19 @@
       }
     ],
     "name": "submitRentalReview",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "contractId",
+        "type": "string"
+      }
+    ],
+    "name": "terminateContractEarly",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

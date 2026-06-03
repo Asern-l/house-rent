@@ -44,6 +44,8 @@ const SEMANTIC_STATE_LABELS = {
   future_reserved: '待生效',
   effective: '当前有效',
   expired: '已过期',
+  terminated_early: '提前解约',
+  cancelled_before_payment: '已取消',
   inactive: '未生效',
   missing: '链上缺失',
 };
@@ -298,6 +300,13 @@ export default function VerifyPage({ onClose }) {
                   <Grid>
                     <KeyValue label="合约地址" value={result.onchain?.contractAddress || '-'} mono />
                     <KeyValue label="链上合同状态" value={result.onchain?.status || '-'} />
+                    <KeyValue label="链上租期（月）" value={String(result.onchain?.leaseMonths ?? '-')} />
+                    <KeyValue label="链上履约保证金(wei)" value={result.onchain?.performanceGuaranteeWei || '-'} mono />
+                    <KeyValue label="链上托管总额(wei)" value={result.onchain?.escrowTotalWei || '-'} mono />
+                    <KeyValue label="链上每月释放(wei)" value={result.onchain?.monthlyReleaseWei || '-'} mono />
+                    <KeyValue label="已释放金额(wei)" value={result.onchain?.releasedWei || '-'} mono />
+                    <KeyValue label="已退款金额(wei)" value={result.onchain?.refundedWei || '-'} mono />
+                    <KeyValue label="已释放期数" value={String(result.onchain?.releasedPeriods ?? '-')} />
                     <KeyValue label="链上租客消息哈希" value={result.onchain?.tenantMessageHash || '-'} mono />
                     <KeyValue label="链上房东消息哈希" value={result.onchain?.landlordMessageHash || '-'} mono />
                     <KeyValue label="链上锚定总结果" value={result.onchainAnchored ? '通过' : '未通过'} />
@@ -337,6 +346,17 @@ export default function VerifyPage({ onClose }) {
                 <>
                   <KeyValue label="首笔支付交易" value={result.initialPayment.txHash} mono />
                   {txExplorerBase && <ExplorerLink href={`${txExplorerBase}${result.initialPayment.txHash}`} text="在区块浏览器查看首笔支付交易" />}
+                </>
+              )}
+              {(result.initialPayment?.performanceGuaranteeAmount || result.initialPayment?.escrowAmount || result.initialPayment?.monthlyReleaseAmount) && (
+                <>
+                  <div className="mt-3" />
+                  <Grid>
+                    <KeyValue label="履约保证金比例" value={result.initialPayment?.performanceGuaranteeBps ? `${result.initialPayment.performanceGuaranteeBps} bps` : '-'} />
+                    <KeyValue label="履约保证金" value={result.initialPayment?.performanceGuaranteeAmount ? `${result.initialPayment.performanceGuaranteeAmount} ETH` : '-'} />
+                    <KeyValue label="托管金额" value={result.initialPayment?.escrowAmount ? `${result.initialPayment.escrowAmount} ETH` : '-'} />
+                    <KeyValue label="每月释放金额" value={result.initialPayment?.monthlyReleaseAmount ? `${result.initialPayment.monthlyReleaseAmount} ETH` : '-'} />
+                  </Grid>
                 </>
               )}
             </InfoPanel>

@@ -992,7 +992,7 @@ async function attachPublicListingState(rows) {
     `SELECT id, listing_id, status, content_json, expires_at, payment_deadline, parent_contract_id
      FROM contracts
      WHERE listing_id IN (${placeholders})
-       AND status NOT IN ('cancelled', 'expired', 'ended')`,
+       AND status NOT IN ('cancelled_before_payment', 'expired', 'ended', 'terminated_early')`,
     ids
   ));
   const byListing = new Map();
@@ -1215,10 +1215,21 @@ router.get('/:id', asyncHandler(async (req, res) => {
     created_at: item.created_at,
   }));
   const tenantReviews = parseResult(db.exec(
-    `SELECT id, contract_id, tenant_wallet, rating, weight, comment_text, comment_cid, comment_hash, created_at
-     FROM contract_reviews
-     WHERE listing_id = ?
-     ORDER BY created_at DESC
+    `SELECT
+        r.id,
+        r.contract_id,
+        r.tenant_wallet,
+        r.rating,
+        r.weight,
+        r.comment_text,
+        r.comment_cid,
+        r.comment_hash,
+        r.created_at,
+        COALESCE(c.status, '') AS contract_status
+     FROM contract_reviews r
+     LEFT JOIN contracts c ON c.id = r.contract_id
+     WHERE r.listing_id = ?
+     ORDER BY r.created_at DESC
      LIMIT 50`,
     [req.params.id]
   )).map((item) => ({
@@ -1232,6 +1243,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
     comment_cid: String(item.comment_cid || '').trim(),
     comment_gateway_url: buildGatewayUrl(item.comment_cid),
     created_at: item.created_at,
+    early_terminated: String(item.contract_status || '').trim().toLowerCase() === 'terminated_early',
   }));
   const reviewCount = tenantReviews.length;
   const weightSum = tenantReviews.reduce((sum, item) => sum + Number(item.weight || 1), 0);

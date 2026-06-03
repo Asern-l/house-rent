@@ -22,6 +22,10 @@ const panelViews = {
     statusEl: document.getElementById('status-listing-detail'),
     resultEl: document.getElementById('result-listing-detail'),
   },
+  emergency: {
+    statusEl: document.getElementById('status-emergency'),
+    resultEl: document.getElementById('result-emergency'),
+  },
 };
 
 const configStoreState = {
@@ -36,6 +40,52 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function findSavedConfigByName(name) {
+  const target = String(name || '').trim().toLowerCase();
+  if (!target) return null;
+  return configStoreState.configs.find((item) => String(item.name || '').trim().toLowerCase() === target) || null;
+}
+
+async function ensureWalletOnChain({ chainId, chainIdHex, chainName, rpcUrl }) {
+  if (!window.ethereum) {
+    throw new Error('未检测到浏览器钱包，请先安装并启用 MetaMask 等 EVM 钱包。');
+  }
+  const targetHex = chainIdHex || `0x${Number(chainId || 0).toString(16)}`;
+  try {
+    await window.ethereum.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: targetHex }],
+    });
+  } catch (error) {
+    if (error?.code !== 4902) throw error;
+    await window.ethereum.request({
+      method: 'wallet_addEthereumChain',
+      params: [{
+        chainId: targetHex,
+        chainName: chainName || `Chain ${Number(chainId || 0)}`,
+        rpcUrls: rpcUrl ? [rpcUrl] : [],
+        nativeCurrency: {
+          name: 'Ether',
+          symbol: 'ETH',
+          decimals: 18,
+        },
+      }],
+    });
+  }
+}
+
+async function requestWalletAccount() {
+  if (!window.ethereum) {
+    throw new Error('未检测到浏览器钱包，请先安装并启用 MetaMask 等 EVM 钱包。');
+  }
+  const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+  const first = Array.isArray(accounts) && accounts[0] ? String(accounts[0]).toLowerCase() : '';
+  if (!first) {
+    throw new Error('当前钱包未返回可用账户。');
+  }
+  return first;
 }
 
 function getPanelView(panelName) {
@@ -294,6 +344,56 @@ function renderListingDetailResult(result) {
   `;
 }
 
+function renderEmergencyReleaseSection(release) {
+  if (!release) {
+    return '<section class="section-block"><h3>应急托管月租释放</h3><p class="muted">未读取到应急释放状态。</p></section>';
+  }
+  return `
+    <section class="section-block">
+      <h3>应急托管月租释放</h3>
+      ${renderKeyValueGrid([
+        { label: '配置名称', value: release.selectedConfigName || '-' },
+        { label: '合同 ID', value: release.contractId || '-' },
+        { label: '当前状态', value: release.status || '-' },
+        { label: '是否可释放', value: release.canReleaseNow ? '是' : '否' },
+        { label: '已释放期数', value: release.releasedPeriods ?? '-' },
+        { label: '已赚到期数', value: release.earnedPeriods ?? '-' },
+        { label: '已释放金额', value: release.releasedWei || '0' },
+        { label: '剩余托管金额', value: release.remainingEscrowWei || '0' },
+      ])}
+      <p class="muted">${escapeHtml(release.reasonMessage || '')}</p>
+      ${release.canReleaseNow && release.preparedTx ? `
+        <div class="actions">
+          <button
+            type="button"
+            data-action="emergency-release-rent"
+            data-config-name="${escapeHtml(release.selectedConfigName || '')}"
+            data-chain-id="${escapeHtml(String(release.preparedTx.chainId || ''))}"
+            data-chain-id-hex="${escapeHtml(String(release.preparedTx.chainIdHex || ''))}"
+            data-rpc-url="${escapeHtml(String(release.preparedTx.rpcUrl || ''))}"
+            data-chain-name="${escapeHtml(String(release.preparedTx.configName || release.selectedConfigName || ''))}"
+            data-contract-address="${escapeHtml(String(release.preparedTx.to || ''))}"
+            data-contract-id="${escapeHtml(String(release.contractId || ''))}"
+            data-landlord="${escapeHtml(String(release.landlord || ''))}"
+            data-tx-data="${escapeHtml(String(release.preparedTx.data || ''))}">
+            用房东钱包应急触发释放
+          </button>
+        </div>
+      ` : ''}
+    </section>
+  `;
+}
+
+function renderEmergencyResult(result) {
+  return `
+    ${renderEmergencyReleaseSection(result.emergencyRelease)}
+    <details class="raw-block">
+      <summary>查看原始 JSON</summary>
+      <pre class="output">${escapeHtml(JSON.stringify(result, null, 2))}</pre>
+    </details>
+  `;
+}
+
 function renderContractResult(result) {
   const lifecycle = result.lifecycle || {};
   const summary = renderKeyValueGrid([
@@ -384,6 +484,10 @@ function showResult(panelName, value, type = 'raw') {
   }
   if (type === 'listing-detail' && value && typeof value === 'object') {
     resultEl.innerHTML = renderListingDetailResult(value);
+    return;
+  }
+  if (type === 'emergency' && value && typeof value === 'object') {
+    resultEl.innerHTML = renderEmergencyResult(value);
     return;
   }
   showRawResult(panelName, value);
@@ -636,6 +740,77 @@ document.getElementById('listing-detail-form').addEventListener('submit', async 
   }
 });
 
+document.getElementById('emergency-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const formData = new FormData(event.currentTarget);
+  const configName = String(formData.get('configName') || '').trim();
+  const contractId = String(formData.get('contractId') || '').trim();
+  if (!configName) {
+    setStatus('emergency', '请先选择一个合约配置', 'error');
+    showResult('emergency', '未选择合约配置');
+    return;
+  }
+  if (!contractId) {
+    setStatus('emergency', '请填写合同 ID', 'error');
+    showResult('emergency', '合同 ID 为空');
+    return;
+  }
+
+  setStatus('emergency', '正在读取应急释放状态...');
+  showResult('emergency', '请求已发送');
+
+  try {
+    const result = await postJson('/api/emergency-release-state', {
+      configName,
+      contractId,
+    });
+    setStatus('emergency', '应急释放状态读取完成', 'ok');
+    showResult('emergency', result, 'emergency');
+  } catch (error) {
+    setStatus('emergency', '应急释放状态读取失败', 'error');
+    showResult('emergency', error.message || '未知错误');
+  }
+});
+
+async function handleEmergencyReleaseClick(event) {
+  const releaseButton = event.target.closest('[data-action="emergency-release-rent"]');
+  if (!releaseButton) return;
+
+  try {
+    releaseButton.disabled = true;
+    setStatus('emergency', '正在连接钱包并发起应急释放交易...');
+    const configName = String(releaseButton.dataset.configName || '').trim();
+    const landlord = String(releaseButton.dataset.landlord || '').trim().toLowerCase();
+    const chainId = Number(releaseButton.dataset.chainId || 0);
+    const chainIdHex = String(releaseButton.dataset.chainIdHex || '').trim();
+    const rpcUrl = String(releaseButton.dataset.rpcUrl || '').trim();
+    const chainName = String(releaseButton.dataset.chainName || '').trim() || configName;
+    const to = String(releaseButton.dataset.contractAddress || '').trim();
+    const data = String(releaseButton.dataset.txData || '').trim();
+    const contractId = String(releaseButton.dataset.contractId || '').trim();
+
+    if (!configName || !findSavedConfigByName(configName)) {
+      throw new Error('当前合同尚未匹配到已保存的合约配置，请先在“合约配置”页保存并设为当前配置。');
+    }
+    await ensureWalletOnChain({ chainId, chainIdHex, chainName, rpcUrl });
+    const account = await requestWalletAccount();
+    if (landlord && account !== landlord) {
+      throw new Error(`当前连接的钱包不是房东地址。请切换到房东钱包后再触发释放。房东地址：${landlord}`);
+    }
+    const txHash = await window.ethereum.request({
+      method: 'eth_sendTransaction',
+      params: [{ from: account, to, data }],
+    });
+    setStatus('emergency', `应急释放交易已发出：${txHash}`, 'ok');
+    showResult('emergency', `合同 ${contractId} 的托管月租释放交易已提交。\n交易哈希：${txHash}`);
+  } catch (error) {
+    setStatus('emergency', '应急释放失败', 'error');
+    showResult('emergency', error.message || '未能完成应急释放');
+  } finally {
+    releaseButton.disabled = false;
+  }
+}
+
 getPanelView('contract').resultEl.addEventListener('click', (event) => {
   const button = event.target.closest('[data-action="load-contract-config"]');
   if (!button) return;
@@ -650,6 +825,8 @@ getPanelView('contract').resultEl.addEventListener('click', (event) => {
   setStatus('config', '已将 PDF 的链上智能合约配置导入表单，可自行决定是否保存', 'ok');
   setStatus('contract', '已导入到“合约配置”页，请确认后保存', 'ok');
 });
+
+getPanelView('emergency').resultEl.addEventListener('click', handleEmergencyReleaseClick);
 
 loadContractConfigs().catch((error) => {
   setStatus('config', '读取合约配置失败', 'error');

@@ -89,6 +89,43 @@ function tableSqlContainsAll(sql, fragments) {
   return fragments.every((fragment) => String(sql).includes(fragment));
 }
 
+function createContractsTableSql(tableName = 'contracts') {
+  return `CREATE TABLE IF NOT EXISTS ${tableName} (
+    id TEXT PRIMARY KEY,
+    listing_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    landlord_id TEXT NOT NULL,
+    content_json TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','tenant_signed','pending_payment','active','ended','cancelled_before_payment','expired','terminated_early')),
+    expires_at TEXT NOT NULL,
+    tenant_signed_at TEXT,
+    landlord_signed_at TEXT,
+    tenant_signer_address TEXT DEFAULT '',
+    landlord_signer_address TEXT DEFAULT '',
+    tenant_signature TEXT DEFAULT '',
+    landlord_signature TEXT DEFAULT '',
+    tenant_signature_message TEXT DEFAULT '',
+    landlord_signature_message TEXT DEFAULT '',
+    tenant_sign_ip TEXT DEFAULT '',
+    landlord_sign_ip TEXT DEFAULT '',
+    tenant_sign_user_agent TEXT DEFAULT '',
+    landlord_sign_user_agent TEXT DEFAULT '',
+    tenant_sign_request_id TEXT DEFAULT '',
+    landlord_sign_request_id TEXT DEFAULT '',
+    payment_deadline TEXT DEFAULT '',
+    terminated_early_at TEXT DEFAULT '',
+    negotiation_status TEXT NOT NULL DEFAULT 'draft' CHECK(negotiation_status IN ('draft','proposed','finalized','locked')),
+    version INTEGER NOT NULL DEFAULT 1,
+    parent_contract_id TEXT DEFAULT '',
+    finalized_at TEXT,
+    tenant_finalized_at TEXT DEFAULT '',
+    landlord_finalized_at TEXT DEFAULT '',
+    tx_hash TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
+  )`;
+}
+
 function ensureNotificationTable(d) {
   d.run(`CREATE TABLE IF NOT EXISTS notifications (
     id TEXT PRIMARY KEY,
@@ -141,7 +178,7 @@ function assertStrictSchema(d) {
     'tenant_signed_at', 'landlord_signed_at', 'tenant_signer_address', 'landlord_signer_address',
     'tenant_signature', 'landlord_signature', 'tenant_signature_message', 'landlord_signature_message',
     'tenant_sign_ip', 'landlord_sign_ip', 'tenant_sign_user_agent', 'landlord_sign_user_agent',
-    'tenant_sign_request_id', 'landlord_sign_request_id', 'payment_deadline',
+    'tenant_sign_request_id', 'landlord_sign_request_id', 'payment_deadline', 'terminated_early_at',
     'negotiation_status', 'version', 'parent_contract_id', 'finalized_at',
     'tenant_finalized_at', 'landlord_finalized_at', 'tx_hash', 'created_at'
   ]);
@@ -241,39 +278,7 @@ async function migrate() {
     updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
   )`);
 
-  d.run(`CREATE TABLE IF NOT EXISTS contracts (
-    id TEXT PRIMARY KEY,
-    listing_id TEXT NOT NULL,
-    tenant_id TEXT NOT NULL,
-    landlord_id TEXT NOT NULL,
-    content_json TEXT NOT NULL,
-    content_hash TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','tenant_signed','pending_payment','active','ended','cancelled','expired')),
-    expires_at TEXT NOT NULL,
-    tenant_signed_at TEXT,
-    landlord_signed_at TEXT,
-    tenant_signer_address TEXT DEFAULT '',
-    landlord_signer_address TEXT DEFAULT '',
-    tenant_signature TEXT DEFAULT '',
-    landlord_signature TEXT DEFAULT '',
-    tenant_signature_message TEXT DEFAULT '',
-    landlord_signature_message TEXT DEFAULT '',
-    tenant_sign_ip TEXT DEFAULT '',
-    landlord_sign_ip TEXT DEFAULT '',
-    tenant_sign_user_agent TEXT DEFAULT '',
-    landlord_sign_user_agent TEXT DEFAULT '',
-    tenant_sign_request_id TEXT DEFAULT '',
-    landlord_sign_request_id TEXT DEFAULT '',
-    payment_deadline TEXT DEFAULT '',
-    negotiation_status TEXT NOT NULL DEFAULT 'draft' CHECK(negotiation_status IN ('draft','proposed','finalized','locked')),
-    version INTEGER NOT NULL DEFAULT 1,
-    parent_contract_id TEXT DEFAULT '',
-    finalized_at TEXT,
-    tenant_finalized_at TEXT DEFAULT '',
-    landlord_finalized_at TEXT DEFAULT '',
-    tx_hash TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
-  )`);
+  d.run(createContractsTableSql('contracts'));
 
   d.run(`CREATE TABLE IF NOT EXISTS payments (
     id TEXT PRIMARY KEY,

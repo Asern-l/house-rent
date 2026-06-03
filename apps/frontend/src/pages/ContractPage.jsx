@@ -144,6 +144,32 @@ function resolveLandlordNetAmount(content) {
   return String((gross - fee).toFixed(8).replace(/\.?0+$/, ''));
 }
 
+function resolvePerformanceGuaranteeAmount(content) {
+  const direct = Number(content?.performanceGuaranteeAmount);
+  if (Number.isFinite(direct) && direct >= 0) return String(content.performanceGuaranteeAmount);
+  const landlordNet = Number(resolveLandlordNetAmount(content));
+  if (!Number.isFinite(landlordNet) || landlordNet <= 0) return '';
+  return String((landlordNet * 0.1).toFixed(8).replace(/\.?0+$/, ''));
+}
+
+function resolveEscrowAmount(content) {
+  const direct = Number(content?.escrowAmount);
+  if (Number.isFinite(direct) && direct >= 0) return String(content.escrowAmount);
+  const landlordNet = Number(resolveLandlordNetAmount(content));
+  const guarantee = Number(resolvePerformanceGuaranteeAmount(content) || 0);
+  if (!Number.isFinite(landlordNet) || landlordNet <= 0) return '';
+  return String((landlordNet - guarantee).toFixed(8).replace(/\.?0+$/, ''));
+}
+
+function resolveMonthlyReleaseAmount(content) {
+  const direct = Number(content?.monthlyReleaseAmount);
+  if (Number.isFinite(direct) && direct >= 0) return String(content.monthlyReleaseAmount);
+  const escrow = Number(resolveEscrowAmount(content));
+  const months = Number(content?.terms?.leaseMonths);
+  if (!Number.isFinite(escrow) || escrow <= 0 || !Number.isFinite(months) || months <= 0) return '';
+  return String((escrow / months).toFixed(8).replace(/\.?0+$/, ''));
+}
+
 function createSignMessage({ contractId, contentHash, role, signerAddress, timestamp, deadline }) {
   return [
     'Onchain Housing Contract Signature',
@@ -212,7 +238,8 @@ const STATUS_MAP = {
   landlord_signed: { label: '房东已签', color: 'badge-blue' },
   active:          { label: '已生效', color: 'badge-green' },
   ended:           { label: '已结束', color: 'badge-gray' },
-  cancelled:       { label: '已取消', color: 'badge-red' },
+  cancelled_before_payment: { label: '未付款取消', color: 'badge-red' },
+  terminated_early:{ label: '提前解约', color: 'badge-red' },
   expired:         { label: '已过期', color: 'badge-gray' },
 };
 
@@ -271,6 +298,9 @@ export default function ContractPage() {
   const initialAmount = resolveInitialAmount(content);
   const platformFeeAmount = resolvePlatformFeeAmount(content);
   const landlordNetAmount = resolveLandlordNetAmount(content);
+  const performanceGuaranteeAmount = resolvePerformanceGuaranteeAmount(content);
+  const escrowAmount = resolveEscrowAmount(content);
+  const monthlyReleaseAmount = resolveMonthlyReleaseAmount(content);
   const selectedNetwork = NETWORK_OPTIONS.find((x) => x.key === preferredNetwork) || NETWORK_OPTIONS[0];
   const txExplorerBase = TX_EXPLORER_BASE[selectedNetwork.key] || '';
   const isActionBusy = signing || paying || proposing || cancelling;
@@ -716,6 +746,56 @@ export default function ContractPage() {
     }
   };
 
+  const handleTerminateEarly = async () => {
+    if (!confirm('确认要提前解约吗？未释放的托管月租将按规则退回，10%履约保证金不退。')) return;
+    setCancelling(true);
+    try {
+      if (!window.ethereum) { toast.error('请先安装 MetaMask 钱包'); return; }
+      const selected = NETWORK_OPTIONS.find((x) => x.key === preferredNetwork) || NETWORK_OPTIONS[0];
+      const contractAddr = String(CONTRACT_ADDR_MAP[selected.key] || '').trim();
+      if (!ethers.isAddress(contractAddr)) {
+        toast.error(`VITE_CONTRACT_ADDRESS_${selected.key.toUpperCase()} 未配置或格式无效`);
+        return;
+      }
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const network = await provider.getNetwork();
+      if (Number(network.chainId) !== selected.chainId) {
+        await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: selected.chainIdHex }] });
+      }
+      const signer = await provider.getSigner();
+      const signerAddress = String((await signer.getAddress()) || '').trim();
+      const boundAddress = expectedWallet('tenant');
+      if (boundAddress && signerAddress.toLowerCase() !== boundAddress) {
+        toast.error(`当前钱包与合同绑定租客地址不一致：${boundAddress}`);
+        return;
+      }
+      const chainContract = new ethers.Contract(contractAddr, RentalChainABI, signer);
+      await chainContract.terminateContractEarly.staticCall(id);
+      const tx = await chainContract.terminateContractEarly(id);
+      await tx.wait();
+      await apiPost(`/contracts/${id}/terminate-early/onchain`, { txHash: String(tx.hash || '') });
+      setLastTxHash(String(tx.hash || ''));
+      toast.success('提前解约已确认');
+      await loadContract();
+      navigate('/contracts');
+    } catch (err) {
+      const requestId = genRequestId();
+      await apiPost(`/contracts/${id}/sign-client-report`, {
+        type: 'terminate_early',
+        preferredNetwork,
+        message: err?.message || '提前解约失败',
+        apiStatus: err.response?.status || null,
+        apiError: err.response?.data || null,
+        walletAddress: '',
+        chainId: '',
+        pageUrl: window.location.href,
+      }, { headers: { 'X-Request-Id': requestId } }).catch(() => {});
+      toast.error(err.response?.data?.error || getErrorMessage(err) || '提前解约失败');
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const handleInitialPayment = async () => {
     if (!window.ethereum) { toast.error('请先安装 MetaMask 钱包'); return; }
     if (!initialAmount || Number(initialAmount) <= 0) { toast.error('合同首笔支付金额无效'); return; }
@@ -1054,12 +1134,14 @@ export default function ContractPage() {
   const tenantCanEditClauses = isTenant && !isNegotiationLocked;
   const negotiationDisplay = getNegotiationDisplayState({ contract, content, versions, user });
   const canCancelContract = ['pending', 'tenant_signed'].includes(contract.status) && (isTenant || isLandlord);
-  const canRefundExpiredGas = ['expired', 'cancelled'].includes(contract.status)
+  const canTerminateEarly = contract.status === 'active' && isTenant;
+  const canRefundExpiredGas = ['expired', 'cancelled_before_payment'].includes(contract.status)
     && contract?.gas_auth?.status === 'active'
     && !contract?.landlord_signed_at
     && (isTenant || isLandlord);
   const rentalReview = contract?.rental_review || null;
   const reviewState = contract?.review_state || {};
+  const earlyTerminatedReviewLabel = reviewState?.early_terminated ? '（提前解约合同）' : '';
   const canSubmitRentalReview = !!(isTenant && reviewState.can_review_as_current_user);
   const cancelActionLabel = canRefundExpiredGas ? '取回 gas 预付' : '取消合同';
   const cancelBusyLabel = canRefundExpiredGas ? '正在取回 gas 预付...' : '正在撤销授权并取消合同...';
@@ -1196,7 +1278,10 @@ export default function ContractPage() {
               <div><p className="text-gray-500">租金</p><p className="font-medium text-gray-200">{content.rentAmount} ETH / 月</p></div>
               <div><p className="text-gray-500">一次性支付总额</p><p className="font-medium text-gray-200">{initialAmount || '-'} ETH</p></div>
               <div><p className="text-gray-500">平台手续费</p><p className="font-medium text-gray-200">{platformFeeAmount || '-'} ETH</p></div>
-              <div><p className="text-gray-500">房东实收</p><p className="font-medium text-gray-200">{landlordNetAmount || '-'} ETH</p></div>
+              <div><p className="text-gray-500">履约保证金（10%）</p><p className="font-medium text-gray-200">{performanceGuaranteeAmount || '-'} ETH</p></div>
+              <div><p className="text-gray-500">托管金额（90%）</p><p className="font-medium text-gray-200">{escrowAmount || '-'} ETH</p></div>
+              <div><p className="text-gray-500">每月释放金额</p><p className="font-medium text-gray-200">{monthlyReleaseAmount || '-'} ETH</p></div>
+              <div><p className="text-gray-500">房东实收（税费后）</p><p className="font-medium text-gray-200">{landlordNetAmount || '-'} ETH</p></div>
               <div><p className="text-gray-500">支付方式</p><p className="font-medium text-gray-200">{content.terms?.paymentMethod === 'one_time' ? '一次性支付' : '按月'}</p></div>
               <div><p className="text-gray-500">租期</p><p className="font-medium text-gray-200">{content.terms?.startDate || '待定'} 至 {content.terms?.endDate || '待定'}</p></div>
             </div>
@@ -1399,7 +1484,7 @@ export default function ContractPage() {
                     如需进一步独立复核，请在支付前下载合同 PDF，并使用独立验真工具再次验证合同与房源信息。
                   </p>
                   <p className="mt-2 leading-6">
-                    当前首笔支付总额为 {initialAmount || '-'} ETH，其中平台手续费 {platformFeeAmount || '-'} ETH，房东实收 {landlordNetAmount || '-'} ETH。
+                    当前首笔支付总额为 {initialAmount || '-'} ETH，其中平台手续费 {platformFeeAmount || '-'} ETH，履约保证金 {performanceGuaranteeAmount || '-'} ETH 直接支付给房东，托管金额 {escrowAmount || '-'} ETH 留在合约内按月释放，每月释放 {monthlyReleaseAmount || '-'} ETH。
                   </p>
                 </div>
                 <button onClick={handleInitialPayment} disabled={isActionBusy} className="btn-primary w-full flex items-center justify-center space-x-2">
@@ -1410,6 +1495,11 @@ export default function ContractPage() {
             )}
             {contract.status === 'active' && isTenant && !hasRenewalChild && (
               <button onClick={handleCreateRenewal} disabled={isActionBusy} className="btn-secondary w-full">{cancelling ? '取消中...' : '申请续约'}</button>
+            )}
+            {canTerminateEarly && (
+              <button onClick={handleTerminateEarly} disabled={isActionBusy} className="btn-secondary w-full">
+                {cancelling ? '提前解约中...' : '提前解约'}
+              </button>
             )}
           {(canCancelContract || canRefundExpiredGas) && (
             <button onClick={handleCancel} disabled={isActionBusy} className="btn-secondary w-full">
@@ -1438,9 +1528,9 @@ export default function ContractPage() {
             <div className="mt-4 rounded-2xl border border-gray-800 bg-black/20 p-4">
               <p className="text-sm text-gray-400">
                 {canSubmitRentalReview
-                  ? `当前可评价窗口截止到：${reviewState.review_window_end_at || '-'}`
+                  ? `当前可评价${earlyTerminatedReviewLabel}，窗口截止到：${reviewState.review_window_end_at || '-'}`
                   : reviewState.review_window_end_at
-                    ? `当前不可评价。评价窗口截止到：${reviewState.review_window_end_at}`
+                    ? `当前不可评价${earlyTerminatedReviewLabel}。评价窗口截止到：${reviewState.review_window_end_at}`
                     : '当前合同暂不满足租后评价条件。'}
               </p>
 

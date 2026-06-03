@@ -13,6 +13,100 @@ contract RentalChain is ReentrancyGuard {
     bytes32 private constant ACTION_SUBMIT_RENTAL_REVIEW = keccak256("submitRentalReview");
     bytes32 private constant ACTION_SUBMIT_LISTING_FEEDBACK = keccak256("submitListingFeedback");
 
+    error PaymentWindowRequired();
+    error TrustedSignerRequired();
+    error PlatformFeeRecipientRequired();
+    error ListingNotFound();
+    error OnlyLandlord();
+    error PermitExpired();
+    error PermitSignatureRequired();
+    error PermitAlreadyUsed();
+    error InvalidPermitSigner();
+    error InvalidAuthorizationStatus();
+    error AuthorizationTenantMismatch();
+    error AuthorizationLandlordMismatch();
+    error AuthorizationContentHashMismatch();
+    error AuthorizationExpired();
+    error InvalidContractRange();
+    error ListingNotActive();
+    error InitialAmountWeiRequired();
+    error LeaseMonthsRequired();
+    error TenantMessageHashRequired();
+    error LandlordMessageHashRequired();
+    error TenantSignedAtRequired();
+    error LandlordSignedAtRequired();
+    error ListingBlockedByExistingContractChain();
+    error ListingHasNoContractChain();
+    error ParentContractNotFound();
+    error ParentListingMismatch();
+    error ParentTenantMismatch();
+    error ParentLandlordMismatch();
+    error ParentContractClosed();
+    error ParentContractAlreadyExpired();
+    error RenewalChildAlreadyExists();
+    error RenewalStartMustEqualParentEndAtMs();
+    error LandlordReimbursementTransferFailed();
+    error TenantRefundTransferFailed();
+    error ListingIdRequired();
+    error ListingAlreadyExists();
+    error ContentHashRequired();
+    error RentAmountWeiMustBePositive();
+    error MinLeaseMonthsMustBePositive();
+    error SnapshotHashRequired();
+    error SnapshotCidRequired();
+    error ContractIdRequired();
+    error InvalidTenant();
+    error InvalidLandlord();
+    error ContractAlreadyExists();
+    error ListingAlreadyClosed();
+    error NewContentHashRequired();
+    error NewRentAmountWeiMustBePositive();
+    error NewMinLeaseMonthsMustBePositive();
+    error NewSnapshotHashRequired();
+    error NewSnapshotCidRequired();
+    error VersionMismatch();
+    error NonceMismatch();
+    error StatusUnchanged();
+    error OnlyTenantCanLockEscrow();
+    error EscrowValueMustEqualCapWei();
+    error CapWeiMustBePositive();
+    error AuthorizationAlreadyExists();
+    error InvalidAuthorizationSignature();
+    error OnlyTenantCanRevoke();
+    error OnlyActiveAuthorizationCanRevoke();
+    error RefundFailed();
+    error AuthorizationNotFound();
+    error OnlyContractParties();
+    error ContractNotFound();
+    error OnlyTenantCanPay();
+    error LandlordMismatch();
+    error ContractNotPayable();
+    error InvalidPaymentAmount();
+    error PaymentDeadlineExpired();
+    error ParentContractUnavailable();
+    error TransferFeeFailed();
+    error TransferGuaranteeFailed();
+    error OnlyReleaseManager();
+    error ContractNotReleasable();
+    error EscrowAlreadyReleased();
+    error NoReleasableRent();
+    error ReleaseAmountZero();
+    error ReleaseTransferFailed();
+    error OnlyTenantCanTerminate();
+    error ContractNotTerminable();
+    error CommentHashRequired();
+    error RatingOutOfRange();
+    error CommentCidRequired();
+    error OnlyTenantCanReview();
+    error ContractNotReviewable();
+    error ReviewNotOpen();
+    error ReviewWindowClosed();
+    error ReviewAlreadySubmitted();
+    error FeedbackTypeOutOfRange();
+    error ContractNotActive();
+    error ContractNotExpired();
+
+
     enum ListingStatus {
         Active,
         Offline,
@@ -78,6 +172,14 @@ contract RentalChain is ReentrancyGuard {
         bytes32 landlordMessageHash;
         uint256 tenantSignedAt;
         uint256 landlordSignedAt;
+        uint16 leaseMonths;
+        uint256 escrowTotalWei;
+        uint256 performanceGuaranteeWei;
+        uint256 monthlyReleaseWei;
+        uint256 releasedWei;
+        uint256 refundedWei;
+        uint16 releasedPeriods;
+        uint256 terminatedAtMs;
         ContractStatus status;
         bool exists;
     }
@@ -101,6 +203,7 @@ contract RentalChain is ReentrancyGuard {
         uint256 initialAmountWei;
         uint256 startAtMs;
         uint256 endAtMs;
+        uint16 leaseMonths;
         bytes32 tenantMessageHash;
         bytes32 landlordMessageHash;
         uint256 tenantSignedAt;
@@ -124,6 +227,7 @@ contract RentalChain is ReentrancyGuard {
     uint256 public constant GAS_REIMBURSE_ESTIMATED_UNITS = 350000;
     uint256 public constant GAS_REIMBURSE_MULTIPLIER = 3;
     uint256 public constant PLATFORM_FEE_BPS = 10;
+    uint256 public constant PERFORMANCE_GUARANTEE_BPS = 1000;
     uint256 public constant BPS_DENOMINATOR = 10000;
 
     event ListingCreated(
@@ -178,10 +282,28 @@ contract RentalChain is ReentrancyGuard {
         address indexed landlord,
         uint256 amountWei,
         uint256 platformFeeWei,
-        uint256 landlordNetWei,
+        uint256 performanceGuaranteeWei,
+        uint256 escrowWei,
         address platformFeeRecipient,
         string orderNo,
         uint256 paidAt
+    );
+    event RentReleased(
+        string indexed contractId,
+        string indexed listingId,
+        address indexed landlord,
+        uint16 releasedPeriods,
+        uint256 amountWei,
+        uint256 releasedWei,
+        uint256 releasedAt
+    );
+    event ContractEarlyTerminated(
+        string indexed contractId,
+        string indexed listingId,
+        address indexed tenant,
+        uint256 landlordSettledWei,
+        uint256 refundedWei,
+        uint256 terminatedAtMs
     );
     event ContractCreated(
         string indexed contractId,
@@ -231,17 +353,17 @@ contract RentalChain is ReentrancyGuard {
     );
 
     constructor(uint256 paymentWindowMs_, address trustedSigner_, address platformFeeRecipient_) {
-        require(paymentWindowMs_ > 0, "payment window required");
-        require(trustedSigner_ != address(0), "trusted signer required");
-        require(platformFeeRecipient_ != address(0), "platform fee recipient required");
+        if (paymentWindowMs_ == 0) revert PaymentWindowRequired();
+        if (trustedSigner_ == address(0)) revert TrustedSignerRequired();
+        if (platformFeeRecipient_ == address(0)) revert PlatformFeeRecipientRequired();
         paymentWindowMs = paymentWindowMs_;
         trustedSigner = trustedSigner_;
         platformFeeRecipient = platformFeeRecipient_;
     }
 
     modifier onlyLandlord(string calldata listingId) {
-        require(_listings[listingId].exists, "listing not found");
-        require(_listings[listingId].landlord == msg.sender, "only landlord");
+        if (!_listings[listingId].exists) revert ListingNotFound();
+        if (_listings[listingId].landlord != msg.sender) revert OnlyLandlord();
         _;
     }
 
@@ -293,12 +415,12 @@ contract RentalChain is ReentrancyGuard {
         uint256 deadlineMs,
         bytes calldata signature
     ) private {
-        require(block.timestamp * 1000 <= deadlineMs, "permit expired");
-        require(signature.length > 0, "permit signature required");
+        if (block.timestamp * 1000 > deadlineMs) revert PermitExpired();
+        if (signature.length == 0) revert PermitSignatureRequired();
         bytes32 digest = _permitDigest(actionHash, caller, subjectHash, paramsHash, nonce, deadlineMs);
-        require(!_usedPermitDigests[digest], "permit already used");
+        if (_usedPermitDigests[digest]) revert PermitAlreadyUsed();
         address recovered = _recoverSigner(digest, signature);
-        require(recovered == trustedSigner, "invalid permit signer");
+        if (recovered != trustedSigner) revert InvalidPermitSigner();
         _usedPermitDigests[digest] = true;
     }
 
@@ -327,6 +449,7 @@ contract RentalChain is ReentrancyGuard {
                 p.initialAmountWei,
                 p.startAtMs,
                 p.endAtMs,
+                p.leaseMonths,
                 p.tenantMessageHash,
                 p.landlordMessageHash,
                 p.tenantSignedAt,
@@ -428,6 +551,54 @@ contract RentalChain is ReentrancyGuard {
         return false;
     }
 
+    function _earnedReleasePeriods(ContractRecord storage record) private view returns (uint16) {
+        if (record.leaseMonths == 0) return 0;
+        uint256 nowMs = block.timestamp * 1000;
+        if (nowMs <= record.startAtMs) return 0;
+        if (nowMs >= record.endAtMs) return record.leaseMonths;
+        uint256 totalRange = record.endAtMs - record.startAtMs;
+        if (totalRange == 0) return record.leaseMonths;
+        uint256 elapsed = nowMs - record.startAtMs;
+        uint256 earned = (elapsed * record.leaseMonths) / totalRange;
+        if (earned > record.leaseMonths) earned = record.leaseMonths;
+        return uint16(earned);
+    }
+
+    function _earnedEscrowWeiAt(ContractRecord storage record, uint256 atMs) private view returns (uint256) {
+        if (record.escrowTotalWei == 0) return 0;
+        if (record.endAtMs <= record.startAtMs) return 0;
+        if (atMs <= record.startAtMs) return 0;
+        if (atMs >= record.endAtMs) return record.escrowTotalWei;
+        uint256 elapsed = atMs - record.startAtMs;
+        uint256 totalRange = record.endAtMs - record.startAtMs;
+        return (record.escrowTotalWei * elapsed) / totalRange;
+    }
+
+    function _cancelFutureRenewalChildOnParentTermination(ContractRecord storage parent, uint256 terminatedAtMs) private {
+        string storage childContractId = parent.renewalChildContractId;
+        if (bytes(childContractId).length == 0) return;
+
+        ContractRecord storage child = _contracts[childContractId];
+        if (!child.exists) return;
+        if (child.startAtMs <= terminatedAtMs) return;
+        if (child.status != ContractStatus.Created && child.status != ContractStatus.Paid) return;
+
+        ContractStatus oldStatus = child.status;
+        uint256 refundWei = 0;
+        if (oldStatus == ContractStatus.Paid) {
+            refundWei = child.escrowTotalWei - child.releasedWei;
+            child.refundedWei += refundWei;
+        }
+        child.status = ContractStatus.Cancelled;
+
+        if (refundWei > 0) {
+            (bool okRefund, ) = child.tenant.call{value: refundWei}("");
+            if (!okRefund) revert TenantRefundTransferFailed();
+        }
+
+        emit ContractStatusChanged(child.contractId, child.listingId, uint8(oldStatus), uint8(ContractStatus.Cancelled), block.timestamp);
+    }
+
     function _findCurrentEffectiveContractIdFromHead(string memory headContractId) private view returns (string memory currentContractId) {
         string memory cursor = headContractId;
         while (bytes(cursor).length > 0) {
@@ -466,39 +637,40 @@ contract RentalChain is ReentrancyGuard {
     ) private view returns (bytes32 authId) {
         authId = _gasAuthId(contractId, tenant, gasAuthNonce);
         GasAuthorization storage auth = _gasAuths[authId];
-        require(auth.status == GasAuthStatus.Active, "invalid authorization status");
-        require(auth.tenant == tenant, "authorization tenant mismatch");
-        require(auth.landlord == landlord, "authorization landlord mismatch");
-        require(auth.contractContentHash == contentHash, "authorization content hash mismatch");
-        require(block.timestamp * 1000 <= auth.deadlineMs, "authorization expired");
+        if (auth.status != GasAuthStatus.Active) revert InvalidAuthorizationStatus();
+        if (auth.tenant != tenant) revert AuthorizationTenantMismatch();
+        if (auth.landlord != landlord) revert AuthorizationLandlordMismatch();
+        if (auth.contractContentHash != contentHash) revert AuthorizationContentHashMismatch();
+        if (block.timestamp * 1000 > auth.deadlineMs) revert AuthorizationExpired();
     }
 
     function _assertContractCreateAllowed(CreateContractParams calldata p) private view {
-        require(p.endAtMs > p.startAtMs, "invalid contract range");
-        require(_listings[p.listingId].exists, "listing not found");
-        require(_listings[p.listingId].status == ListingStatus.Active, "listing not active");
-        require(p.initialAmountWei > 0, "initialAmountWei required");
-        require(p.tenantMessageHash != bytes32(0), "tenantMessageHash required");
-        require(p.landlordMessageHash != bytes32(0), "landlordMessageHash required");
-        require(p.tenantSignedAt > 0, "tenantSignedAt required");
-        require(p.landlordSignedAt > 0, "landlordSignedAt required");
+        if (p.endAtMs <= p.startAtMs) revert InvalidContractRange();
+        if (!_listings[p.listingId].exists) revert ListingNotFound();
+        if (_listings[p.listingId].status != ListingStatus.Active) revert ListingNotActive();
+        if (p.initialAmountWei == 0) revert InitialAmountWeiRequired();
+        if (p.leaseMonths == 0) revert LeaseMonthsRequired();
+        if (p.tenantMessageHash == bytes32(0)) revert TenantMessageHashRequired();
+        if (p.landlordMessageHash == bytes32(0)) revert LandlordMessageHashRequired();
+        if (p.tenantSignedAt == 0) revert TenantSignedAtRequired();
+        if (p.landlordSignedAt == 0) revert LandlordSignedAtRequired();
 
         string storage headContractId = _activeContractByListing[p.listingId];
         if (bytes(p.parentContractId).length == 0) {
-            require(!_isContractChainBlocking(headContractId), "listing blocked by existing contract chain");
+            if (_isContractChainBlocking(headContractId)) revert ListingBlockedByExistingContractChain();
             return;
         }
 
-        require(bytes(headContractId).length > 0, "listing has no contract chain");
+        if (bytes(headContractId).length == 0) revert ListingHasNoContractChain();
         ContractRecord storage parent = _contracts[p.parentContractId];
-        require(parent.exists, "parent contract not found");
-        require(_isSameString(parent.listingId, p.listingId), "parent listing mismatch");
-        require(parent.tenant == p.tenant, "parent tenant mismatch");
-        require(parent.landlord == p.landlord, "parent landlord mismatch");
-        require(parent.status != ContractStatus.Cancelled && parent.status != ContractStatus.Completed, "parent contract closed");
-        require(block.timestamp * 1000 < parent.endAtMs, "parent contract already expired");
-        require(bytes(parent.renewalChildContractId).length == 0, "renewal child already exists");
-        require(p.startAtMs == parent.endAtMs, "renewal start must equal parent endAtMs");
+        if (!parent.exists) revert ParentContractNotFound();
+        if (!_isSameString(parent.listingId, p.listingId)) revert ParentListingMismatch();
+        if (parent.tenant != p.tenant) revert ParentTenantMismatch();
+        if (parent.landlord != p.landlord) revert ParentLandlordMismatch();
+        if (parent.status == ContractStatus.Cancelled || parent.status == ContractStatus.Completed) revert ParentContractClosed();
+        if (block.timestamp * 1000 >= parent.endAtMs) revert ParentContractAlreadyExpired();
+        if (bytes(parent.renewalChildContractId).length != 0) revert RenewalChildAlreadyExists();
+        if (p.startAtMs != parent.endAtMs) revert RenewalStartMustEqualParentEndAtMs();
     }
 
     function _storeContractRecord(CreateContractParams calldata p) private {
@@ -512,11 +684,19 @@ contract RentalChain is ReentrancyGuard {
         record.initialAmountWei = p.initialAmountWei;
         record.startAtMs = p.startAtMs;
         record.endAtMs = p.endAtMs;
+        record.leaseMonths = p.leaseMonths;
         record.createdAt = block.timestamp;
         record.tenantMessageHash = p.tenantMessageHash;
         record.landlordMessageHash = p.landlordMessageHash;
         record.tenantSignedAt = p.tenantSignedAt;
         record.landlordSignedAt = p.landlordSignedAt;
+        record.escrowTotalWei = 0;
+        record.performanceGuaranteeWei = 0;
+        record.monthlyReleaseWei = 0;
+        record.releasedWei = 0;
+        record.refundedWei = 0;
+        record.releasedPeriods = 0;
+        record.terminatedAtMs = 0;
         record.status = ContractStatus.Created;
         record.exists = true;
     }
@@ -531,11 +711,11 @@ contract RentalChain is ReentrancyGuard {
 
         if (reimbursementWei > 0) {
             (bool okLandlord, ) = landlord.call{value: reimbursementWei}("");
-            require(okLandlord, "landlord reimbursement transfer failed");
+            if (!okLandlord) revert LandlordReimbursementTransferFailed();
         }
         if (refundWei > 0) {
             (bool okTenant, ) = auth.tenant.call{value: refundWei}("");
-            require(okTenant, "tenant refund transfer failed");
+            if (!okTenant) revert TenantRefundTransferFailed();
         }
 
         emit GasCompSettledOnCreate(authId, contractId, landlord, reimbursementWei, refundWei);
@@ -574,13 +754,13 @@ contract RentalChain is ReentrancyGuard {
         bytes32 snapshotHash,
         string memory snapshotCid
     ) internal {
-        require(bytes(listingId).length > 0, "listingId required");
-        require(!_listings[listingId].exists, "listing already exists");
-        require(contentHash != bytes32(0), "contentHash required");
-        require(rentAmountWei > 0, "rentAmountWei must > 0");
-        require(minLeaseMonths > 0, "minLeaseMonths must > 0");
-        require(snapshotHash != bytes32(0), "snapshotHash required");
-        require(bytes(snapshotCid).length > 0, "snapshotCid required");
+        if (bytes(listingId).length == 0) revert ListingIdRequired();
+        if (_listings[listingId].exists) revert ListingAlreadyExists();
+        if (contentHash == bytes32(0)) revert ContentHashRequired();
+        if (rentAmountWei == 0) revert RentAmountWeiMustBePositive();
+        if (minLeaseMonths == 0) revert MinLeaseMonthsMustBePositive();
+        if (snapshotHash == bytes32(0)) revert SnapshotHashRequired();
+        if (bytes(snapshotCid).length == 0) revert SnapshotCidRequired();
 
         ListingRecord storage record = _listings[listingId];
         record.listingId = listingId;
@@ -607,11 +787,11 @@ contract RentalChain is ReentrancyGuard {
         uint256 permitDeadlineMs,
         bytes calldata permitSignature
     ) external nonReentrant {
-        require(bytes(p.contractId).length > 0, "contractId required");
-        require(bytes(p.listingId).length > 0, "listingId required");
-        require(p.tenant != address(0), "invalid tenant");
-        require(p.landlord != address(0), "invalid landlord");
-        require(msg.sender == p.landlord, "only landlord");
+        if (bytes(p.contractId).length == 0) revert ContractIdRequired();
+        if (bytes(p.listingId).length == 0) revert ListingIdRequired();
+        if (p.tenant == address(0)) revert InvalidTenant();
+        if (p.landlord == address(0)) revert InvalidLandlord();
+        if (msg.sender != p.landlord) revert OnlyLandlord();
         _consumePermit(
             ACTION_CREATE_CONTRACT,
             msg.sender,
@@ -621,8 +801,8 @@ contract RentalChain is ReentrancyGuard {
             permitDeadlineMs,
             permitSignature
         );
-        require(p.contentHash != bytes32(0), "contentHash required");
-        require(!_contracts[p.contractId].exists, "contract already exists");
+        if (p.contentHash == bytes32(0)) revert ContentHashRequired();
+        if (_contracts[p.contractId].exists) revert ContractAlreadyExists();
         _assertContractCreateAllowed(p);
         bytes32 authId = _assertGasAuthorizationUsable(p.contractId, p.tenant, p.landlord, p.contentHash, p.gasAuthNonce);
         _storeContractRecord(p);
@@ -657,13 +837,13 @@ contract RentalChain is ReentrancyGuard {
         bytes calldata permitSignature
     ) external nonReentrant onlyLandlord(listingId) {
         ListingRecord storage record = _listings[listingId];
-        require(record.status != ListingStatus.Closed, "listing already closed");
-        require(!_isContractChainBlocking(_activeContractByListing[listingId]), "listing blocked by existing contract chain");
-        require(newContentHash != bytes32(0), "newContentHash required");
-        require(newRentAmountWei > 0, "newRentAmountWei must > 0");
-        require(newMinLeaseMonths > 0, "newMinLeaseMonths must > 0");
-        require(newSnapshotHash != bytes32(0), "newSnapshotHash required");
-        require(bytes(newSnapshotCid).length > 0, "newSnapshotCid required");
+        if (record.status == ListingStatus.Closed) revert ListingAlreadyClosed();
+        if (_isContractChainBlocking(_activeContractByListing[listingId])) revert ListingBlockedByExistingContractChain();
+        if (newContentHash == bytes32(0)) revert NewContentHashRequired();
+        if (newRentAmountWei == 0) revert NewRentAmountWeiMustBePositive();
+        if (newMinLeaseMonths == 0) revert NewMinLeaseMonthsMustBePositive();
+        if (newSnapshotHash == bytes32(0)) revert NewSnapshotHashRequired();
+        if (bytes(newSnapshotCid).length == 0) revert NewSnapshotCidRequired();
         _consumePermit(
             ACTION_UPDATE_LISTING_TERMS,
             msg.sender,
@@ -683,8 +863,8 @@ contract RentalChain is ReentrancyGuard {
             permitDeadlineMs,
             permitSignature
         );
-        require(record.version == expectedVersion, "version mismatch");
-        require(record.nonce == expectedNonce, "nonce mismatch");
+        if (record.version != expectedVersion) revert VersionMismatch();
+        if (record.nonce != expectedNonce) revert NonceMismatch();
 
         record.contentHash = newContentHash;
         record.rentAmountWei = newRentAmountWei;
@@ -708,7 +888,7 @@ contract RentalChain is ReentrancyGuard {
         bytes calldata permitSignature
     ) external nonReentrant onlyLandlord(listingId) {
         ListingRecord storage record = _listings[listingId];
-        require(!_isContractChainBlocking(_activeContractByListing[listingId]), "listing blocked by existing contract chain");
+        if (_isContractChainBlocking(_activeContractByListing[listingId])) revert ListingBlockedByExistingContractChain();
         _consumePermit(
             ACTION_SET_LISTING_STATUS,
             msg.sender,
@@ -718,12 +898,12 @@ contract RentalChain is ReentrancyGuard {
             permitDeadlineMs,
             permitSignature
         );
-        require(record.version == expectedVersion, "version mismatch");
-        require(record.nonce == expectedNonce, "nonce mismatch");
+        if (record.version != expectedVersion) revert VersionMismatch();
+        if (record.nonce != expectedNonce) revert NonceMismatch();
 
         ListingStatus oldStatus = record.status;
-        require(oldStatus != ListingStatus.Closed, "listing already closed");
-        require(oldStatus != newStatus, "status unchanged");
+        if (oldStatus == ListingStatus.Closed) revert ListingAlreadyClosed();
+        if (oldStatus == newStatus) revert StatusUnchanged();
 
         record.status = newStatus;
         record.version += 1;
@@ -743,18 +923,18 @@ contract RentalChain is ReentrancyGuard {
         bytes32 nonce,
         bytes calldata signature
     ) external payable {
-        require(msg.sender == tenant, "only tenant can lock escrow");
-        require(msg.value == capWei, "escrow value must equal capWei");
-        require(capWei > 0, "capWei must > 0");
-        require(block.timestamp * 1000 <= deadlineMs, "authorization expired");
+        if (msg.sender != tenant) revert OnlyTenantCanLockEscrow();
+        if (msg.value != capWei) revert EscrowValueMustEqualCapWei();
+        if (capWei == 0) revert CapWeiMustBePositive();
+        if (block.timestamp * 1000 > deadlineMs) revert AuthorizationExpired();
 
         bytes32 authId = _gasAuthId(contractId, tenant, nonce);
         GasAuthorization storage auth = _gasAuths[authId];
-        require(auth.status == GasAuthStatus.None, "authorization already exists");
+        if (auth.status != GasAuthStatus.None) revert AuthorizationAlreadyExists();
 
         bytes32 digest = _gasAuthDigest(contractId, contractContentHash, tenant, landlord, capWei, deadlineMs, nonce);
         address recovered = _recoverSigner(digest, signature);
-        require(recovered == tenant, "invalid authorization signature");
+        if (recovered != tenant) revert InvalidAuthorizationSignature();
 
         auth.tenant = tenant;
         auth.landlord = landlord;
@@ -770,25 +950,25 @@ contract RentalChain is ReentrancyGuard {
     }
 
     function revokeGasCompensationAuthorization(string calldata contractId, address tenant, bytes32 nonce) external nonReentrant {
-        require(msg.sender == tenant, "only tenant can revoke");
+        if (msg.sender != tenant) revert OnlyTenantCanRevoke();
         bytes32 authId = _gasAuthId(contractId, tenant, nonce);
         GasAuthorization storage auth = _gasAuths[authId];
-        require(auth.status == GasAuthStatus.Active, "only active authorization can revoke");
+        if (auth.status != GasAuthStatus.Active) revert OnlyActiveAuthorizationCanRevoke();
 
         auth.status = GasAuthStatus.Revoked;
         uint256 refundWei = auth.lockedWei;
         auth.lockedWei = 0;
 
         (bool ok, ) = tenant.call{value: refundWei}("");
-        require(ok, "refund failed");
+        if (!ok) revert RefundFailed();
         emit GasCompRevoked(authId, contractId, tenant, refundWei);
     }
 
     function cancelPendingGasAuthorization(string calldata contractId, address tenant, bytes32 nonce) external nonReentrant {
         bytes32 authId = _gasAuthId(contractId, tenant, nonce);
         GasAuthorization storage auth = _gasAuths[authId];
-        require(auth.tenant != address(0), "authorization not found");
-        require(msg.sender == auth.tenant || msg.sender == auth.landlord, "only contract parties");
+        if (auth.tenant == address(0)) revert AuthorizationNotFound();
+        if (msg.sender != auth.tenant && msg.sender != auth.landlord) revert OnlyContractParties();
         if (auth.status != GasAuthStatus.Active) {
             return;
         }
@@ -798,7 +978,7 @@ contract RentalChain is ReentrancyGuard {
         auth.lockedWei = 0;
 
         (bool ok, ) = auth.tenant.call{value: refundWei}("");
-        require(ok, "refund failed");
+        if (!ok) revert RefundFailed();
         emit GasCompRevoked(authId, contractId, auth.tenant, refundWei);
     }
 
@@ -810,11 +990,11 @@ contract RentalChain is ReentrancyGuard {
         uint256 permitDeadlineMs,
         bytes calldata permitSignature
     ) external payable nonReentrant {
-        require(bytes(contractId).length > 0, "contractId required");
-        require(landlord != address(0), "invalid landlord");
+        if (bytes(contractId).length == 0) revert ContractIdRequired();
+        if (landlord == address(0)) revert InvalidLandlord();
         ContractRecord storage record = _contracts[contractId];
-        require(record.exists, "contract not found");
-        require(msg.sender == record.tenant, "only tenant can pay");
+        if (!record.exists) revert ContractNotFound();
+        if (msg.sender != record.tenant) revert OnlyTenantCanPay();
         _consumePermit(
             ACTION_RECORD_INITIAL_PAYMENT,
             msg.sender,
@@ -824,15 +1004,15 @@ contract RentalChain is ReentrancyGuard {
             permitDeadlineMs,
             permitSignature
         );
-        require(record.landlord == landlord, "landlord mismatch");
-        require(record.status == ContractStatus.Created, "contract not payable");
-        require(msg.value == record.initialAmountWei, "invalid payment amount");
-        require(block.timestamp * 1000 <= _paymentDeadlineMs(record), "payment deadline expired");
+        if (record.landlord != landlord) revert LandlordMismatch();
+        if (record.status != ContractStatus.Created) revert ContractNotPayable();
+        if (msg.value != record.initialAmountWei) revert InvalidPaymentAmount();
+        if (block.timestamp * 1000 > _paymentDeadlineMs(record)) revert PaymentDeadlineExpired();
 
         if (bytes(record.parentContractId).length > 0) {
             ContractRecord storage parent = _contracts[record.parentContractId];
-            require(parent.exists, "parent contract not found");
-            require(parent.status != ContractStatus.Cancelled && parent.status != ContractStatus.Completed, "parent contract unavailable");
+            if (!parent.exists) revert ParentContractNotFound();
+            if (parent.status == ContractStatus.Cancelled || parent.status == ContractStatus.Completed) revert ParentContractUnavailable();
         }
 
         ContractStatus nextStatus = _isParentCurrentlyEffective(record.parentContractId)
@@ -840,15 +1020,90 @@ contract RentalChain is ReentrancyGuard {
             : ContractStatus.Active;
         record.status = nextStatus;
         uint256 platformFeeWei = (msg.value * PLATFORM_FEE_BPS) / BPS_DENOMINATOR;
-        uint256 landlordNetWei = msg.value - platformFeeWei;
+        uint256 netAfterPlatformFeeWei = msg.value - platformFeeWei;
+        uint256 performanceGuaranteeWei = (netAfterPlatformFeeWei * PERFORMANCE_GUARANTEE_BPS) / BPS_DENOMINATOR;
+        uint256 escrowWei = netAfterPlatformFeeWei - performanceGuaranteeWei;
+        uint256 monthlyReleaseWei = record.leaseMonths > 0 ? (escrowWei / record.leaseMonths) : 0;
+        record.performanceGuaranteeWei = performanceGuaranteeWei;
+        record.escrowTotalWei = escrowWei;
+        record.monthlyReleaseWei = monthlyReleaseWei;
+        record.releasedWei = 0;
+        record.refundedWei = 0;
+        record.releasedPeriods = 0;
+        record.terminatedAtMs = 0;
         if (platformFeeWei > 0) {
             (bool okFee, ) = platformFeeRecipient.call{value: platformFeeWei}("");
-            require(okFee, "transfer fee failed");
+            if (!okFee) revert TransferFeeFailed();
         }
-        (bool ok, ) = landlord.call{value: landlordNetWei}("");
-        require(ok, "transfer to landlord failed");
-        emit RentPaymentRecorded(contractId, msg.sender, landlord, msg.value, platformFeeWei, landlordNetWei, platformFeeRecipient, orderNo, block.timestamp);
+        if (performanceGuaranteeWei > 0) {
+            (bool okGuarantee, ) = landlord.call{value: performanceGuaranteeWei}("");
+            if (!okGuarantee) revert TransferGuaranteeFailed();
+        }
+        emit RentPaymentRecorded(contractId, msg.sender, landlord, msg.value, platformFeeWei, performanceGuaranteeWei, escrowWei, platformFeeRecipient, orderNo, block.timestamp);
         emit ContractStatusChanged(contractId, record.listingId, uint8(ContractStatus.Created), uint8(nextStatus), block.timestamp);
+    }
+
+    function releaseDueRent(string calldata contractId) external nonReentrant {
+        ContractRecord storage record = _contracts[contractId];
+        if (!record.exists) revert ContractNotFound();
+        if (msg.sender != trustedSigner && msg.sender != record.landlord) revert OnlyReleaseManager();
+        if (record.status != ContractStatus.Active && record.status != ContractStatus.Paid) revert ContractNotReleasable();
+        if (record.escrowTotalWei <= record.releasedWei) revert EscrowAlreadyReleased();
+
+        uint16 earnedPeriods = _earnedReleasePeriods(record);
+        if (earnedPeriods <= record.releasedPeriods) revert NoReleasableRent();
+        uint16 unreleasedPeriods = earnedPeriods - record.releasedPeriods;
+        uint256 releaseAmountWei;
+        if (earnedPeriods >= record.leaseMonths) {
+            releaseAmountWei = record.escrowTotalWei - record.releasedWei;
+        } else {
+            releaseAmountWei = uint256(unreleasedPeriods) * record.monthlyReleaseWei;
+        }
+        if (releaseAmountWei == 0) revert ReleaseAmountZero();
+
+        record.releasedPeriods = earnedPeriods;
+        record.releasedWei += releaseAmountWei;
+        if (record.status == ContractStatus.Paid && block.timestamp * 1000 >= record.startAtMs) {
+            record.status = ContractStatus.Active;
+        }
+        (bool ok, ) = record.landlord.call{value: releaseAmountWei}("");
+        if (!ok) revert ReleaseTransferFailed();
+        emit RentReleased(contractId, record.listingId, record.landlord, record.releasedPeriods, releaseAmountWei, record.releasedWei, block.timestamp);
+    }
+
+    function terminateContractEarly(string calldata contractId) external nonReentrant {
+        ContractRecord storage record = _contracts[contractId];
+        if (!record.exists) revert ContractNotFound();
+        if (msg.sender != record.tenant) revert OnlyTenantCanTerminate();
+        if (record.status != ContractStatus.Active && record.status != ContractStatus.Paid) revert ContractNotTerminable();
+
+        uint256 terminatedAtMs = block.timestamp * 1000;
+        uint256 earnedEscrowWei = _earnedEscrowWeiAt(record, terminatedAtMs);
+        uint256 landlordSettledWei = 0;
+        if (earnedEscrowWei > record.releasedWei) {
+            landlordSettledWei = earnedEscrowWei - record.releasedWei;
+        }
+        uint256 remainingEscrowWei = record.escrowTotalWei - record.releasedWei;
+        uint256 refundWei = remainingEscrowWei - landlordSettledWei;
+        if (landlordSettledWei > 0) {
+            record.releasedWei += landlordSettledWei;
+        }
+        record.refundedWei = refundWei;
+        record.terminatedAtMs = terminatedAtMs;
+        ContractStatus oldStatus = record.status;
+        record.status = ContractStatus.Cancelled;
+
+        if (landlordSettledWei > 0) {
+            (bool okLandlord, ) = record.landlord.call{value: landlordSettledWei}("");
+            if (!okLandlord) revert ReleaseTransferFailed();
+        }
+        if (refundWei > 0) {
+            (bool ok, ) = record.tenant.call{value: refundWei}("");
+            if (!ok) revert TenantRefundTransferFailed();
+        }
+        _cancelFutureRenewalChildOnParentTermination(record, terminatedAtMs);
+        emit ContractEarlyTerminated(contractId, record.listingId, record.tenant, landlordSettledWei, refundWei, record.terminatedAtMs);
+        emit ContractStatusChanged(contractId, record.listingId, uint8(oldStatus), uint8(ContractStatus.Cancelled), block.timestamp);
     }
 
     function submitRentalReview(
@@ -860,10 +1115,10 @@ contract RentalChain is ReentrancyGuard {
         uint256 permitDeadlineMs,
         bytes calldata permitSignature
     ) external {
-        require(bytes(contractId).length > 0, "contractId required");
-        require(commentHash != bytes32(0), "commentHash required");
-        require(rating >= 1 && rating <= 5, "rating out of range");
-        require(bytes(commentCid).length > 0, "commentCid required");
+        if (bytes(contractId).length == 0) revert ContractIdRequired();
+        if (commentHash == bytes32(0)) revert CommentHashRequired();
+        if (rating < 1 || rating > 5) revert RatingOutOfRange();
+        if (bytes(commentCid).length == 0) revert CommentCidRequired();
         _consumePermit(
             ACTION_SUBMIT_RENTAL_REVIEW,
             msg.sender,
@@ -875,14 +1130,19 @@ contract RentalChain is ReentrancyGuard {
         );
 
         ContractRecord storage record = _contracts[contractId];
-        require(record.exists, "contract not found");
-        require(msg.sender == record.tenant, "only tenant can review");
-        require(record.status == ContractStatus.Active || record.status == ContractStatus.Completed, "contract not reviewable");
-        require(record.endAtMs > 0 && block.timestamp * 1000 >= record.endAtMs, "review not open");
-        require(block.timestamp * 1000 <= record.endAtMs + REVIEW_WINDOW_MS * 1000, "review window closed");
+        if (!record.exists) revert ContractNotFound();
+        if (msg.sender != record.tenant) revert OnlyTenantCanReview();
+        if (
+            record.status != ContractStatus.Active
+            && record.status != ContractStatus.Completed
+            && record.status != ContractStatus.Cancelled
+        ) revert ContractNotReviewable();
+        uint256 reviewAnchorMs = record.status == ContractStatus.Cancelled ? record.terminatedAtMs : record.endAtMs;
+        if (reviewAnchorMs == 0 || block.timestamp * 1000 < reviewAnchorMs) revert ReviewNotOpen();
+        if (block.timestamp * 1000 > reviewAnchorMs + REVIEW_WINDOW_MS * 1000) revert ReviewWindowClosed();
 
         RentalReview storage review = _rentalReviews[contractId];
-        require(!review.exists, "review already submitted");
+        if (review.exists) revert ReviewAlreadySubmitted();
 
         review.exists = true;
         review.rating = rating;
@@ -902,10 +1162,10 @@ contract RentalChain is ReentrancyGuard {
         uint256 permitDeadlineMs,
         bytes calldata permitSignature
     ) external {
-        require(bytes(listingId).length > 0, "listingId required");
-        require(commentHash != bytes32(0), "commentHash required");
-        require(feedbackType >= 1 && feedbackType <= 5, "feedbackType out of range");
-        require(bytes(commentCid).length > 0, "commentCid required");
+        if (bytes(listingId).length == 0) revert ListingIdRequired();
+        if (commentHash == bytes32(0)) revert CommentHashRequired();
+        if (feedbackType < 1 || feedbackType > 5) revert FeedbackTypeOutOfRange();
+        if (bytes(commentCid).length == 0) revert CommentCidRequired();
         _consumePermit(
             ACTION_SUBMIT_LISTING_FEEDBACK,
             msg.sender,
@@ -917,16 +1177,16 @@ contract RentalChain is ReentrancyGuard {
         );
 
         ListingRecord storage listing = _listings[listingId];
-        require(listing.exists, "listing not found");
+        if (!listing.exists) revert ListingNotFound();
 
         emit ListingFeedbackSubmitted(listingId, msg.sender, feedbackType, commentHash, commentCid, block.timestamp);
     }
 
     function completeExpiredContract(string calldata contractId) external {
         ContractRecord storage record = _contracts[contractId];
-        require(record.exists, "contract not found");
-        require(record.status == ContractStatus.Active, "contract not active");
-        require(record.endAtMs > 0 && block.timestamp * 1000 >= record.endAtMs, "contract not expired");
+        if (!record.exists) revert ContractNotFound();
+        if (record.status != ContractStatus.Active) revert ContractNotActive();
+        if (record.endAtMs == 0 || block.timestamp * 1000 < record.endAtMs) revert ContractNotExpired();
 
         record.status = ContractStatus.Completed;
         emit ContractStatusChanged(contractId, record.listingId, uint8(ContractStatus.Active), uint8(ContractStatus.Completed), block.timestamp);

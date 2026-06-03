@@ -50,7 +50,7 @@ function normalizeListingBodyStatus(status) {
 }
 
 function isTerminalContractStatus(status) {
-  return ['cancelled', 'expired', 'ended', 'completed'].includes(String(status || '').trim().toLowerCase());
+  return ['cancelled_before_payment', 'expired', 'ended', 'completed', 'terminated_early'].includes(String(status || '').trim().toLowerCase());
 }
 
 function isContractCurrentlyOccupying(contract, now = Date.now()) {

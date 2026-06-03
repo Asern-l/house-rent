@@ -25,6 +25,7 @@ const { isIpfsEnabled, addJsonToIpfs, buildGatewayUrl } = require('../ipfs');
 const {
   ACTIONS,
   issuePermit,
+  getTrustedSignerWallet,
   hashCreateContractParams,
   hashInitialPaymentParams,
   hashRentalReviewParams,
@@ -48,6 +49,7 @@ const GAS_CAP_HARD_LIMIT_WEI = ethers.parseEther('0.005');
 const GAS_ESTIMATE_UNITS_DEFAULT = 350000n;
 const CONTRACT_REVIEW_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const PLATFORM_FEE_BPS = 10n;
+const PERFORMANCE_GUARANTEE_BPS = 1000n;
 const BPS_DENOMINATOR = 10000n;
 
 const PDF_FONT_CANDIDATES = [
@@ -72,8 +74,11 @@ function normalizeAmount(value) {
   return n.toFixed(8).replace(/\.?0+$/, '');
 }
 
-function computePlatformFeeBreakdownFromEth(amountEth) {
+function computePlatformFeeBreakdownFromEth(amountEth, leaseMonths = 1) {
   const normalized = normalizeAmount(amountEth);
+  const normalizedLeaseMonths = Number.isInteger(Number(leaseMonths)) && Number(leaseMonths) > 0
+    ? Number(leaseMonths)
+    : 1;
   if (!normalized) {
     return {
       grossAmount: '',
@@ -81,6 +86,13 @@ function computePlatformFeeBreakdownFromEth(amountEth) {
       platformFeeBps: Number(PLATFORM_FEE_BPS),
       platformFeeAmount: '0',
       platformFeeWei: '0',
+      performanceGuaranteeBps: Number(PERFORMANCE_GUARANTEE_BPS),
+      performanceGuaranteeAmount: '0',
+      performanceGuaranteeWei: '0',
+      escrowAmount: '0',
+      escrowWei: '0',
+      monthlyReleaseAmount: '0',
+      monthlyReleaseWei: '0',
       landlordNetAmount: '0',
       landlordNetWei: '0',
     };
@@ -88,12 +100,22 @@ function computePlatformFeeBreakdownFromEth(amountEth) {
   const grossAmountWei = ethers.parseEther(String(normalized));
   const platformFeeWei = (grossAmountWei * PLATFORM_FEE_BPS) / BPS_DENOMINATOR;
   const landlordNetWei = grossAmountWei - platformFeeWei;
+  const performanceGuaranteeWei = (landlordNetWei * PERFORMANCE_GUARANTEE_BPS) / BPS_DENOMINATOR;
+  const escrowWei = landlordNetWei - performanceGuaranteeWei;
+  const monthlyReleaseWei = escrowWei / BigInt(normalizedLeaseMonths);
   return {
     grossAmount: normalized,
     grossAmountWei: grossAmountWei.toString(),
     platformFeeBps: Number(PLATFORM_FEE_BPS),
     platformFeeAmount: normalizeAmount(ethers.formatEther(platformFeeWei)) || '0',
     platformFeeWei: platformFeeWei.toString(),
+    performanceGuaranteeBps: Number(PERFORMANCE_GUARANTEE_BPS),
+    performanceGuaranteeAmount: normalizeAmount(ethers.formatEther(performanceGuaranteeWei)) || '0',
+    performanceGuaranteeWei: performanceGuaranteeWei.toString(),
+    escrowAmount: normalizeAmount(ethers.formatEther(escrowWei)) || '0',
+    escrowWei: escrowWei.toString(),
+    monthlyReleaseAmount: normalizeAmount(ethers.formatEther(monthlyReleaseWei)) || '0',
+    monthlyReleaseWei: monthlyReleaseWei.toString(),
     landlordNetAmount: normalizeAmount(ethers.formatEther(landlordNetWei)) || '0',
     landlordNetWei: landlordNetWei.toString(),
   };
@@ -168,6 +190,23 @@ function parseCnDateTime(value) {
 function normalizeWalletAddress(value) {
   const addr = String(value || '').trim();
   return ADDR_RE.test(addr) ? ethers.getAddress(addr) : '';
+}
+
+function parseRentalChainCustomError(err) {
+  const candidates = [
+    err?.data,
+    err?.error?.data,
+    err?.info?.error?.data,
+    err?.revert?.data,
+  ].filter((value) => typeof value === 'string' && value.startsWith('0x'));
+  for (const data of candidates) {
+    try {
+      return rentalChainIface.parseError(data);
+    } catch {
+      // ignore
+    }
+  }
+  return null;
 }
 
 function getClientIp(req) {
@@ -289,7 +328,7 @@ function encodeBase64Utf8(value) {
   return Buffer.from(String(value || ''), 'utf8').toString('base64');
 }
 
-function chunkMarkerLines(prefix, value, chunkSize = 120) {
+function chunkMarkerLines(prefix, value, chunkSize = 64) {
   const raw = String(value || '');
   if (!raw) return [`${prefix}=`];
   const lines = [];
@@ -323,18 +362,31 @@ function getReviewWeightFromContent(content = {}) {
 function getContractReviewState(contract) {
   const content = typeof contract?.content_json === 'string' ? JSON.parse(contract.content_json) : (contract?.content_json || {});
   const endAtMs = parseEndDateMs(content);
+  const terminatedEarlyAtMs = parseCnDateTime(contract?.terminated_early_at)?.getTime() || 0;
+  const earlyTerminated = String(contract?.status || '').trim() === 'terminated_early';
+  const reviewAnchorMs = earlyTerminated && terminatedEarlyAtMs > 0
+    ? terminatedEarlyAtMs
+    : Number(endAtMs || 0);
   const nowMs = Date.now();
-  const endedByTime = Number(endAtMs || 0) > 0 && nowMs >= Number(endAtMs || 0);
-  const withinWindow = endedByTime && nowMs <= Number(endAtMs || 0) + CONTRACT_REVIEW_WINDOW_MS;
-  const eligibleStatus = ['active', 'ended'].includes(String(contract?.status || '').trim());
+  const endedByTime = reviewAnchorMs > 0 && nowMs >= reviewAnchorMs;
+  const withinWindow = endedByTime && nowMs <= reviewAnchorMs + CONTRACT_REVIEW_WINDOW_MS;
+  const eligibleStatus = ['active', 'ended', 'terminated_early'].includes(String(contract?.status || '').trim());
   return {
     endAtMs: Number(endAtMs || 0),
+    terminatedEarlyAtMs,
+    earlyTerminated,
+    reviewAnchorMs,
     endedByTime,
     withinWindow,
     canReview: eligibleStatus && withinWindow,
-    reviewWindowEndMs: Number(endAtMs || 0) > 0 ? Number(endAtMs || 0) + CONTRACT_REVIEW_WINDOW_MS : 0,
+    reviewWindowEndMs: reviewAnchorMs > 0 ? reviewAnchorMs + CONTRACT_REVIEW_WINDOW_MS : 0,
     weight: getReviewWeightFromContent(content),
   };
+}
+
+function resolveFutureStartAtMsFromContract(contract) {
+  const content = typeof contract?.content_json === 'string' ? JSON.parse(contract.content_json) : (contract?.content_json || {});
+  return parseStartDateMs(content);
 }
 
 function parseSignMessageFields(message) {
@@ -488,6 +540,20 @@ function parseContractTx(tx) {
   } catch {
     return null;
   }
+}
+
+function getWritableRentalChainRuntime() {
+  const { rpcUrl, contractAddress } = resolveChainRuntimeByEnv();
+  if (!rpcUrl) {
+    throw error('CHAIN_RPC_URL_MISSING', '当前网络未配置 RPC 地址，无法执行链上操作');
+  }
+  if (!contractAddress) {
+    throw error('CONTRACT_ADDRESS_MISSING', '当前网络未配置合约地址，无法执行链上操作');
+  }
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const signer = getTrustedSignerWallet().connect(provider);
+  const chainContract = new ethers.Contract(contractAddress, RENTAL_CHAIN_ABI, signer);
+  return { provider, signer, chainContract, contractAddress };
 }
 
 function toLowerHex(value) {
@@ -724,7 +790,7 @@ router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req,
     `SELECT id, status, content_json, expires_at, payment_deadline
       FROM contracts
       WHERE listing_id = ?
-        AND status NOT IN ('cancelled', 'expired', 'ended')`,
+        AND status NOT IN ('cancelled_before_payment', 'expired', 'ended', 'terminated_early')`,
     [listingId]
   ));
   const listingState = resolveListingPublicState(listing, relatedContracts);
@@ -832,7 +898,7 @@ router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req,
   if (!oneTimeAmount) {
     return sendError(res, 400, 'INITIAL_PAYMENT_AMOUNT_INVALID', '合同首笔支付金额计算失败，请检查房源配置');
   }
-  const paymentBreakdown = computePlatformFeeBreakdownFromEth(oneTimeAmount);
+  const paymentBreakdown = computePlatformFeeBreakdownFromEth(oneTimeAmount, leaseMonthsNum);
 
   const contractId = `cnt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const content = {
@@ -844,6 +910,10 @@ router.post('/', authMiddleware, requireRole('tenant'), asyncHandler(async (req,
     oneTimeAmount: paymentBreakdown.grossAmount,
     platformFeeBps: paymentBreakdown.platformFeeBps,
     platformFeeAmount: paymentBreakdown.platformFeeAmount,
+    performanceGuaranteeBps: paymentBreakdown.performanceGuaranteeBps,
+    performanceGuaranteeAmount: paymentBreakdown.performanceGuaranteeAmount,
+    escrowAmount: paymentBreakdown.escrowAmount,
+    monthlyReleaseAmount: paymentBreakdown.monthlyReleaseAmount,
     landlordNetAmount: paymentBreakdown.landlordNetAmount,
     tenant: { id: tenant.id, walletAddress: tenant.wallet_address },
     landlord: { id: landlord.id, walletAddress: landlord.wallet_address },
@@ -1429,7 +1499,7 @@ router.post('/:id/gas-authorization/revoke', authMiddleware, asyncHandler(async 
   if (![contract.tenant_id, contract.landlord_id].includes(req.user.id)) {
     return sendError(res, 403, 'CONTRACT_PARTY_ONLY', '仅合同参与方可回写 gas 授权撤销结果');
   }
-  if (!['pending', 'tenant_signed', 'cancelled', 'expired'].includes(contract.status)) {
+  if (!['pending', 'tenant_signed', 'cancelled_before_payment', 'expired'].includes(contract.status)) {
     return res.status(400).json(error('GAS_AUTH_REVOKE_FORBIDDEN', '当前合同状态不允许撤销 gas 授权'));
   }
   if (String(contract.landlord_signed_at || '').trim()) {
@@ -1653,6 +1723,7 @@ router.post('/:id/create-onchain-permit', authMiddleware, asyncHandler(async (re
     contractId: req.params.id,
     listingId: contract.listing_id,
     parentContractId,
+    leaseMonths: Number(content?.terms?.leaseMonths || 1),
     tenant: normalizedTenantAddress,
     landlord: submittedAddress,
     contentHash: contract.content_hash || ethers.ZeroHash,
@@ -2137,7 +2208,7 @@ router.get('/:id/payments/prepare-onchain', authMiddleware, asyncHandler(async (
   if (!expectedAmount) {
     return res.status(400).json(error('PAYMENT_AMOUNT_INVALID', '合同首笔支付金额无效'));
   }
-  const paymentBreakdown = computePlatformFeeBreakdownFromEth(expectedAmount);
+  const paymentBreakdown = computePlatformFeeBreakdownFromEth(expectedAmount, Number(content?.terms?.leaseMonths || 1));
   const expectedAmountWei = (() => {
     try { return ethers.parseEther(String(expectedAmount)); } catch { return 0n; }
   })();
@@ -2185,6 +2256,13 @@ router.get('/:id/payments/prepare-onchain', authMiddleware, asyncHandler(async (
       platformFeeBps: paymentBreakdown.platformFeeBps,
       platformFeeAmount: String(content?.platformFeeAmount || paymentBreakdown.platformFeeAmount || '0'),
       platformFeeWei: paymentBreakdown.platformFeeWei,
+      performanceGuaranteeBps: Number(content?.performanceGuaranteeBps || paymentBreakdown.performanceGuaranteeBps || 0),
+      performanceGuaranteeAmount: String(content?.performanceGuaranteeAmount || paymentBreakdown.performanceGuaranteeAmount || '0'),
+      performanceGuaranteeWei: paymentBreakdown.performanceGuaranteeWei,
+      escrowAmount: String(content?.escrowAmount || paymentBreakdown.escrowAmount || '0'),
+      escrowWei: paymentBreakdown.escrowWei,
+      monthlyReleaseAmount: String(content?.monthlyReleaseAmount || paymentBreakdown.monthlyReleaseAmount || '0'),
+      monthlyReleaseWei: paymentBreakdown.monthlyReleaseWei,
       landlordNetAmount: String(content?.landlordNetAmount || paymentBreakdown.landlordNetAmount || '0'),
       landlordNetWei: paymentBreakdown.landlordNetWei,
       platformFeeRecipient,
@@ -2330,8 +2408,11 @@ router.post('/:id/payments/onchain', authMiddleware, asyncHandler(async (req, re
   if (BigInt(paymentEvent.args?.platformFeeWei || 0) !== BigInt(paymentBreakdown.platformFeeWei || 0)) {
     return res.status(400).json(error('PAYMENT_EVENT_FEE_MISMATCH', '链上支付事件手续费金额与平台规则不一致'));
   }
-  if (BigInt(paymentEvent.args?.landlordNetWei || 0) !== BigInt(paymentBreakdown.landlordNetWei || 0)) {
-    return res.status(400).json(error('PAYMENT_EVENT_NET_MISMATCH', '链上支付事件房东实收金额与平台规则不一致'));
+  if (BigInt(paymentEvent.args?.performanceGuaranteeWei || 0) !== BigInt(paymentBreakdown.performanceGuaranteeWei || 0)) {
+    return res.status(400).json(error('PAYMENT_EVENT_GUARANTEE_MISMATCH', '链上支付事件履约保证金金额与平台规则不一致'));
+  }
+  if (BigInt(paymentEvent.args?.escrowWei || 0) !== BigInt(paymentBreakdown.escrowWei || 0)) {
+    return res.status(400).json(error('PAYMENT_EVENT_ESCROW_MISMATCH', '链上支付事件托管金额与平台规则不一致'));
   }
   if (platformFeeRecipient && toLowerHex(paymentEvent.args?.platformFeeRecipient) !== toLowerHex(platformFeeRecipient)) {
     return res.status(400).json(error('PAYMENT_EVENT_FEE_RECIPIENT_MISMATCH', '链上手续费收款地址与平台配置不一致'));
@@ -2381,10 +2462,14 @@ router.post('/:id/payments/onchain', authMiddleware, asyncHandler(async (req, re
       dedupeKey: `contract.payment_confirmed.landlord:${req.params.id}:${normalizedPaymentTxHash}`,
     },
     {
-      recipientId: contract.tenant_id,
-      actorId: req.user.id,
-      actorRole: 'tenant',
-      kind: 'contract.payment_confirmed',
+      platformFeeBps: paymentBreakdown.platformFeeBps,
+      platformFeeAmount: String(content?.platformFeeAmount || paymentBreakdown.platformFeeAmount || '0'),
+      performanceGuaranteeBps: Number(content?.performanceGuaranteeBps || paymentBreakdown.performanceGuaranteeBps || 0),
+      performanceGuaranteeAmount: String(content?.performanceGuaranteeAmount || paymentBreakdown.performanceGuaranteeAmount || '0'),
+      escrowAmount: String(content?.escrowAmount || paymentBreakdown.escrowAmount || '0'),
+      monthlyReleaseAmount: String(content?.monthlyReleaseAmount || paymentBreakdown.monthlyReleaseAmount || '0'),
+      landlordNetAmount: String(content?.landlordNetAmount || paymentBreakdown.landlordNetAmount || '0'),
+      platformFeeRecipient,
       entityType: 'contract',
       entityId: req.params.id,
       title: isFutureRenewalStart ? '续约付款已确认' : '付款已确认',
@@ -2445,7 +2530,7 @@ router.post('/:id/cancel', authMiddleware, asyncHandler(async (req, res) => {
 
   if (contract.status !== 'expired') {
     db.run(
-      'UPDATE contracts SET status = \'cancelled\' WHERE id = ? AND status IN (\'pending\', \'tenant_signed\')',
+      'UPDATE contracts SET status = \'cancelled_before_payment\' WHERE id = ? AND status IN (\'pending\', \'tenant_signed\')',
       [req.params.id]
     );
     if (db.getRowsModified() !== 1) {
@@ -2480,6 +2565,253 @@ router.post('/:id/cancel', authMiddleware, asyncHandler(async (req, res) => {
       gasReleasePending,
     },
   });
+}));
+
+router.post('/:id/terminate-early/onchain', authMiddleware, requireRole('tenant'), asyncHandler(async (req, res) => {
+  const txHash = String(req.body?.txHash || '').trim();
+  if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+    return sendError(res, 400, 'EARLY_TERMINATE_TX_INVALID', '缺少有效的链上提前解约交易哈希');
+  }
+  const db = await getDb();
+  const rows = parseResult(db.exec('SELECT * FROM contracts WHERE id = ?', [req.params.id]));
+  if (!rows.length) return sendError(res, 404, 'CONTRACT_NOT_FOUND', '合同不存在');
+  const contract = rows[0];
+  if (contract.tenant_id !== req.user.id) {
+    return sendError(res, 403, 'EARLY_TERMINATE_FORBIDDEN', '仅合同租客可回写提前解约结果');
+  }
+  if (!['active'].includes(String(contract.status || '').trim())) {
+    return sendError(res, 400, 'EARLY_TERMINATE_STATUS_INVALID', '当前合同状态不允许提前解约');
+  }
+
+  const opId = `op_contract_terminate_${req.params.id}_${txHash.toLowerCase()}`;
+  upsertOnchainOperation(db, {
+    opId,
+    entityType: 'contract',
+    entityId: req.params.id,
+    operationKind: 'contract.terminate_early',
+    txHash,
+    status: 'pending',
+    requestId: req.requestId,
+    payload: { contractId: req.params.id, actorId: req.user.id },
+  });
+
+  let loaded;
+  let parsedTx;
+  let parsedLogs;
+  try {
+    loaded = await loadConfirmedContractTx(txHash);
+    parsedTx = parseContractTx(loaded.tx);
+    parsedLogs = parseContractLogs(loaded.receipt, loaded.contractAddress);
+  } catch (chainErr) {
+    const chainErrCode = String(chainErr?.code || '').trim();
+    if (chainErrCode === 'ONCHAIN_TX_NOT_FOUND') {
+      saveDb();
+      return res.status(202).json({
+        success: true,
+        message: '提前解约交易已提交，后台将自动确认',
+        data: { txHash, onchainState: 'pending' },
+      });
+    }
+    markOnchainOperationFailed(db, {
+      opId,
+      entityType: 'contract',
+      entityId: req.params.id,
+      operationKind: 'contract.terminate_early',
+      txHash,
+      requestId: req.requestId,
+      payload: { contractId: req.params.id },
+      errorMessage: chainErr.error || chainErr.message || 'verify terminate early failed',
+    });
+    return res.status(400).json(error(chainErrCode || 'EARLY_TERMINATE_VERIFY_FAILED', chainErr.error || chainErr.message || '链上提前解约交易校验失败'));
+  }
+
+  if (!parsedTx || parsedTx.name !== 'terminateContractEarly' || String(parsedTx.args?.[0] || '') !== String(req.params.id)) {
+    markOnchainOperationFailed(db, {
+      opId,
+      entityType: 'contract',
+      entityId: req.params.id,
+      operationKind: 'contract.terminate_early',
+      txHash,
+      requestId: req.requestId,
+      payload: { contractId: req.params.id },
+      errorMessage: 'terminate early method mismatch',
+    });
+    return res.status(400).json(error('EARLY_TERMINATE_METHOD_MISMATCH', '链上交易不是该合同的提前解约交易'));
+  }
+
+  const content = typeof contract.content_json === 'string' ? JSON.parse(contract.content_json) : (contract.content_json || {});
+  const expectedTenantAddress = normalizeWalletAddress(content?.tenant?.walletAddress || '');
+  if (expectedTenantAddress && String(loaded.tx.from || '').toLowerCase() !== expectedTenantAddress.toLowerCase()) {
+    markOnchainOperationFailed(db, {
+      opId,
+      entityType: 'contract',
+      entityId: req.params.id,
+      operationKind: 'contract.terminate_early',
+      txHash,
+      requestId: req.requestId,
+      payload: { contractId: req.params.id },
+      errorMessage: 'terminate early sender mismatch',
+    });
+    return res.status(400).json(error('EARLY_TERMINATE_SENDER_MISMATCH', '链上提前解约交易发送方与合同租客钱包不一致'));
+  }
+
+  const terminatedEvent = parsedLogs.find((log) =>
+    log.name === 'ContractEarlyTerminated'
+    && eventIndexedStringMatches(log.args?.contractId, req.params.id)
+  );
+  if (!terminatedEvent) {
+    markOnchainOperationFailed(db, {
+      opId,
+      entityType: 'contract',
+      entityId: req.params.id,
+      operationKind: 'contract.terminate_early',
+      txHash,
+      requestId: req.requestId,
+      payload: { contractId: req.params.id },
+      errorMessage: 'terminate early event missing',
+    });
+    return res.status(400).json(error('EARLY_TERMINATE_EVENT_MISSING', '链上缺少提前解约事件'));
+  }
+
+  const landlordSettledWei = BigInt(String(terminatedEvent.args?.landlordSettledWei || '0'));
+  const refundedWei = BigInt(String(terminatedEvent.args?.refundedWei || '0'));
+  const terminatedAtMs = Number(terminatedEvent.args?.terminatedAtMs || 0);
+  const terminatedAt = terminatedAtMs > 0 ? getCnDateTime(new Date(terminatedAtMs)) : getCnDateTime(new Date());
+  db.run(
+    `UPDATE contracts
+     SET status = 'terminated_early',
+         terminated_early_at = ?
+     WHERE id = ? AND status = 'active'`,
+    [terminatedAt, req.params.id]
+  );
+  if (db.getRowsModified() !== 1) {
+    return sendError(res, 409, 'CONTRACT_STATE_CHANGED', '合同状态已变化，无法回写提前解约结果');
+  }
+
+  const childContracts = parseResult(db.exec(
+    `SELECT id, tenant_id, landlord_id, status, content_json
+     FROM contracts
+     WHERE parent_contract_id = ?
+       AND status NOT IN ('cancelled_before_payment', 'expired', 'ended', 'terminated_early')`,
+    [req.params.id]
+  ));
+  const autoCancelledChildIds = [];
+  for (const child of childContracts) {
+    const childStartAtMs = resolveFutureStartAtMsFromContract(child);
+    if (!Number.isFinite(childStartAtMs) || childStartAtMs <= terminatedAtMs) continue;
+    db.run(
+      `UPDATE contracts
+       SET status = 'cancelled_before_payment'
+       WHERE id = ? AND status NOT IN ('cancelled_before_payment', 'expired', 'ended', 'terminated_early')`,
+      [child.id]
+    );
+    if (db.getRowsModified() === 1) autoCancelledChildIds.push(String(child.id || '').trim());
+  }
+
+  markOnchainOperationConfirmed(db, {
+    opId,
+    entityType: 'contract',
+    entityId: req.params.id,
+    operationKind: 'contract.terminate_early',
+    txHash,
+    requestId: req.requestId,
+    payload: { contractId: req.params.id, actorId: req.user.id },
+    result: {
+      contractStatusAfter: 'terminated_early',
+      landlordSettledWei: landlordSettledWei.toString(),
+      refundedWei: refundedWei.toString(),
+      terminatedAt,
+      autoCancelledChildIds,
+    },
+  });
+
+  enqueueContractNotifications(db, [
+    {
+      recipientId: contract.landlord_id,
+      actorId: req.user.id,
+      actorRole: 'tenant',
+      kind: 'contract.terminated_early',
+      entityType: 'contract',
+      entityId: req.params.id,
+      title: '租客已提前解约',
+      body: `合同 ${req.params.id} 已由租客发起提前解约，未释放托管金额已按规则退回租客。`,
+      metadata: {
+        contractId: req.params.id,
+        listingId: contract.listing_id,
+        txHash,
+        landlordSettledWei: landlordSettledWei.toString(),
+        refundedWei: refundedWei.toString(),
+        terminatedAtMs,
+      },
+      dedupeKey: `contract.terminated_early.landlord:${req.params.id}:${txHash.toLowerCase()}`,
+    },
+    {
+      recipientId: contract.tenant_id,
+      actorId: req.user.id,
+      actorRole: 'tenant',
+      kind: 'contract.terminated_early',
+      entityType: 'contract',
+      entityId: req.params.id,
+      title: '提前解约已确认',
+      body: `合同 ${req.params.id} 的提前解约已上链确认，未释放托管金额已按规则退回。`,
+      metadata: {
+        contractId: req.params.id,
+        listingId: contract.listing_id,
+        txHash,
+        landlordSettledWei: landlordSettledWei.toString(),
+        refundedWei: refundedWei.toString(),
+        terminatedAtMs,
+      },
+      dedupeKey: `contract.terminated_early.tenant:${req.params.id}:${txHash.toLowerCase()}`,
+      allowSelf: true,
+    },
+  ]);
+  for (const childId of autoCancelledChildIds) {
+    const child = childContracts.find((item) => String(item.id || '').trim() === childId);
+    if (!child) continue;
+    enqueueContractNotifications(db, [
+      {
+        recipientId: child.landlord_id,
+        actorId: req.user.id,
+        actorRole: 'tenant',
+        kind: 'contract.cancelled_by_party',
+        entityType: 'contract',
+        entityId: childId,
+        title: '续约子合同已自动取消',
+        body: `因父合同 ${req.params.id} 提前解约，未生效的续约子合同 ${childId} 已自动取消。`,
+        metadata: { contractId: childId, parentContractId: req.params.id, listingId: contract.listing_id, txHash },
+        dedupeKey: `contract.auto_cancel_child.landlord:${childId}:${txHash.toLowerCase()}`,
+      },
+      {
+        recipientId: child.tenant_id,
+        actorId: req.user.id,
+        actorRole: 'tenant',
+        kind: 'contract.cancelled_by_party',
+        entityType: 'contract',
+        entityId: childId,
+        title: '续约子合同已自动取消',
+        body: `因父合同 ${req.params.id} 提前解约，未生效的续约子合同 ${childId} 已自动取消。`,
+        metadata: { contractId: childId, parentContractId: req.params.id, listingId: contract.listing_id, txHash },
+        dedupeKey: `contract.auto_cancel_child.tenant:${childId}:${txHash.toLowerCase()}`,
+      },
+    ]);
+  }
+  saveDb();
+  res.json({
+    success: true,
+    message: '提前解约回写成功',
+    data: {
+      txHash,
+      landlordSettledWei: landlordSettledWei.toString(),
+      refundedWei: refundedWei.toString(),
+      terminatedAt,
+      autoCancelledChildIds,
+    },
+  });
+}));
+
+router.post('/:id/release-due-rent', authMiddleware, asyncHandler(async (_req, res) => {
+  return sendError(res, 410, 'RELEASE_RENT_MANUAL_DISABLED', '手动释放托管月租已关闭，当前仅支持服务器自动释放');
 }));
 
 router.post('/:id/review/prepare-onchain', authMiddleware, requireRole('tenant'), asyncHandler(async (req, res) => {
@@ -2847,7 +3179,7 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
     pending_payment: '待支付',
     active: '已生效',
     ended: '已结束',
-    cancelled: '已取消',
+    cancelled_before_payment: '已取消',
     expired: '已过期',
   }[contract.status] || contract.status || '未知状态';
   const renderAttachmentTitle = (title, description = '') => {
@@ -3127,9 +3459,9 @@ router.post('/:id/renewals', authMiddleware, requireRole('tenant'), asyncHandler
   }
   const existingRenewal = parseResult(db.exec(
     `SELECT id FROM contracts
-      WHERE parent_contract_id = ?
-       AND status NOT IN ('cancelled','expired','ended')
-      LIMIT 1`,
+     WHERE parent_contract_id = ?
+       AND status NOT IN ('cancelled_before_payment','expired','ended','terminated_early')
+     LIMIT 1`,
     [parent.id]
   ));
   if (existingRenewal.length > 0) return sendError(res, 409, 'RENEWAL_ALREADY_EXISTS', '该原合同已有进行中的续约合同');
@@ -3156,10 +3488,14 @@ router.post('/:id/renewals', authMiddleware, requireRole('tenant'), asyncHandler
   content.contractId = renewalId;
   content.parentContractId = parent.id;
   content.rentAmount = nextRentAmount;
-  const renewalPaymentBreakdown = computePlatformFeeBreakdownFromEth(Number(nextRentAmount) * nextLeaseMonths);
+  const renewalPaymentBreakdown = computePlatformFeeBreakdownFromEth(Number(nextRentAmount) * nextLeaseMonths, nextLeaseMonths);
   content.oneTimeAmount = renewalPaymentBreakdown.grossAmount;
   content.platformFeeBps = renewalPaymentBreakdown.platformFeeBps;
   content.platformFeeAmount = renewalPaymentBreakdown.platformFeeAmount;
+  content.performanceGuaranteeBps = renewalPaymentBreakdown.performanceGuaranteeBps;
+  content.performanceGuaranteeAmount = renewalPaymentBreakdown.performanceGuaranteeAmount;
+  content.escrowAmount = renewalPaymentBreakdown.escrowAmount;
+  content.monthlyReleaseAmount = renewalPaymentBreakdown.monthlyReleaseAmount;
   content.landlordNetAmount = renewalPaymentBreakdown.landlordNetAmount;
   content.terms = {
     ...(content.terms || {}),
@@ -3267,7 +3603,7 @@ router.get('/:id', authMiddleware, asyncHandler(async (req, res) => {
     `SELECT id, status, created_at
      FROM contracts
      WHERE parent_contract_id = ?
-       AND status NOT IN ('cancelled','expired','ended')
+       AND status NOT IN ('cancelled_before_payment','expired','ended','terminated_early')
      ORDER BY created_at DESC
      LIMIT 1`,
     [req.params.id]
@@ -3292,6 +3628,7 @@ router.get('/:id', authMiddleware, asyncHandler(async (req, res) => {
   const reviewState = getContractReviewState(contract);
   contract.review_state = {
     ...reviewState,
+    early_terminated: reviewState.earlyTerminated,
     review_window_end_at: reviewState.reviewWindowEndMs ? getCnDateTime(new Date(reviewState.reviewWindowEndMs)) : '',
     can_review_as_current_user: contract.tenant_id === req.user.id && !contract.rental_review && reviewState.canReview,
     sample_threshold: 3,
@@ -3307,5 +3644,3 @@ router.get('/:id', authMiddleware, asyncHandler(async (req, res) => {
 }));
 
 module.exports = router;
-
-

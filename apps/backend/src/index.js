@@ -35,6 +35,7 @@ const HOST = String(process.env.HOST || '127.0.0.1');
 const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || '100mb');
 const PAYMENT_WINDOW_HOURS = Math.max(1, Number(process.env.PAYMENT_WINDOW_HOURS || 2));
 const PLATFORM_FEE_BPS = 10n;
+const PERFORMANCE_GUARANTEE_BPS = 1000n;
 const BPS_DENOMINATOR = 10000n;
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -63,15 +64,29 @@ function normalizeAmount(value) {
   return n.toFixed(8).replace(/\.?0+$/, '');
 }
 
-function computePlatformFeeBreakdownFromEth(amountEth) {
+function computePlatformFeeBreakdownFromEth(amountEth, leaseMonths = 1) {
   const normalized = normalizeAmount(amountEth);
-  if (!normalized) return { platformFeeWei: '0', landlordNetWei: '0' };
+  if (!normalized) {
+    return {
+      platformFeeWei: '0',
+      landlordNetWei: '0',
+      performanceGuaranteeWei: '0',
+      escrowWei: '0',
+      monthlyReleaseWei: '0',
+    };
+  }
   const grossWei = ethers.parseEther(String(normalized));
   const feeWei = (grossWei * PLATFORM_FEE_BPS) / BPS_DENOMINATOR;
   const netWei = grossWei - feeWei;
+  const guaranteeWei = (netWei * PERFORMANCE_GUARANTEE_BPS) / BPS_DENOMINATOR;
+  const escrowWei = netWei - guaranteeWei;
+  const monthlyReleaseWei = escrowWei / BigInt(Math.max(1, Number(leaseMonths || 1)));
   return {
     platformFeeWei: feeWei.toString(),
     landlordNetWei: netWei.toString(),
+    performanceGuaranteeWei: guaranteeWei.toString(),
+    escrowWei: escrowWei.toString(),
+    monthlyReleaseWei: monthlyReleaseWei.toString(),
   };
 }
 
@@ -940,7 +955,7 @@ async function reconcileUnifiedOnchainOperations() {
         const tenantAddress = normalizeWalletAddress(content?.tenant?.walletAddress || '');
         const landlordAddress = normalizeWalletAddress(content?.landlord?.walletAddress || '');
         const expectedAmountWei = ethers.parseEther(String(content?.oneTimeAmount || '0'));
-        const paymentBreakdown = computePlatformFeeBreakdownFromEth(content?.oneTimeAmount || '0');
+        const paymentBreakdown = computePlatformFeeBreakdownFromEth(content?.oneTimeAmount || '0', Number(content?.terms?.leaseMonths || 1));
         const deployment = loadCurrentDeployment();
         const platformFeeRecipient = (() => {
           try {
@@ -990,7 +1005,8 @@ async function reconcileUnifiedOnchainOperations() {
           && toLowerHex(log.args?.landlord) === toLowerHex(landlordAddress)
           && BigInt(log.args?.amountWei || 0) === expectedAmountWei
           && BigInt(log.args?.platformFeeWei || 0) === BigInt(paymentBreakdown.platformFeeWei || 0)
-          && BigInt(log.args?.landlordNetWei || 0) === BigInt(paymentBreakdown.landlordNetWei || 0)
+          && BigInt(log.args?.performanceGuaranteeWei || 0) === BigInt(paymentBreakdown.performanceGuaranteeWei || 0)
+          && BigInt(log.args?.escrowWei || 0) === BigInt(paymentBreakdown.escrowWei || 0)
           && (!platformFeeRecipient || toLowerHex(log.args?.platformFeeRecipient) === platformFeeRecipient)
         );
         if (!paymentEvent) {
@@ -1179,7 +1195,7 @@ async function expirePendingPaymentContracts() {
 
   timeoutContracts.forEach((item) => {
     db.run(
-      "UPDATE contracts SET status = 'cancelled' WHERE id = ? AND status = 'pending_payment'",
+      "UPDATE contracts SET status = 'cancelled_before_payment' WHERE id = ? AND status = 'pending_payment'",
       [item.id]
     );
     if (db.getRowsModified() !== 1) return;

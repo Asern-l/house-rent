@@ -488,6 +488,9 @@ export default function ListingDetail() {
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-sm font-medium text-primary-300">{renderStars(item.rating)} <span className="ml-2 text-gray-400">权重 {item.weight}</span></p>
+                      <div className="mt-1 flex items-center gap-2">
+                        {item.early_terminated ? <span className="badge-red">提前解约</span> : null}
+                      </div>
                       <p className="mt-1 text-xs text-gray-500">地址：{item.tenant_wallet ? `${item.tenant_wallet.slice(0, 6)}...${item.tenant_wallet.slice(-4)}` : '未知地址'}</p>
                     </div>
                     <p className="text-xs text-gray-500">{item.created_at || '-'}</p>

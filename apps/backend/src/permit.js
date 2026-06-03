@@ -194,7 +194,7 @@ function hashSetListingStatusParams({ listingId, newStatus, expectedVersion, exp
 function hashCreateContractParams(params) {
   return ethers.keccak256(abiCoder.encode(
     [
-      'string', 'string', 'string', 'address', 'address', 'bytes32', 'bytes32', 'uint256', 'uint256', 'uint256',
+      'string', 'string', 'string', 'address', 'address', 'bytes32', 'bytes32', 'uint256', 'uint256', 'uint256', 'uint16',
       'bytes32', 'bytes32', 'uint256', 'uint256', 'bytes32', 'bytes32',
     ],
     [
@@ -208,6 +208,7 @@ function hashCreateContractParams(params) {
       BigInt(params.initialAmountWei),
       BigInt(params.startAtMs),
       BigInt(params.endAtMs),
+      Number(params.leaseMonths),
       params.tenantMessageHash,
       params.landlordMessageHash,
       BigInt(params.tenantSignedAt),
@@ -242,6 +243,7 @@ function hashListingFeedbackParams({ listingId, feedbackTypeCode, commentHash, c
 module.exports = {
   ACTIONS,
   getTrustedSignerAddress,
+  getTrustedSignerWallet,
   issuePermit,
   hashCreateListingParams,
   hashUpdateListingTermsParams,

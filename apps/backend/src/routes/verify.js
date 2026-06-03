@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 文件说明：链上/链下验真路由。
  * 房源链上状态表达房源本体状态，租出/占用语义由合同链表达。
  */
@@ -147,13 +147,13 @@ function resolveDbListingContractMapping(db, listingId) {
   const chainHead = parseResult(db.exec(
     `SELECT id, status FROM contracts
      WHERE listing_id = ? AND COALESCE(parent_contract_id, '') = ''
-       AND status NOT IN ('cancelled', 'expired', 'ended')
+       AND status NOT IN ('cancelled_before_payment', 'expired', 'ended', 'terminated_early')
      ORDER BY created_at ASC LIMIT 1`,
     [listingId]
   ))[0] || null;
   const contracts = parseResult(db.exec(
     `SELECT id, status, content_json, expires_at, payment_deadline FROM contracts
-     WHERE listing_id = ? AND status NOT IN ('cancelled', 'expired', 'ended')
+     WHERE listing_id = ? AND status NOT IN ('cancelled_before_payment', 'expired', 'ended', 'terminated_early')
       ORDER BY created_at DESC`,
     [listingId]
   ));
@@ -217,6 +217,10 @@ function deriveDbContractSemanticState(contract, content, hasInitialPayment, now
     semanticState = signDeadline > nowMs ? 'signing' : 'expired';
   } else if (status === 'pending_payment') {
     semanticState = Number.isFinite(paymentDeadline) && paymentDeadline > nowMs ? 'pending_payment' : 'expired';
+  } else if (status === 'cancelled_before_payment') {
+    semanticState = 'cancelled_before_payment';
+  } else if (status === 'terminated_early') {
+    semanticState = 'terminated_early';
   } else if (hasInitialPayment || status === 'active' || status === 'ended') {
     if (expiredByTime) semanticState = 'expired';
     else if (beforeStart) semanticState = 'future_reserved';
@@ -245,6 +249,7 @@ function deriveOnchainContractSemanticState(onchain, nowMs = Date.now()) {
   const status = String(onchain.status || '').trim().toLowerCase();
   const startAtMs = Number(onchain.startAtMs || 0);
   const endAtMs = Number(onchain.endAtMs || 0);
+  const terminatedAtMs = Number(onchain.terminatedAtMs || 0);
   const beforeStart = startAtMs > 0 && nowMs < startAtMs;
   const inRange = startAtMs > 0 && endAtMs > 0 && startAtMs <= nowMs && nowMs < endAtMs;
   const expiredByTime = endAtMs > 0 && nowMs >= endAtMs;
@@ -255,7 +260,9 @@ function deriveOnchainContractSemanticState(onchain, nowMs = Date.now()) {
     if (expiredByTime) semanticState = 'expired';
     else if (beforeStart) semanticState = 'future_reserved';
     else if (inRange) semanticState = 'effective';
-  } else if (status === 'completed' || status === 'cancelled') {
+  } else if (status === 'cancelled') {
+    semanticState = terminatedAtMs > 0 ? 'terminated_early' : 'cancelled_before_payment';
+  } else if (status === 'completed') {
     semanticState = expiredByTime ? 'expired' : 'inactive';
   }
 
@@ -354,6 +361,14 @@ async function readOnchainContractVerification(contractId, txHash) {
     landlord: String(data.landlord || '').toLowerCase(),
     contentHash: String(data.contentHash || '').toLowerCase(),
     initialAmountWei: String(data.initialAmountWei || ''),
+    leaseMonths: String(data.leaseMonths || ''),
+    escrowTotalWei: String(data.escrowTotalWei || ''),
+    performanceGuaranteeWei: String(data.performanceGuaranteeWei || ''),
+    monthlyReleaseWei: String(data.monthlyReleaseWei || ''),
+    releasedWei: String(data.releasedWei || ''),
+    refundedWei: String(data.refundedWei || ''),
+    releasedPeriods: String(data.releasedPeriods || ''),
+    terminatedAtMs: String(data.terminatedAtMs || ''),
     startAtMs: String(data.startAtMs || ''),
     endAtMs: String(data.endAtMs || ''),
     createdAt: Number(data.createdAt || 0),
@@ -492,6 +507,10 @@ async function buildContractVerificationData(db, contract) {
       amount: initialPayment.amount,
       platformFeeBps: Number(content?.platformFeeBps || 0),
       platformFeeAmount: String(content?.platformFeeAmount || '0'),
+      performanceGuaranteeBps: Number(content?.performanceGuaranteeBps || 0),
+      performanceGuaranteeAmount: String(content?.performanceGuaranteeAmount || '0'),
+      escrowAmount: String(content?.escrowAmount || '0'),
+      monthlyReleaseAmount: String(content?.monthlyReleaseAmount || '0'),
       landlordNetAmount: String(content?.landlordNetAmount || content?.oneTimeAmount || '0'),
       txHash: initialPayment.tx_hash,
       status: initialPayment.status,
@@ -531,7 +550,7 @@ router.get('/listing/:id', asyncHandler(async (req, res) => {
   try {
     onchain = await readOnchainListing(listing.id);
   } catch (error) {
-    onchain = { readable: false, reason: error?.message || '????????' };
+    onchain = { readable: false, reason: error?.message || '读取链上房源失败' };
   }
   const syncedImageHashes = parseJsonArray(listing.image_hashes);
   const syncedImageUrls = parseJsonArray(listing.image_urls);

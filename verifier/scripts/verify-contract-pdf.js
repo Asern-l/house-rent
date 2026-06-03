@@ -37,10 +37,20 @@ function deriveContractLifecycle({ record, paymentWindowMs }) {
   const landlordSignedAtMs = toMsNumber(record.landlordSignedAt);
   const startAtMs = toMsNumber(record.startAtMs);
   const endAtMs = toMsNumber(record.endAtMs);
+  const performanceGuaranteeWei = BigInt(String(record.performanceGuaranteeWei || '0'));
+  const escrowTotalWei = BigInt(String(record.escrowTotalWei || '0'));
+  const releasedWei = BigInt(String(record.releasedWei || '0'));
+  const refundedWei = BigInt(String(record.refundedWei || '0'));
+  const terminatedAtMs = toMsNumber(record.terminatedAtMs);
   const paymentDeadlineMs = createdAtMs > 0 && Number.isFinite(Number(paymentWindowMs || 0))
     ? createdAtMs + Number(paymentWindowMs || 0)
     : 0;
-  const paymentRecorded = statusEnum >= 2 && statusEnum !== 5;
+  const paymentSettledOnchain = performanceGuaranteeWei > 0n
+    || escrowTotalWei > 0n
+    || releasedWei > 0n
+    || refundedWei > 0n
+    || terminatedAtMs > 0;
+  const paymentRecorded = (statusEnum >= 2 && statusEnum !== 5) || paymentSettledOnchain;
   const currentlyEffective = (statusEnum === 2 || statusEnum === 3) && startAtMs > 0 && endAtMs > 0 && startAtMs <= nowMs && nowMs < endAtMs;
   const futureEffective = (statusEnum === 2 || statusEnum === 3) && startAtMs > nowMs;
   const endedByTime = endAtMs > 0 && nowMs >= endAtMs;
@@ -67,6 +77,107 @@ function deriveContractLifecycle({ record, paymentWindowMs }) {
   };
 }
 
+function deriveEmergencyRelease(record, runtime, contractId) {
+  const statusEnum = Number(record.status || 0);
+  const leaseMonths = Number(record.leaseMonths || 0);
+  const releasedPeriods = Number(record.releasedPeriods || 0);
+  const startAtMs = toMsNumber(record.startAtMs);
+  const endAtMs = toMsNumber(record.endAtMs);
+  const nowMs = Date.now();
+  const escrowTotalWei = BigInt(String(record.escrowTotalWei || '0'));
+  const releasedWei = BigInt(String(record.releasedWei || '0'));
+  const refundedWei = BigInt(String(record.refundedWei || '0'));
+  const remainingEscrowWei = escrowTotalWei - releasedWei - refundedWei;
+
+  const result = {
+    available: Boolean(runtime?.selectedConfigName),
+    selectedConfigName: String(runtime?.selectedConfigName || '').trim(),
+    contractId: String(contractId || '').trim(),
+    chainId: Number(runtime?.deploymentMeta?.chainId || 0),
+    rpcUrl: String(runtime?.rpcUrl || '').trim(),
+    contractAddress: String(runtime?.contractAddress || '').trim(),
+    landlord: String(record.landlord || '').toLowerCase(),
+    status: CONTRACT_STATUS_ENUM_TO_TEXT[statusEnum] || `unknown(${statusEnum})`,
+    leaseMonths,
+    releasedPeriods,
+    earnedPeriods: 0,
+    releasablePeriods: 0,
+    releasedWei: releasedWei.toString(),
+    refundedWei: refundedWei.toString(),
+    remainingEscrowWei: remainingEscrowWei > 0n ? remainingEscrowWei.toString() : '0',
+    nextEligibleAtMs: '',
+    nextEligibleAtCn: '',
+    canReleaseNow: false,
+    reasonCode: '',
+    reasonMessage: '',
+    preparedTx: null,
+  };
+
+  if (!result.selectedConfigName) {
+    result.reasonCode = 'CONFIG_NOT_SAVED';
+    result.reasonMessage = '当前合同未匹配到已保存的合约配置，请先在“合约配置”页保存并设为当前配置。';
+    return result;
+  }
+  if (statusEnum !== 2 && statusEnum !== 3) {
+    result.reasonCode = 'STATUS_NOT_RELEASABLE';
+    result.reasonMessage = '当前合同状态不支持托管月租释放。';
+    return result;
+  }
+  if (escrowTotalWei <= releasedWei || remainingEscrowWei <= 0n) {
+    result.reasonCode = 'ESCROW_ALREADY_RELEASED';
+    result.reasonMessage = '当前合同的托管月租已经全部释放或结清。';
+    return result;
+  }
+  if (leaseMonths <= 0 || endAtMs <= startAtMs) {
+    result.reasonCode = 'INVALID_RELEASE_SCHEDULE';
+    result.reasonMessage = '当前合同缺少有效的托管释放计划。';
+    return result;
+  }
+
+  let earnedPeriods = 0;
+  if (nowMs > startAtMs) {
+    if (nowMs >= endAtMs) {
+      earnedPeriods = leaseMonths;
+    } else {
+      const totalRange = endAtMs - startAtMs;
+      const elapsed = nowMs - startAtMs;
+      earnedPeriods = Math.floor((elapsed * leaseMonths) / totalRange);
+      if (earnedPeriods > leaseMonths) earnedPeriods = leaseMonths;
+    }
+  }
+  result.earnedPeriods = earnedPeriods;
+  result.releasablePeriods = Math.max(earnedPeriods - releasedPeriods, 0);
+
+  if (result.releasablePeriods <= 0) {
+    const nextPeriod = releasedPeriods + 1;
+    if (nextPeriod <= leaseMonths) {
+      const totalRange = endAtMs - startAtMs;
+      const nextEligibleAtMs = startAtMs + Math.ceil((nextPeriod * totalRange) / leaseMonths);
+      result.nextEligibleAtMs = String(nextEligibleAtMs);
+      result.nextEligibleAtCn = formatCnDateTime(nextEligibleAtMs);
+    }
+    result.reasonCode = 'NO_RELEASABLE_RENT';
+    result.reasonMessage = result.nextEligibleAtCn
+      ? `当前还没有到本期托管月租可释放时间。下一次最早可释放时间：${result.nextEligibleAtCn}`
+      : '当前还没有到本期托管月租可释放时间。';
+    return result;
+  }
+
+  const iface = new ethers.Interface(runtime.abi || []);
+  result.canReleaseNow = true;
+  result.reasonCode = 'READY';
+  result.reasonMessage = '当前合同已有可释放的托管月租，可由房东钱包应急触发释放。';
+  result.preparedTx = {
+    to: runtime.contractAddress,
+    data: iface.encodeFunctionData('releaseDueRent', [result.contractId]),
+    chainId: result.chainId,
+    chainIdHex: `0x${result.chainId.toString(16)}`,
+    rpcUrl: result.rpcUrl,
+    configName: result.selectedConfigName,
+  };
+  return result;
+}
+
 function usage() {
   console.log([
     'Usage:',
@@ -79,6 +190,7 @@ function usage() {
 
 function extractMarkersFromText(text) {
   const lines = String(text || '').split(/\r?\n/);
+  const isBase64Fragment = (value) => /^[A-Za-z0-9+/=]+$/.test(String(value || '').replace(/\s+/g, ''));
   const pick = (name) => {
     const matches = [...String(text || '').matchAll(new RegExp(`${name}=([^\\r\\n\\)<>;]+)`, 'g'))];
     if (!matches.length) return '';
@@ -96,7 +208,9 @@ function extractMarkersFromText(text) {
         const next = String(lines[i + 1] || '');
         if (!next.trim()) break;
         if (/^VERIFY_[A-Z0-9_]+(?:_\d{3})?=/.test(next)) break;
-        value += next.replace(/\s+/g, '');
+        const compactNext = next.replace(/\s+/g, '');
+        if (!isBase64Fragment(compactNext)) break;
+        value += compactNext;
         i += 1;
       }
       chunks.push({
@@ -324,7 +438,7 @@ async function loadContractCreatedMatch(contract, provider, contractId, txHash) 
   return { checked: true, match: matched };
 }
 
-async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sepolia', rpcUrl = '', contractAddress = '', verifyListing = false }) {
+async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sepolia', configName = '', rpcUrl = '', contractAddress = '', verifyListing = false }) {
   const markers = await extractMarkers(pdfBuffer);
   if (!markers.contractId || !markers.contentHash) {
     throw new Error('missing VERIFY_CONTRACT_ID or VERIFY_CONTENT_HASH in PDF');
@@ -340,13 +454,18 @@ async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sep
   const canonicalContent = JSON.parse(canonicalContentJson);
   const rebuiltContentHash = makeContractContentHash(canonicalContent).toLowerCase();
 
-  const runtime = resolveRuntime('', {
+  const selectedConfigName = String(configName || '').trim();
+  const runtimeArgs = {
+    'config-name': selectedConfigName,
     network: resolvePdfDrivenNetwork(markers, network),
-    'chain-id': String(markers.chainId || '').trim(),
-    'rpc-url': String(rpcUrl || '').trim() || String(markers.rpcUrl || '').trim(),
-    'contract-address': String(contractAddress || '').trim() || String(markers.contractAddress || '').trim(),
     'contract-deployed-at': String(markers.chainDeployedAt || '').trim(),
-  });
+  };
+  if (!selectedConfigName) {
+    runtimeArgs['chain-id'] = String(markers.chainId || '').trim();
+    runtimeArgs['rpc-url'] = String(rpcUrl || '').trim() || String(markers.rpcUrl || '').trim();
+    runtimeArgs['contract-address'] = String(contractAddress || '').trim() || String(markers.contractAddress || '').trim();
+  }
+  const runtime = resolveRuntime('', runtimeArgs);
   if (String(markers.chainDeployedAt || '').trim()) {
     runtime.deploymentMeta = {
       ...(runtime.deploymentMeta || {}),
@@ -412,6 +531,7 @@ async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sep
         },
       })
     : null;
+  const emergencyRelease = deriveEmergencyRelease(record, runtime, markers.contractId);
   const verified = Object.values(comparisons).every(Boolean) && (!listingVerification || listingVerification.verified);
 
   const output = {
@@ -444,6 +564,14 @@ async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sep
       landlord: String(record.landlord || '').toLowerCase(),
       contentHash: String(record.contentHash || '').toLowerCase(),
       initialAmountWei: String(record.initialAmountWei || ''),
+      leaseMonths: String(record.leaseMonths || ''),
+      escrowTotalWei: String(record.escrowTotalWei || ''),
+      performanceGuaranteeWei: String(record.performanceGuaranteeWei || ''),
+      monthlyReleaseWei: String(record.monthlyReleaseWei || ''),
+      releasedWei: String(record.releasedWei || ''),
+      refundedWei: String(record.refundedWei || ''),
+      releasedPeriods: String(record.releasedPeriods || ''),
+      terminatedAtMs: String(record.terminatedAtMs || ''),
       startAtMs: String(record.startAtMs || ''),
       endAtMs: String(record.endAtMs || ''),
       createdAtMs: String(lifecycle.createdAtMs || ''),
@@ -482,6 +610,7 @@ async function verifyContractPdfBuffer({ pdfBuffer, pdfPath = '', network = 'sep
       tenant: tenantSignatureVerification,
       landlord: landlordSignatureVerification,
     },
+    emergencyRelease,
     listingVerification,
     comparisons,
     txHashReferenced: createdTx.match,
@@ -538,6 +667,7 @@ if (require.main === module) {
 
 module.exports = {
   extractMarkers,
+  deriveEmergencyRelease,
   verifyContractPdfBuffer,
   verifyContractPdfFile,
 };

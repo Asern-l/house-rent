@@ -55,6 +55,7 @@ GANACHE_ARGS=(
   --server.host 127.0.0.1
   --server.port 8545
   --chain.chainId 31337
+  --chain.allowUnlimitedContractSize true
   --wallet.totalAccounts 10
   --wallet.defaultBalance 1000
   --database.dbPath ./.ganache-db

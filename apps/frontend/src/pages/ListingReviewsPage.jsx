@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ethers } from 'ethers';
 import toast from 'react-hot-toast';
@@ -234,6 +234,7 @@ export default function ListingReviewsPage() {
                     <p className="text-lg font-medium text-amber-300">{renderStars(item.rating)}</p>
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
                       <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-emerald-200">真实租客评价</span>
+                      {item.early_terminated ? <span className="badge-red">提前解约</span> : null}
                       <span className="font-mono">地址：{item.tenant_wallet || '未知地址'}</span>
                       <span>权重：{item.weight}</span>
                     </div>
