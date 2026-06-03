@@ -1022,7 +1022,7 @@ async function attachPublicListingState(rows) {
 // 正则兜底解析器
 function regexParseSearch(raw) {
   let remaining = raw;
-  const result = { keyword: '', district: '', minRent: 0, maxRent: 0, bedrooms: 0 };
+  const result = { keyword: '', district: '', minRent: 0, maxRent: 0, bedrooms: 0, sortBy: '' };
   const bedroomMap = { '一': 1, '1': 1, '两': 2, '二': 2, '2': 2, '三': 3, '3': 3, '四': 4, '4': 4, '五': 5, '5': 5 };
   const bedroomMatch = remaining.match(/([一二两三四五1-5])室/);
   if (bedroomMatch) { result.bedrooms = bedroomMap[bedroomMatch[1]] || 0; remaining = remaining.replace(bedroomMatch[0], ' '); }
@@ -1039,7 +1039,13 @@ function regexParseSearch(raw) {
   }
   const districtMatch = remaining.match(/[一-龥]{2,6}(区|街道|镇|园|路|街)/);
   if (districtMatch) { result.district = districtMatch[0]; remaining = remaining.replace(districtMatch[0], ' '); }
-  result.keyword = remaining.replace(/[一二两三四五1-5]厅|ETH|eth|找|要|想|租|在|的|一个|附近/g, '').replace(/\s+/g, ' ').trim();
+  // 排序意图
+  if (/最便宜|最低价|价格最低|租金最低|便宜点|最少钱/.test(remaining)) { result.sortBy = 'rent_asc'; remaining = remaining.replace(/最便宜|最低价|价格最低|租金最低|便宜点|最少钱/g, ' '); }
+  else if (/最贵|最高价|价格最高|租金最高/.test(remaining)) { result.sortBy = 'rent_desc'; remaining = remaining.replace(/最贵|最高价|价格最高|租金最高/g, ' '); }
+  else if (/最大|面积最大|最宽敞/.test(remaining)) { result.sortBy = 'area_desc'; remaining = remaining.replace(/最大|面积最大|最宽敞/g, ' '); }
+  else if (/最小|面积最小/.test(remaining)) { result.sortBy = 'area_asc'; remaining = remaining.replace(/最小|面积最小/g, ' '); }
+  else if (/最新|新上架|刚上/.test(remaining)) { result.sortBy = 'newest'; remaining = remaining.replace(/最新|新上架|刚上/g, ' '); }
+  result.keyword = remaining.replace(/[一二两三四五1-5]厅|ETH|eth|找|要|想|租|在|的|一个|附近|房子|公寓/g, '').replace(/\s+/g, ' ').trim();
   return result;
 }
 
@@ -1056,9 +1062,15 @@ async function deepseekParseSearch(raw) {
 - minRent: 最低月租金（ETH 单位的数字），无则为 0
 - maxRent: 最高月租金（ETH 单位的数字），无则为 0
 - bedrooms: 卧室数量（整数），无则为 0，"4室+"对应4
+- sortBy: 排序意图，只能为以下值之一，无排序意图则为空字符串：
+  "rent_asc"（最便宜/租金最低/价格最低）
+  "rent_desc"（最贵/租金最高/价格最高）
+  "area_desc"（面积最大/最宽敞）
+  "area_asc"（面积最小）
+  "newest"（最新上架/刚上线）
 
 只返回 JSON，不要解释，格式：
-{"keyword":"...","district":"...","minRent":0,"maxRent":0,"bedrooms":0}`;
+{"keyword":"...","district":"...","minRent":0,"maxRent":0,"bedrooms":0,"sortBy":""}}`;
 
   const resp = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST',
@@ -1082,12 +1094,14 @@ async function deepseekParseSearch(raw) {
   const json = await resp.json();
   const text = json?.choices?.[0]?.message?.content || '';
   const parsed = JSON.parse(text);
+  const VALID_SORT = ['rent_asc', 'rent_desc', 'area_desc', 'area_asc', 'newest'];
   return {
     keyword: String(parsed.keyword || '').trim(),
     district: String(parsed.district || '').trim(),
     minRent: parseFloat(parsed.minRent) || 0,
     maxRent: parseFloat(parsed.maxRent) || 0,
     bedrooms: parseInt(parsed.bedrooms, 10) || 0,
+    sortBy: VALID_SORT.includes(parsed.sortBy) ? parsed.sortBy : '',
   };
 }
 

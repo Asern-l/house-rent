@@ -30,6 +30,15 @@ export default function ListingsPage() {
   const [filters, setFilters] = useState({ keyword: '', district: '', minRent: 0, maxRent: 0, bedrooms: 0 });
   const [activeChips, setActiveChips] = useState({});
   const [keyword, setKeyword] = useState('');
+  const [sortBy, setSortBy] = useState(''); // 'rent_asc'|'rent_desc'|'area_desc'|'area_asc'|'newest'
+
+  const SORT_LABELS = {
+    rent_asc:  '价格从低到高',
+    rent_desc: '价格从高到低',
+    area_desc: '面积从大到小',
+    area_asc:  '面积从小到大',
+    newest:    '最新上架',
+  };
 
   // 初始加载全量（用于地区下拉列表）
   useEffect(() => {
@@ -93,10 +102,12 @@ export default function ListingsPage() {
         maxRent: parsed.maxRent || 0,
         bedrooms: parsed.bedrooms || 0,
       };
+      if (parsed.sortBy) chips.sortBy = parsed.sortBy;
       setActiveChips(chips);
       setFilters(nextFilters);
       setKeyword(parsed.keyword || '');
       setAiEngine(engine);
+      setSortBy(parsed.sortBy || '');
       // 用服务端过滤刷新结果
       setLoading(true);
       const data = await fetchWithFilters(nextFilters, parsed.keyword);
@@ -113,6 +124,7 @@ export default function ListingsPage() {
     const next = { ...activeChips };
     delete next[key];
     setActiveChips(next);
+    if (key === 'sortBy') { setSortBy(''); return; }
     const nextFilters = { ...filters, [key]: key === 'district' ? '' : 0 };
     setFilters(nextFilters);
     fetchWithFilters(nextFilters, keyword).then((data) => setListings(data)).catch(() => {});
@@ -125,6 +137,7 @@ export default function ListingsPage() {
     setKeyword('');
     setAiQuery('');
     setAiEngine(null);
+    setSortBy('');
     setListings(allListings);
   }
 
@@ -133,7 +146,7 @@ export default function ListingsPage() {
 
   const filteredListings = useMemo(() => {
     const kw = (filters.keyword || keyword).trim().toLowerCase();
-    return listings.filter((item) => {
+    let result = listings.filter((item) => {
       if (kw) {
         const hit = ['title', 'address', 'description'].some((f) =>
           String(item[f] || '').toLowerCase().includes(kw)
@@ -154,7 +167,18 @@ export default function ListingsPage() {
       }
       return true;
     });
-  }, [listings, filters, keyword]);
+    if (sortBy) {
+      result = [...result].sort((a, b) => {
+        if (sortBy === 'rent_asc')  return (parseFloat(a.rent_amount) || 0) - (parseFloat(b.rent_amount) || 0);
+        if (sortBy === 'rent_desc') return (parseFloat(b.rent_amount) || 0) - (parseFloat(a.rent_amount) || 0);
+        if (sortBy === 'area_desc') return (parseFloat(b.area) || 0) - (parseFloat(a.area) || 0);
+        if (sortBy === 'area_asc')  return (parseFloat(a.area) || 0) - (parseFloat(b.area) || 0);
+        if (sortBy === 'newest')    return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+        return 0;
+      });
+    }
+    return result;
+  }, [listings, filters, keyword, sortBy]);
 
   return (
     <div className="animate-fade-in">
@@ -231,6 +255,12 @@ export default function ListingsPage() {
               <span className="badge-blue flex items-center gap-1">
                 {activeChips.bedrooms === 4 ? '4室+' : `${activeChips.bedrooms}室`}
                 <button type="button" onClick={() => removeChip('bedrooms')}><XIcon className="h-3 w-3" /></button>
+              </span>
+            )}
+            {activeChips.sortBy && (
+              <span className="flex items-center gap-1 rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-300">
+                ↕ {SORT_LABELS[activeChips.sortBy] || activeChips.sortBy}
+                <button type="button" onClick={() => removeChip('sortBy')}><XIcon className="h-3 w-3" /></button>
               </span>
             )}
           </div>
