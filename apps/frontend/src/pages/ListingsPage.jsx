@@ -19,9 +19,8 @@ const BEDROOM_OPTIONS = [
 ];
 
 export default function ListingsPage() {
-  const [listings, setListings] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [allListings, setAllListings] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   // 筛选状态
   const [aiQuery, setAiQuery] = useState('');
@@ -30,7 +29,7 @@ export default function ListingsPage() {
   const [filters, setFilters] = useState({ keyword: '', district: '', minRent: 0, maxRent: 0, bedrooms: 0 });
   const [activeChips, setActiveChips] = useState({});
   const [keyword, setKeyword] = useState('');
-  const [sortBy, setSortBy] = useState(''); // 'rent_asc'|'rent_desc'|'area_desc'|'area_asc'|'newest'
+  const [sortBy, setSortBy] = useState('');
 
   const SORT_LABELS = {
     rent_asc:  '价格从低到高',
@@ -40,23 +39,20 @@ export default function ListingsPage() {
     newest:    '最新上架',
   };
 
-  // 初始加载全量（用于地区下拉列表）
+  // 初始加载全量，后续所有筛选/排序都在客户端对 allListings 操作
   useEffect(() => {
     let mounted = true;
     apiGet('/listings').then((res) => {
-      if (!mounted) return;
-      const data = res?.data || [];
-      setAllListings(data);
-      setListings(data);
+      if (mounted) setAllListings(res?.data || []);
     }).catch(() => {
-      if (mounted) { setAllListings([]); setListings([]); }
+      if (mounted) setAllListings([]);
     }).finally(() => {
       if (mounted) setLoading(false);
     });
     return () => { mounted = false; };
   }, []);
 
-  // 所有不重复地区（从全量缓存中提取，不随筛选变化）
+  // 所有不重复地区
   const allDistricts = useMemo(() => {
     const set = new Set();
     allListings.forEach((item) => {
@@ -66,21 +62,7 @@ export default function ListingsPage() {
     return Array.from(set).sort();
   }, [allListings]);
 
-  // 服务端过滤：组装查询参数
-  async function fetchWithFilters(f, kw) {
-    const params = new URLSearchParams();
-    const kTrim = (kw ?? filters.keyword ?? '').trim();
-    if (kTrim) params.set('keyword', kTrim);
-    if (f.district) params.set('district', f.district);
-    if (f.minRent > 0) params.set('minRent', f.minRent);
-    if (f.maxRent > 0) params.set('maxRent', f.maxRent);
-    if (f.bedrooms > 0) params.set('bedrooms', f.bedrooms);
-    const qs = params.toString();
-    const res = await apiGet(`/listings${qs ? `?${qs}` : ''}`);
-    return res?.data || [];
-  }
-
-  // AI 解析 + 服务端过滤
+  // AI 解析 → 只更新 filters + sortBy，不重新请求服务端
   async function handleAiSearch(e) {
     e?.preventDefault();
     const q = aiQuery.trim();
@@ -89,34 +71,27 @@ export default function ListingsPage() {
     try {
       const res = await apiPost('/listings/parse-search', { query: q });
       const parsed = res?.data || {};
-      const engine = res?.engine || null;
       const chips = {};
       if (parsed.district) chips.district = parsed.district;
       if (parsed.minRent > 0) chips.minRent = parsed.minRent;
       if (parsed.maxRent > 0) chips.maxRent = parsed.maxRent;
       if (parsed.bedrooms > 0) chips.bedrooms = parsed.bedrooms;
-      const nextFilters = {
+      if (parsed.sortBy) chips.sortBy = parsed.sortBy;
+      setActiveChips(chips);
+      setFilters({
         keyword: parsed.keyword || '',
         district: parsed.district || '',
         minRent: parsed.minRent || 0,
         maxRent: parsed.maxRent || 0,
         bedrooms: parsed.bedrooms || 0,
-      };
-      if (parsed.sortBy) chips.sortBy = parsed.sortBy;
-      setActiveChips(chips);
-      setFilters(nextFilters);
+      });
       setKeyword(parsed.keyword || '');
-      setAiEngine(engine);
+      setAiEngine(res?.engine || null);
       setSortBy(parsed.sortBy || '');
-      // 用服务端过滤刷新结果
-      setLoading(true);
-      const data = await fetchWithFilters(nextFilters, parsed.keyword);
-      setListings(data);
     } catch {
       // ignore
     } finally {
       setAiParsing(false);
-      setLoading(false);
     }
   }
 
@@ -125,20 +100,16 @@ export default function ListingsPage() {
     delete next[key];
     setActiveChips(next);
     if (key === 'sortBy') { setSortBy(''); return; }
-    const nextFilters = { ...filters, [key]: key === 'district' ? '' : 0 };
-    setFilters(nextFilters);
-    fetchWithFilters(nextFilters, keyword).then((data) => setListings(data)).catch(() => {});
+    setFilters((f) => ({ ...f, [key]: key === 'district' ? '' : 0 }));
   }
 
   function clearAll() {
     setActiveChips({});
-    const reset = { keyword: '', district: '', minRent: 0, maxRent: 0, bedrooms: 0 };
-    setFilters(reset);
+    setFilters({ keyword: '', district: '', minRent: 0, maxRent: 0, bedrooms: 0 });
     setKeyword('');
     setAiQuery('');
     setAiEngine(null);
     setSortBy('');
-    setListings(allListings);
   }
 
   const hasActiveFilters = Object.keys(activeChips).length > 0
@@ -146,7 +117,7 @@ export default function ListingsPage() {
 
   const filteredListings = useMemo(() => {
     const kw = (filters.keyword || keyword).trim().toLowerCase();
-    let result = listings.filter((item) => {
+    let result = allListings.filter((item) => {
       if (kw) {
         const hit = ['title', 'address', 'description'].some((f) =>
           String(item[f] || '').toLowerCase().includes(kw)
@@ -178,7 +149,7 @@ export default function ListingsPage() {
       });
     }
     return result;
-  }, [listings, filters, keyword, sortBy]);
+  }, [allListings, filters, keyword, sortBy]);
 
   return (
     <div className="animate-fade-in">
