@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 文件说明：房源路由。
  * 提供发布、查询、上下架管理接口。
  */
@@ -1155,8 +1155,13 @@ router.get('/', asyncHandler(async (req, res) => {
   }
 
   if (bedrooms > 0) {
-    whereParts.push('CAST(bedrooms AS INTEGER) = ?');
-    params.push(bedrooms);
+    if (bedrooms >= 4) {
+      whereParts.push('CAST(bedrooms AS INTEGER) >= ?');
+      params.push(4);
+    } else {
+      whereParts.push('CAST(bedrooms AS INTEGER) = ?');
+      params.push(bedrooms);
+    }
   }
 
   const rows = parseResult(db.exec(

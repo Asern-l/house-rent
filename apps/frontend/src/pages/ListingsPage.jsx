@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { HomeIcon, LoaderIcon, MapPinIcon, SearchIcon, SparklesIcon, XIcon } from 'lucide-react';
+import { BrainCircuitIcon, HomeIcon, LoaderIcon, MapPinIcon, SearchIcon, SparklesIcon, XIcon } from 'lucide-react';
 import { apiGet, apiPost } from '../shared/api/api';
 import { getFirstImageUrl, getListingStatusMeta, resolveImageUrl } from '../shared/listingUtils';
 
@@ -21,37 +21,57 @@ const BEDROOM_OPTIONS = [
 export default function ListingsPage() {
   const [listings, setListings] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [allListings, setAllListings] = useState([]);
 
   // 筛选状态
   const [aiQuery, setAiQuery] = useState('');
   const [aiParsing, setAiParsing] = useState(false);
+  const [aiEngine, setAiEngine] = useState(null); // 'deepseek' | 'regex' | null
   const [filters, setFilters] = useState({ keyword: '', district: '', minRent: 0, maxRent: 0, bedrooms: 0 });
   const [activeChips, setActiveChips] = useState({});
   const [keyword, setKeyword] = useState('');
 
+  // 初始加载全量（用于地区下拉列表）
   useEffect(() => {
     let mounted = true;
     apiGet('/listings').then((res) => {
-      if (mounted) setListings(res?.data || []);
+      if (!mounted) return;
+      const data = res?.data || [];
+      setAllListings(data);
+      setListings(data);
     }).catch(() => {
-      if (mounted) setListings([]);
+      if (mounted) { setAllListings([]); setListings([]); }
     }).finally(() => {
       if (mounted) setLoading(false);
     });
     return () => { mounted = false; };
   }, []);
 
-  // 所有不重复地区
+  // 所有不重复地区（从全量缓存中提取，不随筛选变化）
   const allDistricts = useMemo(() => {
     const set = new Set();
-    listings.forEach((item) => {
+    allListings.forEach((item) => {
       const d = String(item.district || '').trim();
       if (d) set.add(d);
     });
     return Array.from(set).sort();
-  }, [listings]);
+  }, [allListings]);
 
-  // AI 解析
+  // 服务端过滤：组装查询参数
+  async function fetchWithFilters(f, kw) {
+    const params = new URLSearchParams();
+    const kTrim = (kw ?? filters.keyword ?? '').trim();
+    if (kTrim) params.set('keyword', kTrim);
+    if (f.district) params.set('district', f.district);
+    if (f.minRent > 0) params.set('minRent', f.minRent);
+    if (f.maxRent > 0) params.set('maxRent', f.maxRent);
+    if (f.bedrooms > 0) params.set('bedrooms', f.bedrooms);
+    const qs = params.toString();
+    const res = await apiGet(`/listings${qs ? `?${qs}` : ''}`);
+    return res?.data || [];
+  }
+
+  // AI 解析 + 服务端过滤
   async function handleAiSearch(e) {
     e?.preventDefault();
     const q = aiQuery.trim();
@@ -60,24 +80,32 @@ export default function ListingsPage() {
     try {
       const res = await apiPost('/listings/parse-search', { query: q });
       const parsed = res?.data || {};
+      const engine = res?.engine || null;
       const chips = {};
       if (parsed.district) chips.district = parsed.district;
       if (parsed.minRent > 0) chips.minRent = parsed.minRent;
       if (parsed.maxRent > 0) chips.maxRent = parsed.maxRent;
       if (parsed.bedrooms > 0) chips.bedrooms = parsed.bedrooms;
-      setActiveChips(chips);
-      setFilters({
+      const nextFilters = {
         keyword: parsed.keyword || '',
         district: parsed.district || '',
         minRent: parsed.minRent || 0,
         maxRent: parsed.maxRent || 0,
         bedrooms: parsed.bedrooms || 0,
-      });
+      };
+      setActiveChips(chips);
+      setFilters(nextFilters);
       setKeyword(parsed.keyword || '');
+      setAiEngine(engine);
+      // 用服务端过滤刷新结果
+      setLoading(true);
+      const data = await fetchWithFilters(nextFilters, parsed.keyword);
+      setListings(data);
     } catch {
       // ignore
     } finally {
       setAiParsing(false);
+      setLoading(false);
     }
   }
 
@@ -85,14 +113,19 @@ export default function ListingsPage() {
     const next = { ...activeChips };
     delete next[key];
     setActiveChips(next);
-    setFilters((f) => ({ ...f, [key]: key === 'district' ? '' : 0 }));
+    const nextFilters = { ...filters, [key]: key === 'district' ? '' : 0 };
+    setFilters(nextFilters);
+    fetchWithFilters(nextFilters, keyword).then((data) => setListings(data)).catch(() => {});
   }
 
   function clearAll() {
     setActiveChips({});
-    setFilters({ keyword: '', district: '', minRent: 0, maxRent: 0, bedrooms: 0 });
+    const reset = { keyword: '', district: '', minRent: 0, maxRent: 0, bedrooms: 0 };
+    setFilters(reset);
     setKeyword('');
     setAiQuery('');
+    setAiEngine(null);
+    setListings(allListings);
   }
 
   const hasActiveFilters = Object.keys(activeChips).length > 0
@@ -165,6 +198,17 @@ export default function ListingsPage() {
         {Object.keys(activeChips).length > 0 && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <span className="text-xs text-gray-500">解析结果：</span>
+            {aiEngine === 'deepseek' && (
+              <span className="flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-300">
+                <BrainCircuitIcon className="h-2.5 w-2.5" />
+                DeepSeek AI
+              </span>
+            )}
+            {aiEngine === 'regex' && (
+              <span className="flex items-center gap-1 rounded-full border border-slate-500/30 bg-slate-500/10 px-2 py-0.5 text-[10px] text-slate-400">
+                正则解析
+              </span>
+            )}
             {activeChips.district && (
               <span className="badge-yellow flex items-center gap-1">
                 地区：{activeChips.district}
