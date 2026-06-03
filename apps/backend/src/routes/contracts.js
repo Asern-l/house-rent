@@ -3565,7 +3565,7 @@ router.get('/', authMiddleware, asyncHandler(async (req, res) => {
 
     // 是否已有进行中的续租子合同
     const renewalRows = parseResult(db.exec(
-      `SELECT id FROM contracts WHERE parent_contract_id = ? AND status NOT IN ('cancelled','expired','ended') LIMIT 1`,
+      `SELECT id FROM contracts WHERE parent_contract_id = ? AND status NOT IN ('cancelled_before_payment','expired','ended','terminated_early') LIMIT 1`,
       [row.id]
     ));
     row.renewal_child_contract = renewalRows[0] || null;
