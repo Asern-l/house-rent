@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 文件说明：房源路由。
  * 提供发布、查询、上下架管理接口。
  */
@@ -1070,7 +1070,7 @@ async function deepseekParseSearch(raw) {
   "newest"（最新上架/刚上线）
 
 只返回 JSON，不要解释，格式：
-{"keyword":"...","district":"...","minRent":0,"maxRent":0,"bedrooms":0,"sortBy":""}}`;
+{"keyword":"...","district":"...","minRent":0,"maxRent":0,"bedrooms":0,"sortBy":""}`;
 
   const resp = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST',
@@ -1107,7 +1107,7 @@ async function deepseekParseSearch(raw) {
 
 router.post('/parse-search', asyncHandler(async (req, res) => {
   const raw = String(req.body?.query || '').trim();
-  if (!raw) return res.json({ success: true, data: { keyword: '', district: '', minRent: 0, maxRent: 0, bedrooms: 0 }, engine: 'none' });
+  if (!raw) return res.json({ success: true, data: { keyword: '', district: '', minRent: 0, maxRent: 0, bedrooms: 0, sortBy: '' }, engine: 'none' });
 
   // 优先 DeepSeek，失败则正则兜底
   let result = null;
@@ -1169,8 +1169,13 @@ router.get('/', asyncHandler(async (req, res) => {
   }
 
   if (bedrooms > 0) {
-    whereParts.push('CAST(bedrooms AS INTEGER) = ?');
-    params.push(bedrooms);
+    if (bedrooms >= 4) {
+      whereParts.push('CAST(bedrooms AS INTEGER) >= ?');
+      params.push(4);
+    } else {
+      whereParts.push('CAST(bedrooms AS INTEGER) = ?');
+      params.push(bedrooms);
+    }
   }
 
   const rows = parseResult(db.exec(
