@@ -120,41 +120,60 @@ function RenewalDialog({ contract, onClose, onSuccess }) {
     }
   }
 
+  const CD = '#F2EFE4'; // cloud dancer white
+  const MM = '#A47864'; // mocha mousse
+  const MM_DARK = '#7a5548'; // darker mocha for text contrast
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="card relative w-full max-w-lg p-6">
-        <button type="button" onClick={onClose} className="absolute right-4 top-4 text-gray-500 hover:text-gray-200">
+      <div
+        className="relative w-full max-w-lg overflow-hidden rounded-3xl p-6 shadow-2xl"
+        style={{ background: CD, border: `1.5px solid ${MM}40` }}
+      >
+        <button
+          type="button" onClick={onClose}
+          className="absolute right-4 top-4 rounded-full p-1 transition-colors"
+          style={{ color: MM }}
+        >
           <XIcon className="h-5 w-5" />
         </button>
 
         {/* 标题 */}
         <div className="mb-5 flex items-center gap-2">
-          <RefreshCwIcon className="h-5 w-5 text-primary-400" />
-          <h2 className="text-lg font-semibold text-gray-100">申请续租</h2>
+          <RefreshCwIcon className="h-5 w-5" style={{ color: MM }} />
+          <h2 className="text-lg font-semibold" style={{ color: MM_DARK }}>申请续租</h2>
         </div>
 
         {/* 原合同信息 */}
-        <div className="mb-4 rounded-2xl border border-white/8 bg-black/30 p-3.5 text-sm">
-          <p className="mb-2 text-xs font-medium uppercase tracking-wider text-gray-500">原合同信息</p>
+        <div
+          className="mb-4 rounded-2xl p-3.5 text-sm"
+          style={{ background: `${MM}12`, border: `1px solid ${MM}30` }}
+        >
+          <p className="mb-2 text-xs font-medium uppercase tracking-wider" style={{ color: `${MM}99` }}>原合同信息</p>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-            <span className="text-gray-400">房源</span>
-            <span className="text-right text-gray-100 font-medium truncate">{contract.listing_title || '-'}</span>
-            <span className="text-gray-400">原合同到期</span>
-            <span className="text-right text-gray-100">{parentEndDate || '-'}</span>
-            <span className="text-gray-400">月租金</span>
-            <span className="text-right font-semibold text-primary-300">{rentAmount ? `${rentAmount} ETH` : '-'}</span>
+            <span style={{ color: `${MM_DARK}bb` }}>房源</span>
+            <span className="truncate text-right font-medium" style={{ color: MM_DARK }}>{contract.listing_title || '-'}</span>
+            <span style={{ color: `${MM_DARK}bb` }}>原合同到期</span>
+            <span className="text-right" style={{ color: MM_DARK }}>{parentEndDate || '-'}</span>
+            <span style={{ color: `${MM_DARK}bb` }}>月租金</span>
+            <span className="text-right font-semibold" style={{ color: MM }}>{rentAmount ? `${rentAmount} ETH` : '-'}</span>
           </div>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* 续租期限 */}
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-300">续租期限</label>
+            <label className="mb-1.5 block text-sm font-medium" style={{ color: MM_DARK }}>续租期限</label>
             <select
               value={leaseMonths}
               onChange={(e) => setLeaseMonths(Number(e.target.value))}
-              className="w-full rounded-2xl border border-white/15 bg-black/40 px-3 py-2.5 text-gray-100 outline-none focus:border-primary-700"
+              className="w-full rounded-2xl px-3 py-2.5 text-sm outline-none"
+              style={{
+                background: 'rgba(255,255,255,0.7)',
+                border: `1.5px solid ${MM}50`,
+                color: MM_DARK,
+              }}
             >
               {[1,2,3,4,5,6,7,8,9,10,11,12].map((m) => (
                 <option key={m} value={m}>{m} 个月</option>
@@ -164,17 +183,20 @@ function RenewalDialog({ contract, onClose, onSuccess }) {
 
           {/* 续约周期 */}
           {(renewalStartDate || renewalEndDate) && (
-            <div className="rounded-2xl border border-sky-800/30 bg-sky-950/30 px-4 py-3 text-sm">
-              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-sky-400/70">续约周期</p>
+            <div
+              className="rounded-2xl px-4 py-3 text-sm"
+              style={{ background: `${MM}18`, border: `1px solid ${MM}40` }}
+            >
+              <p className="mb-2 text-xs font-medium uppercase tracking-wider" style={{ color: `${MM}99` }}>续约周期</p>
               <div className="flex items-center justify-between gap-2">
                 <div className="text-center">
-                  <p className="text-[11px] text-gray-500">起始日</p>
-                  <p className="mt-0.5 font-mono text-sm text-sky-200">{renewalStartDate}</p>
+                  <p className="text-[11px]" style={{ color: `${MM_DARK}88` }}>起始日</p>
+                  <p className="mt-0.5 font-mono text-sm font-semibold" style={{ color: MM_DARK }}>{renewalStartDate}</p>
                 </div>
-                <div className="h-px flex-1 border-t border-dashed border-sky-700/40" />
+                <div className="h-px flex-1 border-t border-dashed" style={{ borderColor: `${MM}50` }} />
                 <div className="text-center">
-                  <p className="text-[11px] text-gray-500">截止日</p>
-                  <p className="mt-0.5 font-mono text-sm text-sky-200">{renewalEndDate || '-'}</p>
+                  <p className="text-[11px]" style={{ color: `${MM_DARK}88` }}>截止日</p>
+                  <p className="mt-0.5 font-mono text-sm font-semibold" style={{ color: MM_DARK }}>{renewalEndDate || '-'}</p>
                 </div>
               </div>
             </div>
@@ -182,33 +204,39 @@ function RenewalDialog({ contract, onClose, onSuccess }) {
 
           {/* 费用明细 */}
           {fees && (
-            <div className="rounded-2xl border border-primary-800/30 bg-primary-950/30 p-3.5 text-sm">
-              <p className="mb-2.5 text-xs font-medium uppercase tracking-wider text-primary-400/70">费用明细</p>
+            <div
+              className="rounded-2xl p-3.5 text-sm"
+              style={{ background: `${MM}10`, border: `1px solid ${MM}35` }}
+            >
+              <p className="mb-2.5 text-xs font-medium uppercase tracking-wider" style={{ color: `${MM}99` }}>费用明细</p>
               <div className="space-y-1.5">
                 <div className="flex justify-between">
-                  <span className="text-gray-400">总租金（{leaseMonths} 月 × {rentAmount} ETH）</span>
-                  <span className="font-semibold text-primary-200">{fees.total.toFixed(6)} ETH</span>
+                  <span style={{ color: `${MM_DARK}cc` }}>总租金（{leaseMonths} 月 × {rentAmount} ETH）</span>
+                  <span className="font-semibold" style={{ color: MM_DARK }}>{fees.total.toFixed(6)} ETH</span>
                 </div>
                 <div className="flex justify-between text-xs">
-                  <span className="text-gray-500">平台手续费（0.1%）</span>
-                  <span className="text-gray-400">−{fees.platformFee.toFixed(6)} ETH</span>
+                  <span style={{ color: `${MM_DARK}88` }}>平台手续费（0.1%）</span>
+                  <span style={{ color: `${MM_DARK}99` }}>−{fees.platformFee.toFixed(6)} ETH</span>
                 </div>
                 <div className="flex justify-between text-xs">
-                  <span className="text-gray-500">房东净收</span>
-                  <span className="text-gray-400">{fees.landlordNet.toFixed(6)} ETH</span>
+                  <span style={{ color: `${MM_DARK}88` }}>房东净收</span>
+                  <span style={{ color: `${MM_DARK}99` }}>{fees.landlordNet.toFixed(6)} ETH</span>
                 </div>
-                <div className="my-1.5 border-t border-white/8" />
+                <div className="my-1.5 border-t" style={{ borderColor: `${MM}30` }} />
                 <div className="flex justify-between text-xs">
-                  <span className="text-gray-500">履约保证金（10%）</span>
-                  <span className="text-gray-400">{fees.performanceGuarantee.toFixed(6)} ETH</span>
+                  <span style={{ color: `${MM_DARK}88` }}>履约保证金（10%）</span>
+                  <span style={{ color: `${MM_DARK}99` }}>{fees.performanceGuarantee.toFixed(6)} ETH</span>
                 </div>
                 <div className="flex justify-between text-xs">
-                  <span className="text-gray-500">月度释放（×{leaseMonths}）</span>
-                  <span className="text-gray-400">{fees.monthlyRelease.toFixed(6)} ETH/月</span>
+                  <span style={{ color: `${MM_DARK}88` }}>月度释放（×{leaseMonths}）</span>
+                  <span style={{ color: `${MM_DARK}99` }}>{fees.monthlyRelease.toFixed(6)} ETH/月</span>
                 </div>
-                <div className="mt-2 flex items-center justify-between rounded-xl bg-primary-900/40 px-3 py-2">
-                  <span className="text-sm font-medium text-gray-200">实付总额</span>
-                  <span className="text-base font-bold text-primary-300">{fees.total.toFixed(6)} ETH</span>
+                <div
+                  className="mt-2 flex items-center justify-between rounded-xl px-3 py-2"
+                  style={{ background: MM, boxShadow: `0 2px 10px ${MM}55` }}
+                >
+                  <span className="text-sm font-medium" style={{ color: CD }}>实付总额</span>
+                  <span className="text-base font-bold" style={{ color: CD }}>{fees.total.toFixed(6)} ETH</span>
                 </div>
               </div>
             </div>
@@ -216,24 +244,37 @@ function RenewalDialog({ contract, onClose, onSuccess }) {
 
           {/* 备注（可选） */}
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-400">
-              备注 <span className="text-gray-600">（可选）</span>
+            <label className="mb-1.5 block text-sm font-medium" style={{ color: `${MM_DARK}aa` }}>
+              备注 <span style={{ color: `${MM_DARK}66` }}>（可选）</span>
             </label>
             <input
               type="text"
               value={changeNote}
               onChange={(e) => setChangeNote(e.target.value.slice(0, 100))}
               placeholder="如有特殊约定可在此说明"
-              className="w-full rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-gray-100 outline-none placeholder:text-gray-600 focus:border-primary-700"
+              className="w-full rounded-2xl px-3 py-2 text-sm outline-none"
+              style={{
+                background: 'rgba(255,255,255,0.65)',
+                border: `1.5px solid ${MM}40`,
+                color: MM_DARK,
+              }}
             />
           </div>
 
           {/* 操作按钮 */}
           <div className="flex gap-3 pt-1">
-            <button type="button" onClick={onClose} className="flex-1 rounded-2xl border border-white/15 py-2.5 text-sm text-gray-400 hover:text-gray-200">
+            <button
+              type="button" onClick={onClose}
+              className="flex-1 rounded-2xl py-2.5 text-sm font-medium transition-colors"
+              style={{ border: `1.5px solid ${MM}50`, color: MM, background: 'transparent' }}
+            >
               取消
             </button>
-            <button type="submit" disabled={submitting} className="btn-primary flex-1 flex items-center justify-center gap-2">
+            <button
+              type="submit" disabled={submitting}
+              className="flex-1 flex items-center justify-center gap-2 rounded-2xl py-2.5 text-sm font-semibold transition-opacity disabled:opacity-50"
+              style={{ background: MM, color: CD, boxShadow: `0 4px 14px ${MM}55` }}
+            >
               {submitting && <LoaderIcon className="h-4 w-4 animate-spin" />}
               {submitting ? '提交中...' : '提交续约申请'}
             </button>
