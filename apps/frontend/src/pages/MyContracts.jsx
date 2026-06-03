@@ -67,16 +67,50 @@ function formatCnDateTime(value) {
   }).format(date);
 }
 
+// ── 工具函数 ──────────────────────────────────────────────
+function addMonthsToDate(dateStr, months) {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  let nm = m + months;
+  let ny = y;
+  while (nm > 12) { nm -= 12; ny++; }
+  const lastDay = new Date(ny, nm, 0).getDate();
+  return `${ny}-${String(nm).padStart(2, '0')}-${String(Math.min(d, lastDay)).padStart(2, '0')}`;
+}
+
+function calcRenewalFees(rentAmount, months) {
+  const rent = parseFloat(rentAmount) || 0;
+  if (rent <= 0 || months <= 0) return null;
+  const total = rent * months;
+  const platformFee = total * (10 / 10000); // 10 BPS = 0.1%
+  const landlordNet = total - platformFee;
+  const performanceGuarantee = landlordNet * (1000 / 10000); // 1000 BPS = 10%
+  const escrow = landlordNet - performanceGuarantee;
+  const monthlyRelease = escrow / months;
+  return { total, platformFee, landlordNet, performanceGuarantee, escrow, monthlyRelease };
+}
+
 // ── 续租弹窗 ──────────────────────────────────────────────
 function RenewalDialog({ contract, onClose, onSuccess }) {
   const [leaseMonths, setLeaseMonths] = useState(1);
+  const [changeNote, setChangeNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  const content = parseContent(contract);
+  const parentEndDate = content?.terms?.endDate || '';
+  const rentAmount = content?.rentAmount || '';
+
+  const renewalStartDate = parentEndDate || null;
+  const renewalEndDate = renewalStartDate ? addMonthsToDate(renewalStartDate, leaseMonths) : null;
+  const fees = rentAmount ? calcRenewalFees(rentAmount, leaseMonths) : null;
 
   async function handleSubmit(e) {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const res = await apiPost(`/contracts/${contract.id}/renewals`, { leaseMonths });
+      const payload = { leaseMonths };
+      if (changeNote.trim()) payload.changeNote = changeNote.trim();
+      const res = await apiPost(`/contracts/${contract.id}/renewals`, payload);
       toast.success('续约合同已创建，请按正常流程签署');
       onSuccess(res?.data?.contractId);
     } catch (err) {
@@ -86,36 +120,41 @@ function RenewalDialog({ contract, onClose, onSuccess }) {
     }
   }
 
-  const content = parseContent(contract);
-  const endDate = content?.terms?.endDate || '-';
-  const rentAmount = content?.rentAmount || '-';
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="card relative w-full max-w-md p-6">
+      <div className="card relative w-full max-w-lg p-6">
         <button type="button" onClick={onClose} className="absolute right-4 top-4 text-gray-500 hover:text-gray-200">
           <XIcon className="h-5 w-5" />
         </button>
+
+        {/* 标题 */}
         <div className="mb-5 flex items-center gap-2">
           <RefreshCwIcon className="h-5 w-5 text-primary-400" />
           <h2 className="text-lg font-semibold text-gray-100">申请续租</h2>
         </div>
 
-        <div className="mb-5 space-y-2 rounded-2xl bg-black/30 p-3 text-sm">
-          <p className="text-gray-400">房源：<span className="text-gray-100">{contract.listing_title || '-'}</span></p>
-          <p className="text-gray-400">原合同到期：<span className="text-gray-100">{endDate}</span></p>
-          <p className="text-gray-400">月租金：<span className="text-primary-400 font-semibold">{rentAmount} ETH</span></p>
-          <p className="text-xs text-gray-500 mt-1">续约将以原合同到期日为起始，月租金沿用原合同。</p>
+        {/* 原合同信息 */}
+        <div className="mb-4 rounded-2xl border border-white/8 bg-black/30 p-3.5 text-sm">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wider text-gray-500">原合同信息</p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+            <span className="text-gray-400">房源</span>
+            <span className="text-right text-gray-100 font-medium truncate">{contract.listing_title || '-'}</span>
+            <span className="text-gray-400">原合同到期</span>
+            <span className="text-right text-gray-100">{parentEndDate || '-'}</span>
+            <span className="text-gray-400">月租金</span>
+            <span className="text-right font-semibold text-primary-300">{rentAmount ? `${rentAmount} ETH` : '-'}</span>
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* 续租期限 */}
           <div>
             <label className="mb-1.5 block text-sm font-medium text-gray-300">续租期限</label>
             <select
               value={leaseMonths}
               onChange={(e) => setLeaseMonths(Number(e.target.value))}
-              className="w-full rounded-2xl border border-white/15 bg-black/40 px-3 py-2 text-gray-100 outline-none"
+              className="w-full rounded-2xl border border-white/15 bg-black/40 px-3 py-2.5 text-gray-100 outline-none focus:border-primary-700"
             >
               {[1,2,3,4,5,6,7,8,9,10,11,12].map((m) => (
                 <option key={m} value={m}>{m} 个月</option>
@@ -123,16 +162,75 @@ function RenewalDialog({ contract, onClose, onSuccess }) {
             </select>
           </div>
 
-          <div className="rounded-2xl border border-primary-800/30 bg-primary-900/20 p-3 text-sm">
-            <p className="text-gray-300">续租总额：
-              <span className="ml-1 font-semibold text-primary-300">
-                {rentAmount !== '-' ? (parseFloat(rentAmount) * leaseMonths).toFixed(4) : '-'} ETH
-              </span>
-            </p>
+          {/* 续约周期 */}
+          {(renewalStartDate || renewalEndDate) && (
+            <div className="rounded-2xl border border-sky-800/30 bg-sky-950/30 px-4 py-3 text-sm">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-sky-400/70">续约周期</p>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-center">
+                  <p className="text-[11px] text-gray-500">起始日</p>
+                  <p className="mt-0.5 font-mono text-sm text-sky-200">{renewalStartDate}</p>
+                </div>
+                <div className="h-px flex-1 border-t border-dashed border-sky-700/40" />
+                <div className="text-center">
+                  <p className="text-[11px] text-gray-500">截止日</p>
+                  <p className="mt-0.5 font-mono text-sm text-sky-200">{renewalEndDate || '-'}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 费用明细 */}
+          {fees && (
+            <div className="rounded-2xl border border-primary-800/30 bg-primary-950/30 p-3.5 text-sm">
+              <p className="mb-2.5 text-xs font-medium uppercase tracking-wider text-primary-400/70">费用明细</p>
+              <div className="space-y-1.5">
+                <div className="flex justify-between">
+                  <span className="text-gray-400">总租金（{leaseMonths} 月 × {rentAmount} ETH）</span>
+                  <span className="font-semibold text-primary-200">{fees.total.toFixed(6)} ETH</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-gray-500">平台手续费（0.1%）</span>
+                  <span className="text-gray-400">−{fees.platformFee.toFixed(6)} ETH</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-gray-500">房东净收</span>
+                  <span className="text-gray-400">{fees.landlordNet.toFixed(6)} ETH</span>
+                </div>
+                <div className="my-1.5 border-t border-white/8" />
+                <div className="flex justify-between text-xs">
+                  <span className="text-gray-500">履约保证金（10%）</span>
+                  <span className="text-gray-400">{fees.performanceGuarantee.toFixed(6)} ETH</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-gray-500">月度释放（×{leaseMonths}）</span>
+                  <span className="text-gray-400">{fees.monthlyRelease.toFixed(6)} ETH/月</span>
+                </div>
+                <div className="mt-2 flex items-center justify-between rounded-xl bg-primary-900/40 px-3 py-2">
+                  <span className="text-sm font-medium text-gray-200">实付总额</span>
+                  <span className="text-base font-bold text-primary-300">{fees.total.toFixed(6)} ETH</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 备注（可选） */}
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-gray-400">
+              备注 <span className="text-gray-600">（可选）</span>
+            </label>
+            <input
+              type="text"
+              value={changeNote}
+              onChange={(e) => setChangeNote(e.target.value.slice(0, 100))}
+              placeholder="如有特殊约定可在此说明"
+              className="w-full rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-gray-100 outline-none placeholder:text-gray-600 focus:border-primary-700"
+            />
           </div>
 
-          <div className="flex gap-3">
-            <button type="button" onClick={onClose} className="flex-1 rounded-2xl border border-white/15 py-2 text-sm text-gray-400 hover:text-gray-200">
+          {/* 操作按钮 */}
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose} className="flex-1 rounded-2xl border border-white/15 py-2.5 text-sm text-gray-400 hover:text-gray-200">
               取消
             </button>
             <button type="submit" disabled={submitting} className="btn-primary flex-1 flex items-center justify-center gap-2">
