@@ -1,4 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { createContext, useContext, useMemo, useState } from 'react';
+
+const ModalCtx = createContext(false);
 import { apiGet } from '../shared/api/api';
 import {
   AlertCircleIcon,
@@ -109,6 +111,7 @@ export default function VerifyPage({ onClose }) {
   const comparisons = result?.comparisons || null;
 
   return (
+    <ModalCtx.Provider value={isModal}>
     <div className={isModal ? 'fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-slate-950/60 px-4 py-8 backdrop-blur-sm' : 'mx-auto w-full max-w-[760px] animate-fade-in'}>
       <div
         className={`relative w-full max-w-[760px] rounded-[1.5rem] border p-8 shadow-[0_22px_55px_rgba(0,0,0,0.3)] animate-fade-in ${isModal ? 'border-stone-200' : 'border-white/10 backdrop-blur-xl'}`}
@@ -364,6 +367,7 @@ export default function VerifyPage({ onClose }) {
         )}
       </div>
     </div>
+    </ModalCtx.Provider>
   );
 }
 
@@ -403,10 +407,11 @@ function Grid({ children }) {
 }
 
 function KeyValue({ label, value, mono = false }) {
+  const modal = useContext(ModalCtx);
   return (
     <div>
-      <p className="text-xs font-semibold text-slate-300/72">{label}</p>
-      <p className={`mt-1 break-all text-sm text-slate-100 ${mono ? 'font-mono text-xs' : ''}`}>{value || '-'}</p>
+      <p className={`text-xs font-semibold ${modal ? 'text-stone-500' : 'text-slate-400'}`}>{label}</p>
+      <p className={`mt-1 break-all text-sm ${modal ? 'text-slate-800' : 'text-slate-100'} ${mono ? 'font-mono text-xs' : ''}`}>{value || '-'}</p>
     </div>
   );
 }
@@ -420,9 +425,10 @@ function ExplorerLink({ href, text }) {
 }
 
 function InfoPanel({ title, children }) {
+  const modal = useContext(ModalCtx);
   return (
-    <section className="rounded-2xl border border-white/10 bg-[#F2EFE4]/6 p-4 text-sm leading-6 text-slate-200">
-      <h2 className="mb-2 text-sm font-semibold text-white">{title}</h2>
+    <section className={`rounded-2xl border p-4 text-sm leading-6 ${modal ? 'border-stone-300 bg-stone-100/60 text-slate-700' : 'border-white/10 bg-[#F2EFE4]/6 text-slate-200'}`}>
+      <h2 className={`mb-2 text-sm font-semibold ${modal ? 'text-slate-900' : 'text-white'}`}>{title}</h2>
       {children}
     </section>
   );

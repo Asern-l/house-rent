@@ -3103,20 +3103,7 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="${contract.id}.pdf"`);
   const doc = new PDFDocument({ margin: 48, compress: false });
   doc.pipe(res);
-  const cnFontPath = resolvePdfChineseFontPath();
-  if (cnFontPath) {
-    try {
-      doc.registerFont('cn', cnFontPath);
-      doc.font('cn');
-    } catch (error) {
-      logSignFlow('contract.pdf.font-fallback', {
-        contractId: req.params.id,
-        requestId: req.requestId || '',
-        message: error?.message || 'pdf_font_load_failed',
-        fontPath: cnFontPath,
-      });
-    }
-  }
+  // English-only PDF — no CJK font needed
   const clauses = Array.isArray(content?.clauses)
     ? content.clauses.map((item) => String(item || '').trim()).filter(Boolean)
     : [];
@@ -3130,14 +3117,14 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   };
   const renderHeader = (subtitle = '') => {
     doc.x = doc.page.margins.left;
-    doc.fillColor('#0f172a').fontSize(9).text('Onchain Housing · 电子租赁合同', { align: 'right' });
+    doc.fillColor('#0f172a').fontSize(9).text('Onchain Housing · Rental Agreement', { align: 'right' });
     doc.moveDown(0.35);
     doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y)
       .lineWidth(1.2).strokeColor('#a47864').stroke();
     doc.moveDown(0.8);
     if (subtitle) doc.fillColor('#64748b').fontSize(9).text(subtitle, { align: 'right' });
   };
-  const renderFooter = (pageNumber, label = '电子租赁合同') => {
+  const renderFooter = (pageNumber, label = 'Rental Agreement') => {
     const previousX = doc.x;
     const previousY = doc.y;
     const previousBottomMargin = doc.page.margins.bottom;
@@ -3147,7 +3134,7 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
       .lineWidth(0.6).strokeColor('#cbd5e1').stroke();
     doc.fillColor('#64748b').fontSize(8)
       .text(`Onchain Housing · ${label}`, doc.page.margins.left, y, { width: pageWidth / 2 })
-      .text(`第 ${pageNumber} 页`, doc.page.margins.left + (pageWidth / 2), y, { width: pageWidth / 2, align: 'right' });
+      .text(`Page ${pageNumber}`, doc.page.margins.left + (pageWidth / 2), y, { width: pageWidth / 2, align: 'right' });
     doc.page.margins.bottom = previousBottomMargin;
     doc.x = previousX;
     doc.y = previousY;
@@ -3160,31 +3147,28 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   };
   const renderRow = (label, value) => {
     doc.x = doc.page.margins.left;
-    doc.fillColor('#475569').fontSize(9).text(`${label}：`, { continued: true });
+    doc.fillColor('#475569').fontSize(9).text(`${label}: `, { continued: true });
     doc.fillColor('#111827').text(String(value || '-'));
   };
   const renderClause = (index, title, text) => {
     doc.x = doc.page.margins.left;
-    doc.fillColor('#111827').fontSize(9.4).text(`第${index}条  ${title}`, { continued: true });
+    doc.fillColor('#111827').fontSize(9.4).text(`Article ${index}  ${title}`, { continued: true });
     doc.fillColor('#334155').text(`  ${text}`, { lineGap: 2 });
     doc.moveDown(0.32);
   };
-  const toCnIndex = (value) => {
-    const labels = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二', '十三', '十四', '十五'];
-    return labels[Number(value) - 1] || String(value);
-  };
+  const toIndex = (value) => String(value);
   const contractStatusLabel = {
-    pending: '待签署',
-    tenant_signed: '租客已签署',
-    pending_payment: '待支付',
-    active: '已生效',
-    ended: '已结束',
-    cancelled_before_payment: '已取消',
-    expired: '已过期',
-  }[contract.status] || contract.status || '未知状态';
+    pending: 'Pending Signature',
+    tenant_signed: 'Tenant Signed',
+    pending_payment: 'Pending Payment',
+    active: 'Active',
+    ended: 'Ended',
+    cancelled_before_payment: 'Cancelled',
+    expired: 'Expired',
+  }[contract.status] || contract.status || 'Unknown';
   const renderAttachmentTitle = (title, description = '') => {
-    renderHeader(`验真附件 · ${title}`);
-    doc.fillColor('#111827').fontSize(17).text('验真附件');
+    renderHeader(`Verification Attachment - ${title}`);
+    doc.fillColor('#111827').fontSize(17).text('Verification Attachment');
     doc.fillColor('#64748b').fontSize(10).text(title);
     if (description) {
       doc.moveDown(0.65);
@@ -3205,93 +3189,90 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   };
 
   renderHeader();
-  doc.fillColor('#111827').fontSize(22).text('房屋租赁合同', { align: 'center' });
-  doc.fillColor('#64748b').fontSize(10).text('电子签署版', { align: 'center' });
+  doc.fillColor('#111827').fontSize(22).text('Rental Agreement', { align: 'center' });
+  doc.fillColor('#64748b').fontSize(10).text('Electronic Signature Version', { align: 'center' });
   doc.moveDown(0.8);
   doc.roundedRect(doc.page.margins.left, doc.y, pageWidth, 62, 7)
     .lineWidth(0.8).strokeColor('#cbd5e1').fillColor('#f8fafc').fillAndStroke();
   const summaryY = doc.y + 12;
   doc.fillColor('#334155').fontSize(9)
-    .text(`合同编号：${contract.id}`, doc.page.margins.left + 14, summaryY)
-    .text(`合同类型：${contract.parent_contract_id ? '续约合同' : '普通合同'}`, doc.page.margins.left + 14, summaryY + 17)
-    .text(`合同版本：v${contract.version || 1}`, doc.page.margins.left + 14, summaryY + 34)
-    .text(`合同状态：${contractStatusLabel}`, doc.page.margins.left + (pageWidth / 2), summaryY)
-    .text(`签订时间：${contract.created_at || '-'}`, doc.page.margins.left + (pageWidth / 2), summaryY + 17)
-    .text(`链上环境：${CHAIN_ENV}`, doc.page.margins.left + (pageWidth / 2), summaryY + 34);
+    .text(`Contract ID: ${contract.id}`, doc.page.margins.left + 14, summaryY)
+    .text(`Type: ${contract.parent_contract_id ? 'Renewal' : 'Standard'}`, doc.page.margins.left + 14, summaryY + 17)
+    .text(`Version: v${contract.version || 1}`, doc.page.margins.left + 14, summaryY + 34)
+    .text(`Status: ${contractStatusLabel}`, doc.page.margins.left + (pageWidth / 2), summaryY)
+    .text(`Created: ${contract.created_at || '-'}`, doc.page.margins.left + (pageWidth / 2), summaryY + 17)
+    .text(`Network: ${CHAIN_ENV}`, doc.page.margins.left + (pageWidth / 2), summaryY + 34);
   doc.x = doc.page.margins.left;
   doc.y = summaryY + 62;
 
-  renderSection('特别提示', '签署前请确认');
+  renderSection('Notice', 'Please Confirm Before Signing');
   doc.fillColor('#475569').fontSize(9).text(
-    '本合同为平台电子租赁凭证。双方应在签署前核验房屋信息、钱包地址、租赁期限、租金及支付安排；签署后，合同哈希、签名与链上锚点可通过独立验真工具复核。',
+    'This agreement is an electronic rental certificate issued by the platform. Both parties should verify the property information, wallet addresses, lease term, rent and payment arrangements before signing. After signing, the contract hash, signatures and on-chain anchors can be verified using the independent verification tool.',
     { lineGap: 3 }
   );
   renderRule();
 
-  renderSection('一', '合同当事人');
-  renderRow('出租人（甲方）钱包地址', content?.landlord?.walletAddress || '-');
-  renderRow('承租人（乙方）钱包地址', content?.tenant?.walletAddress || '-');
-  renderRow('电子身份说明', '双方以平台登录钱包地址及电子签名作为身份确认依据');
+  renderSection('I.', 'Parties');
+  renderRow('Landlord (Party A) Wallet Address', content?.landlord?.walletAddress || '-');
+  renderRow('Tenant (Party B) Wallet Address', content?.tenant?.walletAddress || '-');
+  renderRow('Identity Note', 'Both parties are identified by their platform login wallet address and electronic signature');
 
-  renderSection('二', '租赁房屋基本情况');
-  renderRow('房源名称', content?.title || '-');
-  renderRow('房屋地址', content?.address || '-');
-  renderRow('房源编号', contract.listing_id || '-');
-  renderRow('租赁用途', '居住');
+  renderSection('II.', 'Property Details');
+  renderRow('Property Name', content?.title || '-');
+  renderRow('Address', content?.address || '-');
+  renderRow('Listing ID', contract.listing_id || '-');
+  renderRow('Purpose', 'Residential');
 
-  renderSection('三', '租赁期限');
-  renderRow('租赁期限', `${content?.terms?.startDate || '-'} 至 ${content?.terms?.endDate || '-'}`);
-  renderRow('计费租期', `${content?.terms?.leaseMonths || '-'} 个月`);
-  renderRow('最低租期', `${content?.terms?.minLeaseMonths || '-'} 个月`);
+  renderSection('III.', 'Lease Term');
+  renderRow('Lease Period', `${content?.terms?.startDate || '-'} to ${content?.terms?.endDate || '-'}`);
+  renderRow('Billing Period', `${content?.terms?.leaseMonths || '-'} month(s)`);
+  renderRow('Minimum Term', `${content?.terms?.minLeaseMonths || '-'} month(s)`);
 
-  renderSection('四', '租金及支付安排');
-  renderRow('月租金', `${content?.rentAmount || '-'} ETH / 月`);
-  renderRow('首笔支付总额', `${content?.oneTimeAmount || '-'} ETH`);
-  renderRow('平台手续费', `${content?.platformFeeAmount || '0'} ETH（${content?.platformFeeBps || 0} bps）`);
-  renderRow('出租人实收', `${content?.landlordNetAmount || content?.oneTimeAmount || '-'} ETH`);
-  renderRow('支付方式', content?.terms?.paymentMethod === 'one_time' ? '一次性链上支付' : (content?.terms?.paymentMethod || '-'));
+  renderSection('IV.', 'Rent & Payment');
+  renderRow('Monthly Rent', `${content?.rentAmount || '-'} ETH / month`);
+  renderRow('Total Initial Payment', `${content?.oneTimeAmount || '-'} ETH`);
+  renderRow('Platform Fee', `${content?.platformFeeAmount || '0'} ETH (${content?.platformFeeBps || 0} bps)`);
+  renderRow('Landlord Net Amount', `${content?.landlordNetAmount || content?.oneTimeAmount || '-'} ETH`);
+  renderRow('Payment Method', content?.terms?.paymentMethod === 'one_time' ? 'One-time on-chain payment' : (content?.terms?.paymentMethod || '-'));
   renderFooter(1);
 
   doc.addPage();
-  if (cnFontPath) {
-    try { doc.font('cn'); } catch { /* ignore */ }
-  }
-  renderHeader('房屋租赁合同 · 条款与签署确认');
-  renderSection('五', '合同条款');
-  renderClause('一', '房屋交付与使用', '甲方应按约定向乙方交付房屋；乙方应将房屋用于居住，并合理、安全使用房屋及附属设施。');
-  renderClause('二', '维修与维护', '租赁期间，双方应根据实际责任及时处理维修事项。因乙方使用不当造成的损坏，由乙方承担相应责任。');
-  renderClause('三', '转租与变更', '未经甲方书面或平台电子确认，乙方不得擅自转租、转借房屋，也不得擅自改变约定用途。');
-  renderClause('四', '合同解除与返还', '合同到期或依法提前解除时，乙方应返还房屋及附属设施。双方对费用结算、物品状态存在争议的，应留存证据并协商处理。');
-  renderClause('五', '违约与争议解决', '任何一方违反约定，应依法承担相应责任。争议优先协商解决；协商不成的，可依法向有管辖权的人民法院提起诉讼。');
-  renderClause('六', '电子签署与链上验真', '双方确认使用钱包地址完成电子签名。平台保存合同正文哈希、签名信息与链上锚点，供后续独立验真。');
+  renderHeader('Rental Agreement - Terms & Signature');
+  renderSection('V.', 'Contract Terms');
+  renderClause(1, 'Delivery & Use', 'The landlord shall deliver the property to the tenant as agreed. The tenant shall use the property for residential purposes only and take reasonable care of the property and its fixtures.');
+  renderClause(2, 'Maintenance & Repairs', 'Both parties shall handle maintenance matters promptly according to their respective responsibilities. Damage caused by tenant misuse shall be borne by the tenant.');
+  renderClause(3, 'Subletting & Alterations', 'The tenant shall not sublet, lend or alter the use of the property without prior written or electronic confirmation from the landlord.');
+  renderClause(4, 'Termination & Return', 'Upon expiry or lawful early termination, the tenant shall return the property and its fixtures. Any disputes over charges or property condition shall be resolved by negotiation with evidence preserved.');
+  renderClause(5, 'Breach & Disputes', 'Any party in breach shall bear corresponding liability. Disputes shall be resolved first by negotiation; failing which, the matter may be submitted to a court of competent jurisdiction.');
+  renderClause(6, 'Electronic Signing & On-chain Verification', 'Both parties confirm their identity via wallet address and electronic signature. The platform stores the contract content hash, signatures and on-chain anchors for independent verification.');
 
   if (clauses.length > 0) {
     clauses.forEach((clause, index) => {
-      renderClause(toCnIndex(index + 7), '附加条款', clause);
+      renderClause(index + 7, 'Additional Clause', clause);
     });
   }
 
-  renderSection(toCnIndex(clauses.length + 7), '电子签署确认');
+  renderSection(toIndex(clauses.length + 7) + '.', 'Electronic Signature Confirmation');
   doc.roundedRect(doc.page.margins.left, doc.y, pageWidth, 112, 7)
     .lineWidth(0.8).strokeColor('#cbd5e1').fillColor('#f8fafc').fillAndStroke();
   const signY = doc.y + 12;
   const signColWidth = (pageWidth - 42) / 2;
   doc.fillColor('#111827').fontSize(10)
-    .text('出租人（甲方）', doc.page.margins.left + 14, signY)
-    .text('承租人（乙方）', doc.page.margins.left + 28 + signColWidth, signY);
+    .text('Landlord (Party A)', doc.page.margins.left + 14, signY)
+    .text('Tenant (Party B)', doc.page.margins.left + 28 + signColWidth, signY);
   doc.fillColor('#475569').fontSize(8.2)
-    .text(`签署地址：${contract.landlord_signer_address || '-'}`, doc.page.margins.left + 14, signY + 20, { width: signColWidth })
-    .text(`签署时间：${contract.landlord_signed_at || '-'}`, doc.page.margins.left + 14, signY + 52, { width: signColWidth })
-    .text(`签署地址：${contract.tenant_signer_address || '-'}`, doc.page.margins.left + 28 + signColWidth, signY + 20, { width: signColWidth })
-    .text(`签署时间：${contract.tenant_signed_at || '-'}`, doc.page.margins.left + 28 + signColWidth, signY + 52, { width: signColWidth });
+    .text(`Signed by: ${contract.landlord_signer_address || '-'}`, doc.page.margins.left + 14, signY + 20, { width: signColWidth })
+    .text(`Signed at: ${contract.landlord_signed_at || '-'}`, doc.page.margins.left + 14, signY + 52, { width: signColWidth })
+    .text(`Signed by: ${contract.tenant_signer_address || '-'}`, doc.page.margins.left + 28 + signColWidth, signY + 20, { width: signColWidth })
+    .text(`Signed at: ${contract.tenant_signed_at || '-'}`, doc.page.margins.left + 28 + signColWidth, signY + 52, { width: signColWidth });
   doc.moveTo(doc.page.margins.left + 21 + signColWidth, signY + 12)
     .lineTo(doc.page.margins.left + 21 + signColWidth, signY + 96)
     .lineWidth(0.7).strokeColor('#cbd5e1').stroke();
   doc.y = signY + 124;
 
-  renderSection(toCnIndex(clauses.length + 8), '支付记录');
+  renderSection(toIndex(clauses.length + 8) + '.', 'Payment Records');
   if (payments.length === 0) {
-    doc.fillColor('#64748b').fontSize(9).text('暂无支付记录。');
+    doc.fillColor('#64748b').fontSize(9).text('No payment records.');
   } else {
     payments.forEach((p, index) => {
       doc.fillColor('#334155').fontSize(8.5).text(
@@ -3303,23 +3284,21 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   renderFooter(2);
 
   doc.addPage();
-  if (cnFontPath) {
-    try { doc.font('cn'); } catch { /* ignore */ }
-  }
   renderAttachmentTitle(
-    '链上存证与独立验真',
-    '本附件用于保存合同的链上锚点和独立验真配置。普通阅读只需核对本页摘要；后续明文材料与机器标记无需人工逐项阅读。'
+    'On-chain Verification',
+    'This attachment stores the contract on-chain anchors and verification configuration. Regular readers only need to review the summary on this page; the raw material and machine markers on subsequent pages do not require manual review.'
   );
-  doc.fontSize(13).fillColor('#111827').text('一  验真摘要');
-  doc.fontSize(10).fillColor('black').text(`合同哈希：${contract.content_hash}`);
-  doc.text(`链上交易哈希：${contract.tx_hash || '-'}`);
-  doc.text(`房源 ID：${contract.listing_id || '-'}`);
-  doc.text(`房源快照哈希：${listingMeta.public_snapshot_hash || '-'}`);
-  doc.text(`房源快照 CID：${listingMeta.public_snapshot_cid || '-'}`);
-  doc.text(`平台手续费：${content?.platformFeeAmount || '0'} ETH（${content?.platformFeeBps || 0} bps）`);
-  doc.text(`房东实收：${content?.landlordNetAmount || content?.oneTimeAmount || '-'} ETH`);
-  doc.text(`租客消息哈希：${tenantMessageHash || '-'}`);
-  doc.text(`房东消息哈希：${landlordMessageHash || '-'}`);
+  const tw = { width: pageWidth, lineBreak: true };
+  doc.fontSize(13).fillColor('#111827').text('I.  Verification Summary');
+  doc.fontSize(10).fillColor('black').text(`Contract Hash: ${contract.content_hash}`, tw);
+  doc.text(`On-chain TX Hash: ${contract.tx_hash || '-'}`, tw);
+  doc.text(`Listing ID: ${contract.listing_id || '-'}`, tw);
+  doc.text(`Listing Snapshot Hash: ${listingMeta.public_snapshot_hash || '-'}`, tw);
+  doc.text(`Listing Snapshot CID: ${listingMeta.public_snapshot_cid || '-'}`, tw);
+  doc.text(`Platform Fee: ${content?.platformFeeAmount || '0'} ETH (${content?.platformFeeBps || 0} bps)`, tw);
+  doc.text(`Landlord Net Amount: ${content?.landlordNetAmount || content?.oneTimeAmount || '-'} ETH`, tw);
+  doc.text(`Tenant Message Hash: ${tenantMessageHash || '-'}`, tw);
+  doc.text(`Landlord Message Hash: ${landlordMessageHash || '-'}`, tw);
   doc.moveDown();
   const runtimeConfigLines = [
     `VERIFY_CHAIN_ENV=${CHAIN_ENV}`,
@@ -3339,7 +3318,7 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   const runtimeBoxHeight = boxHeaderHeight + (runtimeConfigLines.length * boxLineHeight) + runtimeNoteHeight + (boxPaddingY * 2);
   doc.save();
   doc.roundedRect(boxX, boxY, boxWidth, runtimeBoxHeight, 8).lineWidth(1).strokeColor('#2563eb').fillColor('#eff6ff').fillAndStroke();
-  doc.fontSize(12).fillColor('#1d4ed8').text('可复制链上智能合约配置', boxX + boxPaddingX, boxY + boxPaddingY, {
+  doc.fontSize(12).fillColor('#1d4ed8').text('Smart Contract Configuration (copy-paste ready)', boxX + boxPaddingX, boxY + boxPaddingY, {
     width: boxWidth - (boxPaddingX * 2),
   });
   let lineY = boxY + boxPaddingY + boxHeaderHeight;
@@ -3350,7 +3329,7 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
     lineY += boxLineHeight;
   });
   doc.fontSize(8).fillColor('#475569').text(
-    '说明：以上用于绑定独立验真工具的 RPC、链 ID 与 RentalChain 智能合约实例；其中 VERIFY_RENTAL_CHAIN_ADDRESS 为链上智能合约地址，不是本合同编号。',
+    'Note: The above binds the independent verification tool to the correct RPC, chain ID and RentalChain contract instance. VERIFY_RENTAL_CHAIN_ADDRESS is the smart contract address, not the contract ID.',
     boxX + boxPaddingX,
     lineY + 2,
     {
@@ -3359,77 +3338,72 @@ router.get('/:id/pdf', authMiddleware, asyncHandler(async (req, res) => {
   );
   doc.restore();
   doc.y = boxY + runtimeBoxHeight + 12;
-  doc.fontSize(9).fillColor('gray').text('说明：平台已使用上述锚点完成上链与签名一致性校验。若需进一步独立复核，请下载 PDF 并导入独立验真工具。');
-  renderFooter(3, '验真附件');
+  doc.fontSize(9).fillColor('gray').text('Note: The platform has completed on-chain and signature consistency verification using the above anchors. For independent verification, download this PDF and import it into the verification tool.');
+  renderFooter(3, 'Verification Attachment');
 
   doc.addPage();
-  if (cnFontPath) {
-    try { doc.font('cn'); } catch { /* ignore */ }
-  }
-  renderHeader('验真附件 · 验真材料明文区');
-  doc.fontSize(13).fillColor('#111827').text('二  验真材料明文区');
-  doc.fontSize(7.5).fillColor('gray').text('说明：以下内容供独立验真工具读取和必要时人工复核。普通用户无需逐项阅读；Base64 仅用于机器稳定读取，不是加密。');
+  renderHeader('Verification Attachment - Raw Material');
+  doc.fontSize(13).fillColor('#111827').text('II.  Raw Verification Material');
+  doc.fontSize(7.5).fillColor('gray').text('Note: The following content is for the independent verification tool and manual review if needed. Regular users do not need to read each item. Base64 is used for stable machine reading only, not encryption.');
   doc.moveDown(0.4);
-  doc.fontSize(10).fillColor('black').text('content_hash 生成说明');
-  doc.fontSize(7.5).fillColor('gray').text(`算法：${contentHashSpec.algorithm}`);
-  doc.fontSize(7.5).fillColor('gray').text(`字段：${JSON.stringify(contentHashSpec.fields)}`, { width: 500 });
-  doc.fontSize(7.5).fillColor('gray').text(`生成时间：${getCnDateTime(new Date())}`);
+  doc.fontSize(10).fillColor('black').text('content_hash Generation Info');
+  doc.fontSize(7.5).fillColor('gray').text(`Algorithm: ${contentHashSpec.algorithm}`);
+  doc.fontSize(7.5).fillColor('gray').text(`Fields: ${JSON.stringify(contentHashSpec.fields)}`, { width: pageWidth, lineBreak: true });
+  doc.fontSize(7.5).fillColor('gray').text(`Generated at: ${getCnDateTime(new Date())}`);
   doc.moveDown(0.5);
-  doc.fontSize(10).fillColor('black').text('合同 JSON 明文');
-  doc.fontSize(7.5).fillColor('black').text(`contract_content_json=${canonicalContentJson}`, { width: 500 });
+  doc.fontSize(10).fillColor('black').text('Contract JSON (plaintext)');
+  doc.fontSize(7.5).fillColor('black').text(`contract_content_json=${canonicalContentJson}`, { width: pageWidth, lineBreak: true });
   doc.moveDown(0.2);
-  doc.fontSize(10).fillColor('black').text('租客签名消息原文');
-  doc.fontSize(7.5).fillColor('black').text(`tenant_signature_message=${contract.tenant_signature_message || '-'}`, { width: 500 });
+  doc.fontSize(10).fillColor('black').text('Tenant Signature Message');
+  doc.fontSize(7.5).fillColor('black').text(`tenant_signature_message=${contract.tenant_signature_message || '-'}`, { width: pageWidth, lineBreak: true });
   doc.moveDown(0.2);
-  doc.fontSize(10).fillColor('black').text('租客签名值');
-  doc.fontSize(7.5).fillColor('black').text(`tenant_signature=${contract.tenant_signature || '-'}`, { width: 500 });
+  doc.fontSize(10).fillColor('black').text('Tenant Signature');
+  doc.fontSize(7.5).fillColor('black').text(`tenant_signature=${contract.tenant_signature || '-'}`, { width: pageWidth, lineBreak: true });
   doc.moveDown(0.2);
-  doc.fontSize(10).fillColor('black').text('房东签名消息原文');
-  doc.fontSize(7.5).fillColor('black').text(`landlord_signature_message=${contract.landlord_signature_message || '-'}`, { width: 500 });
+  doc.fontSize(10).fillColor('black').text('Landlord Signature Message');
+  doc.fontSize(7.5).fillColor('black').text(`landlord_signature_message=${contract.landlord_signature_message || '-'}`, { width: pageWidth, lineBreak: true });
   doc.moveDown(0.2);
-  doc.fontSize(10).fillColor('black').text('房东签名值');
-  doc.fontSize(7.5).fillColor('black').text(`landlord_signature=${contract.landlord_signature || '-'}`, { width: 500 });
-  renderFooter(4, '验真附件');
+  doc.fontSize(10).fillColor('black').text('Landlord Signature');
+  doc.fontSize(7.5).fillColor('black').text(`landlord_signature=${contract.landlord_signature || '-'}`, { width: pageWidth, lineBreak: true });
+  renderFooter(4, 'Verification Attachment');
 
   doc.addPage();
-  if (cnFontPath) {
-    try { doc.font('cn'); } catch { /* ignore */ }
-  }
-  renderHeader('验真附件 · 机器验真标记');
-  doc.fontSize(13).fillColor('#111827').text('三  机器验真标记');
-  doc.fontSize(7).fillColor('gray').text('说明：以下 VERIFY_* 与 Base64 分块仅供独立验真工具稳定读取，普通用户无需人工阅读或比对。');
+  renderHeader('Verification Attachment - Machine Markers');
+  doc.fontSize(13).fillColor('#111827').text('III.  Machine Verification Markers');
+  doc.fontSize(7).fillColor('gray').text('Note: The following VERIFY_* keys and Base64 blocks are for the independent verification tool only. Regular users do not need to read or compare them manually.');
   doc.fontSize(7).fillColor('gray').text(`VERIFY_CONTRACT_ID=${contract.id}`);
-  doc.fontSize(7).fillColor('gray').text(`VERIFY_CHAIN_ENV=${CHAIN_ENV}`);
-  doc.fontSize(7).fillColor('gray').text(`VERIFY_CHAIN_ID=${chainRuntime.chainId}`);
-  doc.fontSize(7).fillColor('gray').text(`VERIFY_RENTAL_CHAIN_RPC_URL=${chainRuntime.rpcUrl || ''}`);
-  doc.fontSize(7).fillColor('gray').text(`VERIFY_RENTAL_CHAIN_ADDRESS=${chainRuntime.contractAddress || ''}`);
-  doc.fontSize(7).fillColor('gray').text(`VERIFY_RENTAL_CHAIN_DEPLOYED_AT=${chainRuntime.deployedAt || ''}`);
-  doc.fontSize(7).fillColor('gray').text(`VERIFY_CONTRACT_CREATED_AT=${contract.created_at || ''}`);
-  doc.fontSize(7).fillColor('gray').text(`VERIFY_CONTENT_HASH=${contract.content_hash}`);
-  doc.fontSize(7).fillColor('gray').text(`VERIFY_TX_HASH=${contract.tx_hash || ''}`);
-  doc.fontSize(7).fillColor('gray').text(`VERIFY_TENANT_SIGNER=${contract.tenant_signer_address || ''}`);
-  doc.fontSize(7).fillColor('gray').text(`VERIFY_LANDLORD_SIGNER=${contract.landlord_signer_address || ''}`);
-  doc.fontSize(7).fillColor('gray').text(`VERIFY_TENANT_MESSAGE_HASH=${tenantMessageHash || ''}`);
-  doc.fontSize(7).fillColor('gray').text(`VERIFY_LANDLORD_MESSAGE_HASH=${landlordMessageHash || ''}`);
-  doc.fontSize(7).fillColor('gray').text(`VERIFY_LISTING_ID=${contract.listing_id || ''}`);
-  doc.fontSize(7).fillColor('gray').text(`VERIFY_LISTING_SNAPSHOT_CID=${listingMeta.public_snapshot_cid || ''}`);
-  doc.fontSize(7).fillColor('gray').text(`VERIFY_LISTING_SNAPSHOT_HASH=${listingMeta.public_snapshot_hash || ''}`);
+  const mw = { width: pageWidth, lineBreak: true };
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_CHAIN_ENV=${CHAIN_ENV}`, mw);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_CHAIN_ID=${chainRuntime.chainId}`, mw);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_RENTAL_CHAIN_RPC_URL=${chainRuntime.rpcUrl || ''}`, mw);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_RENTAL_CHAIN_ADDRESS=${chainRuntime.contractAddress || ''}`, mw);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_RENTAL_CHAIN_DEPLOYED_AT=${chainRuntime.deployedAt || ''}`, mw);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_CONTRACT_CREATED_AT=${contract.created_at || ''}`, mw);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_CONTENT_HASH=${contract.content_hash}`, mw);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_TX_HASH=${contract.tx_hash || ''}`, mw);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_TENANT_SIGNER=${contract.tenant_signer_address || ''}`, mw);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_LANDLORD_SIGNER=${contract.landlord_signer_address || ''}`, mw);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_TENANT_MESSAGE_HASH=${tenantMessageHash || ''}`, mw);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_LANDLORD_MESSAGE_HASH=${landlordMessageHash || ''}`, mw);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_LISTING_ID=${contract.listing_id || ''}`, mw);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_LISTING_SNAPSHOT_CID=${listingMeta.public_snapshot_cid || ''}`, mw);
+  doc.fontSize(7).fillColor('gray').text(`VERIFY_LISTING_SNAPSHOT_HASH=${listingMeta.public_snapshot_hash || ''}`, mw);
   chunkMarkerLines('VERIFY_CONTENT_JSON_B64', canonicalContentJsonB64).forEach((line) => {
-    doc.fontSize(7).fillColor('gray').text(line);
+    doc.fontSize(7).fillColor('gray').text(line, mw);
   });
   chunkMarkerLines('VERIFY_TENANT_MESSAGE_B64', tenantMessageB64).forEach((line) => {
-    doc.fontSize(7).fillColor('gray').text(line);
+    doc.fontSize(7).fillColor('gray').text(line, mw);
   });
   chunkMarkerLines('VERIFY_LANDLORD_MESSAGE_B64', landlordMessageB64).forEach((line) => {
-    doc.fontSize(7).fillColor('gray').text(line);
+    doc.fontSize(7).fillColor('gray').text(line, mw);
   });
   chunkMarkerLines('VERIFY_TENANT_SIGNATURE_B64', tenantSignatureB64).forEach((line) => {
-    doc.fontSize(7).fillColor('gray').text(line);
+    doc.fontSize(7).fillColor('gray').text(line, mw);
   });
   chunkMarkerLines('VERIFY_LANDLORD_SIGNATURE_B64', landlordSignatureB64).forEach((line) => {
-    doc.fontSize(7).fillColor('gray').text(line);
+    doc.fontSize(7).fillColor('gray').text(line, mw);
   });
-  renderFooter(5, '验真附件');
+  renderFooter(5, 'Verification Attachment');
   doc.info.Title = `CCL Contract ${contract.id}`;
   doc.info.Subject = `VERIFY_CONTRACT_ID=${contract.id};VERIFY_CHAIN_ENV=${CHAIN_ENV};VERIFY_CHAIN_ID=${chainRuntime.chainId};VERIFY_RENTAL_CHAIN_RPC_URL=${chainRuntime.rpcUrl || ''};VERIFY_RENTAL_CHAIN_ADDRESS=${chainRuntime.contractAddress || ''};VERIFY_RENTAL_CHAIN_DEPLOYED_AT=${chainRuntime.deployedAt || ''};VERIFY_CONTRACT_CREATED_AT=${contract.created_at || ''};VERIFY_CONTENT_HASH=${contract.content_hash};VERIFY_TX_HASH=${contract.tx_hash || ''};VERIFY_TENANT_SIGNER=${contract.tenant_signer_address || ''};VERIFY_LANDLORD_SIGNER=${contract.landlord_signer_address || ''};VERIFY_TENANT_MESSAGE_HASH=${tenantMessageHash || ''};VERIFY_LANDLORD_MESSAGE_HASH=${landlordMessageHash || ''};VERIFY_LISTING_ID=${contract.listing_id || ''};VERIFY_LISTING_SNAPSHOT_CID=${listingMeta.public_snapshot_cid || ''};VERIFY_LISTING_SNAPSHOT_HASH=${listingMeta.public_snapshot_hash || ''}`;
   doc.info.Keywords = `contract,verify,${contract.id},${contract.content_hash}`;

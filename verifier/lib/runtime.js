@@ -45,8 +45,15 @@ function buildDefaultConfigStore() {
         name: 'sepolia',
         rpcUrl: DEFAULT_PUBLIC_RPC_URL,
         chainId: 11155111,
-        contractAddress: '0x1Aa0c85f57Cbe581b36a8671969Dd5ac2DB8e8CF',
-        contractDeployedAt: '2026-06-01T14:02:49.631Z',
+        contractAddress: '0x89663490792D26B9ABCd1bcF4fa760d82feef39A',
+        contractDeployedAt: '2026-06-02T06:12:25.819Z',
+      },
+      local: {
+        name: 'local',
+        rpcUrl: DEFAULT_LOCAL_RPC_URL,
+        chainId: 31337,
+        contractAddress: '0xb73C8c95e43Ed9B0b6e0e3AF25576bB07Bf19040',
+        contractDeployedAt: '2026-06-03T04:34:16.104Z',
       },
     },
   };
